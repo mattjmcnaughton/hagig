@@ -11,8 +11,14 @@ portable Rust backend and a future Linux path.
 This repository is at the design stage. It contains project guidance and an
 adopted [constitution](docs/CONSTITUTION.md), not a working application. There are
 no installation packages, executable developer commands, or implemented
-transcription features yet. The MVP product requirements and technical design are
-next; the behavior below describes the intended product.
+transcription features yet. Draft [MVP product requirements](docs/product/prds/01-mvp.md) and
+[technical design](docs/technical/tdds/01-mvp.md) describe the private alpha, acceptance
+criteria, and spike-first implementation sequence. They distinguish agreed
+requirements from proposed defaults and unverified capabilities. The behavior
+below describes the intended product.
+
+The [product prototype](docs/product/prototypes/README.md) preserves the reviewed
+UI concept as an editable, standalone browser simulation, not native app code.
 
 ## Intended experience
 
