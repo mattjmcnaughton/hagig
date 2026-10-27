@@ -1,0 +1,52 @@
+name: macOS native screenshots
+run-name: Native render — ${{ inputs.scenario }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Run proof first; inspect its artifacts before running states
+        type: choice
+        required: true
+        default: proof
+        options: [proof, states]
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: macos-15
+    timeout-minutes: 10
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    defaults:
+      run:
+        working-directory: clients/macos
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Record native toolchain
+        run: |
+          mkdir -p captures
+          { sw_vers; uname -m; xcodebuild -version; swift --version; git rev-parse HEAD; } > captures/environment.txt
+          cat captures/environment.txt
+      - run: swift build
+      - run: swift test
+      - name: Render shared native views
+        env:
+          SCENARIO: ${{ inputs.scenario }}
+        run: |
+          case "$SCENARIO" in proof|states) ;; *) exit 2 ;; esac
+          swift run --skip-build HagigScreenshots "$SCENARIO" captures
+          expected=2
+          if [ "$SCENARIO" = states ]; then expected=26; fi
+          test "$(find captures -name '*.png' | wc -l | tr -d ' ')" = "$expected"
+          for image in captures/*.png; do sips -g pixelWidth -g pixelHeight "$image"; done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-${{ inputs.scenario }}-${{ github.sha }}
+          path: clients/macos/captures/
+          if-no-files-found: error
+          retention-days: 3
