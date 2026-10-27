@@ -36,6 +36,35 @@ validated scaffold, not invented as working commands in the README now.
 Keep portable backend code free of AppKit, Accessibility, and macOS permission
 logic. This preserves a credible Linux path without a Linux desktop implementation.
 
+### Inference network-isolation decision
+
+Owner decision, 2026-10-27: enforce external-network isolation around the inference
+worker, not the entire app/server/CLI. Use `sandbox-exec` on macOS initially.
+It is deprecated; treat continued availability and behavior on supported macOS
+versions as a validation gate, not a stable long-term platform guarantee. If it
+is unavailable or enforcement fails, refuse inference and report an actionable,
+content-free error; do not silently retry without isolation.
+
+The initial Linux approach is a separate network namespace, as exercised by the
+local inference experiment with `unshare -Urn`. Unprivileged user namespaces may
+be restricted by the host. This is a candidate production launch mechanism, not
+a claim of portability to every Linux installation.
+
+Establish isolation before native loading. The worker communicates through private
+pipes, not the server's Unix socket. Close unnecessary inherited descriptors and
+do not pass preconnected network sockets or network-capable proxies. Explicit
+model installation remains a separate operation outside this boundary. A network
+sandbox alone does not restrict filesystem access or prove absence of network
+attempts, diagnostic leakage, or other privacy violations.
+
+Before adoption, exercise the real worker under the policy: successful inference,
+missing/corrupt assets, worker restart, blocked outbound IPv4/IPv6 and DNS paths,
+and an independent connectivity control outside the sandbox. Verify required pipe
+IPC still works and denied networking cannot escape through inherited resources.
+Record policy, OS/tool versions, and observed denials separately from source
+inspection. The macOS policy and these enforcement checks remain unimplemented
+and unverified in this checkout.
+
 ## 2. Native inference adoption gate
 
 First candidate: sherpa-onnx with NVIDIA Parakeet TDT 0.6B v2, using modified beam

@@ -46,6 +46,16 @@ Cancellation cannot undo delivery already initiated.
 Native inference must run in a separate worker process. Worker failure must not
 crash the macOS application or compromise the server's request state.
 
+The inference worker must run with OS-enforced external-network isolation,
+established before loading native inference code or model assets. If isolation
+cannot be established, inference must fail closed rather than run unrestricted.
+Process separation alone does not meet this requirement.
+
+This boundary applies to inference, not a blanket sandbox around the application,
+server, or CLI. Explicit model acquisition runs outside the inference worker;
+it does not grant that worker network access. Platform mechanisms belong in the
+technical design and must preserve the worker's required private IPC.
+
 ## 6. Privacy claims require evidence
 
 Third-party dependencies, including transitive dependencies and model-loading
@@ -77,6 +87,13 @@ delivery, and process-isolation boundaries before implementation.
 Changes to their meaning require explicit project-owner agreement. Record the
 date and rationale of an amendment here. Do not silently weaken a principle to
 match existing code; identify the conflict and resolve it explicitly.
+
+Amended 2026-10-27: the owner agreed to isolate inference specifically and use
+`sandbox-exec` as the initial macOS mechanism. Section 5 now requires enforced
+network isolation with fail-closed startup, strengthening offline behavior beyond
+process separation. This records a requirement and implementation direction, not
+evidence of macOS enforcement; the mechanism and its limitations live in the
+technical design.
 
 Implementation plans and reviews must identify relevant principles and the
 evidence needed to check them. Document unverified behavior and platform-testing
