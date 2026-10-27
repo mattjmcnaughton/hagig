@@ -10,8 +10,11 @@ portable Rust backend and a future Linux path.
 
 This repository contains an adopted [constitution](docs/CONSTITUTION.md), design
 documents, and a first [native macOS synthetic shell](clients/macos/AGENTS.md).
-The shell and native screenshot harness share SwiftUI views, but their Mac build,
-test and rendered-image checks have not yet been executed. There are no installation
+The shell and native screenshot harness share SwiftUI views. The first
+[native CI evidence](https://github.com/mattjmcnaughton/hagig/actions/runs/40509803030)
+passed build and three presentation tests on macOS 15.7.9 arm64 / Xcode 16.4;
+both Ready images and 26 state images were inspected. This establishes static
+view rendering, not application interactions or dictation. There are no installation
 packages or implemented transcription features. Draft [MVP product requirements](docs/product/prds/01-mvp.md) and
 [technical design](docs/technical/tdds/01-mvp.md) describe the private alpha, acceptance
 criteria, and spike-first implementation sequence. They distinguish agreed

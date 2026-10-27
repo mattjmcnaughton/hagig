@@ -48,10 +48,17 @@ release → Simulate result → explicit Copy or Dismiss. Escape cancels active 
 Preview error and Quit live below the shared surface. No global shortcut exists.
 This is a SwiftPM executable, not a signed, relocatable `.app` distribution.
 
-These are the commands wired into CI, **not yet native-executed evidence** as of
-the initial Linux-orb implementation. No Swift compiler, AppKit or macOS render
-runtime exists in that orb. Update this paragraph with actual run links/results
-after execution; never turn Linux static validation into a native-build claim.
+Native evidence: [run 40509803030](https://github.com/mattjmcnaughton/hagig/actions/runs/40509803030)
+executed build, three passing presentation tests, two Ready renders and 26 state
+renders on macOS 15.7.9 arm64 / Xcode 16.4 / Swift 6.1.2. Both Ready PNGs and every
+gallery state/appearance were inspected for native controls, readable synthetic
+labels, contrast and clipping. The checked-out PR merge ref was
+`10689509db97a5ab720c91c9c6161bc427e48de9` for branch head
+`2ce42efe8cfd96e6337dff3e92afea452a51514d`. Earlier ImageRenderer output was rejected
+because it substituted prohibited-symbol placeholders for native buttons; the
+working path uses AppKit hosting/caching. These commands ran on the hosted Mac,
+not the Linux orb. Shell interaction, animation and physical-Mac checks remain
+unexecuted; still images are not evidence of those behaviors.
 
 ## GitHub-hosted Mac evidence, in order
 
