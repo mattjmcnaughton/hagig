@@ -14,7 +14,8 @@ This is a synthetic shell, not an implemented dictation pipeline or installed al
 - `HagigShell`: AppKit status item/popover and explicit current-host-only clipboard
   writes. Only Copy writes; no automatic paste, key injection, permission requests,
   microphone, model downloads, or server launch. Demo error selection is shell-only.
-- `HagigScreenshots`: renders shared views with SwiftUI ImageRenderer at 2× in
+- `HagigScreenshots`: renders shared views through AppKit `NSHostingView` bitmap
+  caching at 2×, including AppKit-backed controls that `ImageRenderer` omits, in
   light/dark appearances with activity animation disabled through the shared
   view's `animateActivity` input. This does not override or test the read-only
   system Reduce Motion setting; the shell always respects that setting.

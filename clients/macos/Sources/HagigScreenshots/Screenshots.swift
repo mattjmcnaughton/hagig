@@ -34,10 +34,29 @@ struct Screenshots {
             for dark in [false, true] {
                 let view = HagigView(presentation: presentation, animateActivity: false, copy: { _ in false })
                     .environment(\.colorScheme, dark ? .dark : .light)
-                let renderer = ImageRenderer(content: view)
-                renderer.scale = 2
-                guard let image = renderer.cgImage else { throw CaptureError.renderFailed }
-                let bitmap = NSBitmapImageRep(cgImage: image)
+                // ImageRenderer omits AppKit-backed controls. Cache the hosted native view
+                // instead; capture only its bounds, never the runner's desktop.
+                let hosting = NSHostingView(rootView: view)
+                hosting.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                let size = hosting.fittingSize
+                hosting.frame = NSRect(origin: .zero, size: size)
+                let window = NSWindow(contentRect: hosting.frame, styleMask: .borderless,
+                                      backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.contentView = hosting
+                window.orderFront(nil)
+                hosting.layoutSubtreeIfNeeded()
+                RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+                hosting.displayIfNeeded()
+                guard let bitmap = NSBitmapImageRep(
+                    bitmapDataPlanes: nil, pixelsWide: Int(size.width * 2),
+                    pixelsHigh: Int(size.height * 2), bitsPerSample: 8, samplesPerPixel: 4,
+                    hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                    bytesPerRow: 0, bitsPerPixel: 0
+                ) else { throw CaptureError.renderFailed }
+                bitmap.size = size
+                hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+                window.close()
                 guard let png = bitmap.representation(using: .png, properties: [:]) else {
                     throw CaptureError.renderFailed
                 }
