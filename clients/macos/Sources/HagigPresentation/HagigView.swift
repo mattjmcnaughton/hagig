@@ -5,11 +5,14 @@ import SwiftUI
 public struct HagigView: View {
     @ObservedObject private var presentation: Presentation
     private let copy: (String) -> Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let animateActivity: Bool
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    private var reduceMotion: Bool { systemReduceMotion || !animateActivity }
     private let blue = Color(red: 0.19, green: 0.37, blue: 0.73)
 
-    public init(presentation: Presentation, copy: @escaping (String) -> Bool) {
+    public init(presentation: Presentation, animateActivity: Bool = true, copy: @escaping (String) -> Bool) {
         self.presentation = presentation
+        self.animateActivity = animateActivity
         self.copy = copy
     }
 

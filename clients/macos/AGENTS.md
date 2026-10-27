@@ -15,7 +15,10 @@ This is a synthetic shell, not an implemented dictation pipeline or installed al
   writes. Only Copy writes; no automatic paste, key injection, permission requests,
   microphone, model downloads, or server launch. Demo error selection is shell-only.
 - `HagigScreenshots`: renders shared views with SwiftUI ImageRenderer at 2× in
-  light/dark appearances with reduced motion. Its Copy effect is inert. The copied
+  light/dark appearances with activity animation disabled through the shared
+  view's `animateActivity` input. This does not override or test the read-only
+  system Reduce Motion setting; the shell always respects that setting.
+  Its Copy effect is inert. The copied
   image is a presentation fixture, not evidence of a clipboard operation.
 - Swift will own macOS interaction; Rust owns server, inference/worker and CLI.
   Do not recreate another thread's uncommitted inference experiments here.

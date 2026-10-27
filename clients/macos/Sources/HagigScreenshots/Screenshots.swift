@@ -32,9 +32,8 @@ struct Screenshots {
                 if name == "cancelled" { presentation.cancel() }
             }
             for dark in [false, true] {
-                let view = HagigView(presentation: presentation, copy: { _ in false })
+                let view = HagigView(presentation: presentation, animateActivity: false, copy: { _ in false })
                     .environment(\.colorScheme, dark ? .dark : .light)
-                    .environment(\.accessibilityReduceMotion, true)
                 let renderer = ImageRenderer(content: view)
                 renderer.scale = 2
                 guard let image = renderer.cgImage else { throw CaptureError.renderFailed }
@@ -45,6 +44,6 @@ struct Screenshots {
                 try png.write(to: output.appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
             }
         }
-        print("Rendered \(names.count * 2) native PNGs (2×, reduced motion).")
+        print("Rendered \(names.count * 2) native PNGs (2×, activity animation disabled).")
     }
 }
