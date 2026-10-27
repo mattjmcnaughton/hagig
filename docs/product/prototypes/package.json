@@ -1,0 +1,25 @@
+{
+  "name": "hagig-product-prototype",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.0.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "pnpm check && esbuild app.tsx --bundle --minify --format=iife --legal-comments=inline --supported:inline-script=true --define:process.env.NODE_ENV='\"production\"' --outfile=compiled.js && tailwindcss -i style.css -o compiled.css --minify && node embed.mjs"
+  },
+  "dependencies": {
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "4.1.18",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "esbuild": "0.27.2",
+    "tailwindcss": "4.1.18",
+    "typescript": "5.9.3"
+  }
+}
