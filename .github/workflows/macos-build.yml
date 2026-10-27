@@ -1,0 +1,57 @@
+name: macOS build and presentation tests
+
+on:
+  pull_request:
+    paths: ['clients/macos/**', '.github/workflows/macos-*.yml']
+  push:
+    branches: [main]
+    paths: ['clients/macos/**', '.github/workflows/macos-*.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: macos-15
+    timeout-minutes: 10
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    defaults:
+      run:
+        working-directory: clients/macos
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Record native toolchain
+        run: |
+          mkdir -p captures
+          { sw_vers; uname -m; xcodebuild -version; swift --version; git rev-parse HEAD; } > captures/environment.txt
+          cat captures/environment.txt
+      - run: swift build
+      - run: swift test
+      - name: Render minimal native proof
+        run: |
+          swift run --skip-build HagigScreenshots proof captures
+          test "$(find captures -name '*.png' | wc -l | tr -d ' ')" = 2
+          for image in captures/ready-{light,dark}.png; do sips -g pixelWidth -g pixelHeight "$image"; done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-proof-${{ github.sha }}
+          path: |
+            clients/macos/captures/ready-light.png
+            clients/macos/captures/ready-dark.png
+            clients/macos/captures/environment.txt
+          if-no-files-found: error
+          retention-days: 3
+      - name: Render bounded representative states
+        run: |
+          swift run --skip-build HagigScreenshots states state-captures
+          test "$(find state-captures -name '*.png' | wc -l | tr -d ' ')" = 26
+          for image in state-captures/*.png; do sips -g pixelWidth -g pixelHeight "$image"; done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-states-${{ github.sha }}
+          path: clients/macos/state-captures/*.png
+          if-no-files-found: error
+          retention-days: 3

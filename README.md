@@ -8,10 +8,11 @@ portable Rust backend and a future Linux path.
 
 ## Status
 
-This repository is at the design stage. It contains project guidance and an
-adopted [constitution](docs/CONSTITUTION.md), not a working application. There are
-no installation packages, executable developer commands, or implemented
-transcription features yet. Draft [MVP product requirements](docs/product/prds/01-mvp.md) and
+This repository contains an adopted [constitution](docs/CONSTITUTION.md), design
+documents, and a first [native macOS synthetic shell](clients/macos/AGENTS.md).
+The shell and native screenshot harness share SwiftUI views, but their Mac build,
+test and rendered-image checks have not yet been executed. There are no installation
+packages or implemented transcription features. Draft [MVP product requirements](docs/product/prds/01-mvp.md) and
 [technical design](docs/technical/tdds/01-mvp.md) describe the private alpha, acceptance
 criteria, and spike-first implementation sequence. They distinguish agreed
 requirements from proposed defaults and unverified capabilities. The behavior
@@ -42,7 +43,8 @@ MVP requirement. Initial transcription is English-only.
 ## Intended architecture
 
 - **Swift macOS app:** shortcut handling, microphone capture, permissions, focus
-  checks, and text delivery. Its planned home is `clients/macos/`.
+  checks, and text delivery. Its home is `clients/macos/`; only synthetic
+  presentation and explicit Copy are implemented in the initial shell.
 - **Rust server:** session state and inference-worker supervision.
 - **Rust worker:** a separate process calling an existing speech-recognition
   library, rather than a new recognition engine built for Hagig.
@@ -94,8 +96,9 @@ and physical-Mac acceptance remain necessary for microphone permissions, global
 shortcuts, focus checks, paste behavior, clipboard locality, and performance.
 
 Read [AGENTS.md](AGENTS.md) and the [constitution](docs/CONSTITUTION.md) before
-contributing. The initial foundation deliberately precedes application code,
-CI, and developer-toolchain setup.
+contributing. [Native developer guidance](clients/macos/AGENTS.md) describes the
+macOS commands, path-filtered build/tests and manually dispatched synthetic
+screenshot workflow, including what each form of evidence cannot establish.
 
 The name is inspired by Biblical Hebrew הֲגִיג, provisionally associated with
 murmuring or musing; the precise wording remains to be verified.
