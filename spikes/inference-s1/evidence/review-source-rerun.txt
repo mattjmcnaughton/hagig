@@ -1,0 +1,141 @@
+Issue #3 reviewed-source Linux rerun; intentional synthetic evidence only.
+Archive SHA256: 1d25461a4d32bf9e168c1762d7d045525465a556db03f613543c787ff48344a7 (verified before extraction).
+Review snapshot reported based on origin/main b36ab9986a2af44ccb428ec212e61233a3e7fe4f; this asset-host checkout remains at 141824784d69fff0efb203dadb1e90145247b61a. No branch update or source adoption.
+Environment: existing Rust 1.90.0, Linux x86-64; no installs, downloads or owner recordings. All native stdout/stderr captured only in RAM or discarded by supervisor; no raw diagnostics/traces retained.
+Exports: SHERPA_ONNX_LIB_DIR=$PWD/.agentic/inference/native/sherpa-onnx-v2.0.1-linux-x64-shared-no-tts-lib/lib; LD_LIBRARY_PATH=$SHERPA_ONNX_LIB_DIR; CARGO_TARGET_DIR=$PWD/.agentic/issue3-review/target; PYTHONDONTWRITEBYTECODE=1
+Harness correction: initial rerun stopped at a route-count assertion before inference checks: /proc/net/route was completely empty (no header), so len(lines)-1 was -1. Corrected the independent control to count actual non-header rows. Earlier build/hash/fixture checks passed; all checks below are rerun, not inferred from that partial run.
+Initial fresh isolated-target build used the same blocked/offline/locked build command below: exit 0, 51.056s, stdout 0 bytes, stderr 3871 bytes (not retained). The final repeated build below reused that newly compiled target, not the original experiment binaries.
+PASS: byte-identical original/review source, Cargo pins, fixture recipe/corpus, hotwords, checksums and worker verifier: 11 files.
+$ cargo +1.90.0 --version
+exit=0; elapsed=0.736s; stdout_bytes=36; stderr_bytes=0
+$ unshare -Urn cargo +1.90.0 build --release --offline --locked --manifest-path spikes/inference-s1/Cargo.toml
+exit=0; elapsed=0.307s; stdout_bytes=0; stderr_bytes=62
+$ unshare -Urn cargo +1.90.0 fmt --check --manifest-path spikes/inference-s1/Cargo.toml
+exit=0; elapsed=0.082s; stdout_bytes=0; stderr_bytes=0
+$ bash -n spikes/inference-s1/acquire.sh
+exit=0; elapsed=0.002s; stdout_bytes=0; stderr_bytes=0
+$ python3 -c 'import ast,pathlib; files=list(pathlib.Path("spikes/inference-s1").glob("*.py")); [ast.parse(p.read_text()) for p in files]; print("Python syntax passed:",len(files),"files; no bytecode")'
+exit=0; elapsed=0.032s; stdout_bytes=43; stderr_bytes=0
+PASS: relocated offline locked release build, Rust formatting, shell and Python syntax.
+$ sha256sum --check ../../spikes/inference-s1/SHA256SUMS [cwd=.agentic/inference]
+exit=0; elapsed=22.474s; stdout_bytes=721; stderr_bytes=0
+PASS: all 19 required historical hashes (10 acquired/extracted assets + 9 synthetic WAVs).
+$ unshare -Urn python3 spikes/inference-s1/fixtures.py .agentic/issue3-review/fixtures-v36nmmhr
+exit=0; elapsed=0.801s; stdout_bytes=0; stderr_bytes=0
+PASS: regenerated all 9 WAVs with relocated recipe offline; exact historical SHA256s and corpus match. Generated audio removed.
+PASS: all 1024 scored BPE pieces match recognition tokens in order; final token is blank at ID 1024.
+$ python3 -c 'import socket,json,sys
+try:
+ s=socket.create_connection(("1.1.1.1",443),3); s.close(); print(json.dumps({"connected":True}))
+except OSError as e:
+ print(json.dumps({"connected":False,"errno":e.errno,"type":type(e).__name__})); sys.exit(1)'
+exit=0; elapsed=0.026s; stdout_bytes=20; stderr_bytes=0
+$ unshare -Urn python3 -c 'import socket,json,sys
+try:
+ s=socket.create_connection(("1.1.1.1",443),3); s.close(); print(json.dumps({"connected":True}))
+except OSError as e:
+ print(json.dumps({"connected":False,"errno":e.errno,"type":type(e).__name__})); sys.exit(1)'
+exit=1; elapsed=0.026s; stdout_bytes=54; stderr_bytes=0
+Independent TCP connectivity controls: normal namespace {"connected": true}; blocked namespace {"connected": false, "errno": 101, "type": "OSError"}
+$ unshare -Urn python3 -c 'from pathlib import Path; import json,socket; print(json.dumps({"interfaces":[name for _,name in socket.if_nameindex()],"route_entries":sum(bool(row.strip()) and not row.startswith("Iface") for row in Path("/proc/net/route").read_text().splitlines())}))'
+exit=0; elapsed=0.028s; stdout_bytes=43; stderr_bytes=0
+Blocked network namespace independently has only lo and zero IPv4 route entries.
+$ .agentic/issue3-review/target/release/hagig-inference-s1 .agentic/inference/assets/model .agentic/inference/fixtures spikes/inference-s1/hotwords.txt
+exit=0; elapsed=19.004s; stdout_bytes=9061; stderr_bytes=0
+PASS benchmark available: all 36 paired/order-reversed outputs and non-timing fields identical to all three original runs; 4 spoken controls unchanged; known term errors/silence hallucinations preserved.
+Linux available load seconds: 4.954007; first decode seconds: 0.446195
+Linux available warm boosted=False: n=17, median=0.381364s, max=0.417415s; synthetic 2.47-3.67s clips, NOT Mac acceptance.
+Linux available warm boosted=True: n=18, median=0.388868s, max=0.472037s; synthetic 2.47-3.67s clips, NOT Mac acceptance.
+$ unshare -Urn .agentic/issue3-review/target/release/hagig-inference-s1 .agentic/inference/assets/model .agentic/inference/fixtures spikes/inference-s1/hotwords.txt
+exit=0; elapsed=23.271s; stdout_bytes=9053; stderr_bytes=0
+PASS benchmark blocked: all 36 paired/order-reversed outputs and non-timing fields identical to all three original runs; 4 spoken controls unchanged; known term errors/silence hallucinations preserved.
+Linux blocked load seconds: 8.423407; first decode seconds: 0.450093
+Linux blocked warm boosted=False: n=17, median=0.384784s, max=0.472582s; synthetic 2.47-3.67s clips, NOT Mac acceptance.
+Linux blocked warm boosted=True: n=18, median=0.391404s, max=0.791861s; synthetic 2.47-3.67s clips, NOT Mac acceptance.
+$ python3 spikes/inference-s1/verify_worker.py .agentic/issue3-review/target/release/isolated-worker .agentic/inference/assets/model .agentic/inference/fixtures
+exit=0; elapsed=37.063s; stdout_bytes=2200; stderr_bytes=0
+PASS worker observed: all 11 sanitized records identical to historical observed; 7 traced cases with zero network syscalls and zero writable opens except /dev/null; positive native leakage controls, actual pre-crash reply, SIGINT/cancel/deadline suppression, same-supervisor recovery, child reaping and 14 unchanged input hashes passed.
+$ unshare -Urn python3 spikes/inference-s1/verify_worker.py .agentic/issue3-review/target/release/isolated-worker .agentic/inference/assets/model .agentic/inference/fixtures
+exit=0; elapsed=33.644s; stdout_bytes=2200; stderr_bytes=0
+PASS worker blocked: all 11 sanitized records identical to historical blocked; 7 traced cases with zero network syscalls and zero writable opens except /dev/null; positive native leakage controls, actual pre-crash reply, SIGINT/cancel/deadline suppression, same-supervisor recovery, child reaping and 14 unchanged input hashes passed.
+PASS: available and blocked worker summary records match exactly. Native positive-control diagnostics and strace data remain RAM-only in existing verifier.
+$ unshare -Urn python3 spikes/inference-s1/worker_probe.py .agentic/issue3-review/target/release/isolated-worker .agentic/inference/assets/model .agentic/inference/fixtures/silence.wav spikes/inference-s1/hotwords.txt
+exit=0; elapsed=2.718s; stdout_bytes=29; stderr_bytes=0
+KNOWN FAILURE reproduced through worker offline: 3s digital silence produces "I'm not sure if I can do it." (exit 0, empty stderr). Containment does not provide speech gating.
+Acquisition test: execute complete reviewed acquire.sh once inside unshare -Urn against a disposable destination with symlinks to existing immutable archives/model inputs. A PATH curl stub exits 0 without downloading/writing, recording only call count. Real tar/SHA256 paths execute. Failure probes then invoke the exact extracted verify() function on required named files, avoiding repeated hashing/decompression of the 2.4GB archive. These are hash-function probes, not whole download-failure tests.
+$ unshare -Urn bash .agentic/issue3-review/acquire-67_vnm02/valid/recipe/acquire.sh .agentic/issue3-review/acquire-67_vnm02/valid/dest
+exit=0; elapsed=38.758s; stdout_bytes=457; stderr_bytes=0
+PASS acquisition valid: complete script exit 0; all six pre-extraction and four post-extraction required hashes passed; matching tokenizer extracted; six no-op curl calls, no downloads.
+$ unshare -Urn bash -c 'set -euo pipefail
+verify() {
+  for file in "$@"; do
+    entry=$(awk -v path="$file" '"'"'$2 == path { print }'"'"' "$checksums")
+    test -n "$entry"
+    (cd "$dest" && printf '"'"'%s\n'"'"' "$entry" | sha256sum --check --strict)
+  done
+}
+dest=$1
+checksums=$2
+verify "$3"' hash-probe .agentic/issue3-review/acquire-67_vnm02/missing-pre-asset/dest .agentic/issue3-review/acquire-67_vnm02/missing-pre-asset/recipe/SHA256SUMS assets/model/decoder.int8.onnx
+exit=1; elapsed=0.009s; stdout_bytes=52; stderr_bytes=121
+PASS acquisition verify() missing-pre-asset: expected exit 1 for required assets/model/decoder.int8.onnx; literal function extracted unchanged from reviewed script; diagnostics discarded; no curl/tar calls.
+$ unshare -Urn bash -c 'set -euo pipefail
+verify() {
+  for file in "$@"; do
+    entry=$(awk -v path="$file" '"'"'$2 == path { print }'"'"' "$checksums")
+    test -n "$entry"
+    (cd "$dest" && printf '"'"'%s\n'"'"' "$entry" | sha256sum --check --strict)
+  done
+}
+dest=$1
+checksums=$2
+verify "$3"' hash-probe .agentic/issue3-review/acquire-67_vnm02/corrupt-pre-asset/dest .agentic/issue3-review/acquire-67_vnm02/corrupt-pre-asset/recipe/SHA256SUMS assets/model/decoder.int8.onnx
+exit=1; elapsed=0.009s; stdout_bytes=39; stderr_bytes=54
+PASS acquisition verify() corrupt-pre-asset: expected exit 1 for required assets/model/decoder.int8.onnx; literal function extracted unchanged from reviewed script; diagnostics discarded; no curl/tar calls.
+$ unshare -Urn bash -c 'set -euo pipefail
+verify() {
+  for file in "$@"; do
+    entry=$(awk -v path="$file" '"'"'$2 == path { print }'"'"' "$checksums")
+    test -n "$entry"
+    (cd "$dest" && printf '"'"'%s\n'"'"' "$entry" | sha256sum --check --strict)
+  done
+}
+dest=$1
+checksums=$2
+verify "$3"' hash-probe .agentic/issue3-review/acquire-67_vnm02/missing-pre-hash-entry/dest .agentic/issue3-review/acquire-67_vnm02/missing-pre-hash-entry/recipe/SHA256SUMS assets/model/decoder.int8.onnx
+exit=1; elapsed=0.006s; stdout_bytes=0; stderr_bytes=0
+PASS acquisition verify() missing-pre-hash-entry: expected exit 1 for required assets/model/decoder.int8.onnx; literal function extracted unchanged from reviewed script; diagnostics discarded; no curl/tar calls.
+$ unshare -Urn bash -c 'set -euo pipefail
+verify() {
+  for file in "$@"; do
+    entry=$(awk -v path="$file" '"'"'$2 == path { print }'"'"' "$checksums")
+    test -n "$entry"
+    (cd "$dest" && printf '"'"'%s\n'"'"' "$entry" | sha256sum --check --strict)
+  done
+}
+dest=$1
+checksums=$2
+verify "$3"' hash-probe .agentic/issue3-review/acquire-67_vnm02/missing-post-hash-entry/dest .agentic/issue3-review/acquire-67_vnm02/missing-post-hash-entry/recipe/SHA256SUMS assets/model/bpe.vocab
+exit=1; elapsed=0.006s; stdout_bytes=0; stderr_bytes=0
+PASS acquisition verify() missing-post-hash-entry: expected exit 1 for required assets/model/bpe.vocab; literal function extracted unchanged from reviewed script; diagnostics discarded; no curl/tar calls.
+Acquisition limitation: reused bytes and stubbed transport only; no real download, HTTP failure, retry or publisher-provenance claim. Checksums are recorded evaluated bytes, not independent trust attestations.
+$ git diff --check
+exit=0; elapsed=0.003s; stdout_bytes=0; stderr_bytes=0
+PASS: all 41 original experiment/evidence files unchanged; shared docs not edited; historical review evidence not overwritten. No commit/push.
+Limitations: Linux CPU candidate remains experimental/unadopted. Silence gating and invalid vocabulary rejection unresolved. No Mac build, M4 latency/48GB, unified logging/crash-report privacy, bundle relocation/signing, server/app request generations/delivery cancellation, focus or clipboard acceptance. Runtime worker observation, blocked operation and source equality are distinct evidence, not production security certification.
+FINAL: all requested Linux review checks passed as reproductions; known silence accuracy failure remains unresolved. Only three new sanitized review evidence files retained; generated audio/native extraction and temporary acquisition fixtures removed.
+
+Acquisition scratch setup details for reproducing the recorded commands:
+- Each recipe/acquire.sh was a byte-exact copy of spikes/inference-s1/acquire.sh; recipe/SHA256SUMS initially copied the reviewed manifest.
+- Each dest contained absolute symlinks to existing .agentic/inference/{native.tar.bz2,assets/original.nemo,assets/model/encoder.int8.onnx,assets/model/decoder.int8.onnx,assets/model/joiner.int8.onnx,assets/model/tokens.txt}. Directories were owned temporary directories, not symlinked; no existing input was overwritten.
+- The valid case had no pre-existing bpe.vocab or native library directory. Real tar extracted the cached native archive and tokenizer into its temporary dest; all 10 required asset hashes printed OK.
+- For the valid case only, PATH was prepended with $PWD/.agentic/issue3-review/acquire-67_vnm02/bin; ACQUISITION_CALLS was $PWD/.agentic/issue3-review/acquire-67_vnm02/valid/curl-calls.txt. The executable curl stub contained exactly:
+#!/bin/sh
+printf "cached\n" >> "$ACQUISITION_CALLS"
+exit 0
+- missing-pre-asset omitted the decoder symlink; corrupt-pre-asset replaced it with an owned file containing b'intentionally corrupt synthetic asset\n'. The original decoder was never modified.
+- missing-pre-hash-entry removed only the assets/model/decoder.int8.onnx manifest line while leaving the valid decoder symlink present.
+- missing-post-hash-entry removed only the assets/model/bpe.vocab manifest line and supplied a symlink to the valid existing vocabulary. Thus entry rejection was tested independently from file absence.
+- Failure-probe bash bodies above are the literal verify() function extracted from the reviewed script. The complete valid-script path, including pre/post verification order, was executed once; invalid cases exercised that function directly, not the whole transport/extraction sequence.
+- All five temporary cases, generated audio and stub files were removed. Raw subprocess output remained in RAM; only statuses, byte counts and declared synthetic facts were saved.
+Final preservation check: all 27 files from the uploaded tar snapshot remain byte-identical; exactly the three requested review evidence files were added under spikes/inference-s1. All 41 original experiment/evidence files remained unchanged.

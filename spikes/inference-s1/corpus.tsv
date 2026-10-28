@@ -1,0 +1,9 @@
+term-hagig	term	Open Hagig and transcribe the next instruction.	Open ha geeg and transcribe the next instruction.
+term-ghostty	term	Run the command in Ghostty without pressing enter.	Run the command in ghost tee without pressing enter.
+term-sherpa	term	Use sherpa-onnx for local speech recognition.	Use sherpa onyx for local speech recognition.
+term-parakeet	term	Compare Parakeet with the current speech model.	Compare parakeet with the current speech model.
+control-tests	control	Run the unit tests before changing the parser.	Run the unit tests before changing the parser.
+control-ghost	control	The ghost is hiding behind the old tree.	The ghost is hiding behind the old tree.
+control-bird	control	The little bird is singing by the window.	The little bird is singing by the window.
+control-amp	control	Turn the amp down before you start the music.	Turn the amp down before you start the music.
+silence	control		

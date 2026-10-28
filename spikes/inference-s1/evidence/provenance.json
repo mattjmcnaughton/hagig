@@ -1,0 +1,18 @@
+{
+  "model": {
+    "id": "csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
+    "revision": "1ab9323565ddb038682214b292f588070a538ce2",
+    "declared_license": "cc-by-4.0"
+  },
+  "tokenizer_origin": {
+    "id": "nvidia/parakeet-tdt-0.6b-v2",
+    "revision": "ae9ad07059c7c739ffaf932226a8fe64ae2620b0",
+    "declared_license": "cc-by-4.0"
+  },
+  "native_release": {
+    "tag": "v2.0.1",
+    "asset": "sherpa-onnx-v2.0.1-linux-x64-shared-no-tts-lib.tar.bz2",
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-linux-x64-shared-no-tts-lib.tar.bz2",
+    "api_digest": "sha256:ce437357915491e6f2754b52bec7dcf62ff6fc6aaed9cdcd66f17807bbaef374"
+  }
+}

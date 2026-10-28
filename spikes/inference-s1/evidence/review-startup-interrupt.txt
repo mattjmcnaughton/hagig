@@ -1,0 +1,69 @@
+Issue #3 review resolution R5, 2026-10-28, review orb.
+This is a deterministic CPython subprocess-constructor interruption experiment
+with a synthetic sleeper. No inference/native library, models, personal content,
+network, or additional dependency/tool is involved. No raw diagnostics retained.
+Original worker_probe.py remains unchanged. Scratch worker file is temporary and
+deleted; every child is explicitly killed/reaped in the scratch check's finally.
+
+Result:
+Control: normal constructor return; deadline returned; synthetic child killed/reaped
+Injected post-spawn/pre-constructor-return KeyboardInterrupt: cancelled returned while child remained alive
+Scratch cleanup: synthetic child explicitly killed/reaped; no worker left running
+
+Meaning: request() cannot kill/reap an unassigned child handle on this constructor
+exception path. This disproves universal startup cleanup, not buffered-result
+suppression in the successful historical tests. It does not measure actual signal
+delivery frequency or claim real native-inference execution. Source-preserving
+resolution narrows claims; the lifecycle implementation remains an adoption gap.
+
+Reproduce from the repository root with existing Python (assertions enabled):
+
+python3 - <<'PY'
+import importlib.util, pathlib, sys, tempfile, subprocess
+from types import SimpleNamespace
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location('spike_probe', 'spikes/inference-s1/worker_probe.py')
+probe = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(probe)
+original = subprocess.Popen._execute_child
+spawned = []
+with tempfile.TemporaryDirectory() as tmp:
+    script = pathlib.Path(tmp) / 'synthetic_worker.py'
+    script.write_text('import time\ntime.sleep(30)\n')
+    args = SimpleNamespace(worker=sys.executable, model=str(script), wav='synthetic',
+                           vocabulary='synthetic', mode='normal', timeout=0.05,
+                           cancel_after_result=False)
+    def spawn(self, *a, **kw):
+        original(self, *a, **kw)
+        spawned.append(self)
+    subprocess.Popen._execute_child = spawn
+    try:
+        text, error = probe.request(args)
+        assert text is None and error == 'deadline_exceeded'
+        assert len(spawned) == 1 and spawned[0].poll() is not None
+        print('Control: normal constructor return; deadline returned; synthetic child killed/reaped')
+    finally:
+        subprocess.Popen._execute_child = original
+        for child in spawned:
+            if child.poll() is None:
+                child.kill()
+            child.wait()
+    spawned.clear()
+    def interrupt_after_spawn(self, *a, **kw):
+        original(self, *a, **kw)
+        spawned.append(self)
+        raise KeyboardInterrupt
+    subprocess.Popen._execute_child = interrupt_after_spawn
+    try:
+        text, error = probe.request(args)
+        assert text is None and error == 'cancelled'
+        assert len(spawned) == 1 and spawned[0].poll() is None
+        print('Injected post-spawn/pre-constructor-return KeyboardInterrupt: cancelled returned while child remained alive')
+    finally:
+        subprocess.Popen._execute_child = original
+        for child in spawned:
+            if child.poll() is None:
+                child.kill()
+            child.wait()
+        print('Scratch cleanup: synthetic child explicitly killed/reaped; no worker left running')
+PY
