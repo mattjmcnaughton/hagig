@@ -194,7 +194,7 @@ fn worker_executable_rejects_relative_paths() {
     ));
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 #[test]
 fn configured_unimplemented_platform_still_refuses() {
     let worker = WorkerExecutable::new(std::env::current_exe().unwrap()).unwrap();

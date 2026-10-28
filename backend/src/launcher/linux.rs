@@ -1,19 +1,17 @@
 //! Linux-only syscall boundary. No native inference code is loaded in the parent.
 
 use std::ffi::CStr;
-use std::io::{self, Read};
+use std::io;
 use std::mem::MaybeUninit;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
 
-use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::fd::BorrowedFd;
 use rustix::fs::{Mode, OFlags, RawDir, open};
 use rustix::io::{Errno, FdFlags, fcntl_setfd, write};
 use rustix::thread::{UnshareFlags, set_no_new_privs, unshare_unsafe};
 
-use super::{LaunchError, NetworkIsolation, WORKER_READY, WorkerExecutable};
+use super::{LaunchError, NetworkIsolation, WorkerExecutable, await_ready};
 
 pub(super) fn launch(
     worker: &WorkerExecutable,
@@ -48,7 +46,7 @@ pub(super) fn launch(
             LaunchError::SpawnFailed
         }
     })?;
-    if ready(&mut child).is_err() {
+    if await_ready(&mut child).is_err() {
         let _ = child.kill();
         let _ = child.wait();
         return Err(LaunchError::WorkerNotReady);
@@ -96,37 +94,6 @@ fn write_control(path: &CStr, bytes: &[u8]) -> rustix::io::Result<()> {
     let file = open(path, OFlags::WRONLY | OFlags::CLOEXEC, Mode::empty())?;
     if write(&file, bytes)? != bytes.len() {
         return Err(Errno::IO);
-    }
-    Ok(())
-}
-
-fn ready(child: &mut Child) -> io::Result<()> {
-    let output = child.stdout.as_mut().ok_or(io::ErrorKind::BrokenPipe)?;
-    let deadline = Instant::now() + Duration::from_secs(5);
-    // Read only the ACK, never consume bytes belonging to the worker protocol.
-    let mut ack = [0; WORKER_READY.len()];
-    let mut offset = 0;
-    while offset < ack.len() {
-        let remaining = deadline
-            .checked_duration_since(Instant::now())
-            .ok_or(io::ErrorKind::TimedOut)?;
-        let timeout = Timespec::try_from(remaining).map_err(|_| io::ErrorKind::TimedOut)?;
-        let mut descriptors = [PollFd::new(&*output, PollFlags::IN)];
-        match poll(&mut descriptors, Some(&timeout)) {
-            Err(Errno::INTR) => continue,
-            Err(error) => return Err(error.into()),
-            Ok(0) => return Err(io::ErrorKind::TimedOut.into()),
-            Ok(_) => {}
-        }
-        match output.read(&mut ack[offset..]) {
-            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
-            Ok(count) => offset += count,
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(error) => return Err(error),
-        }
-        if ack[..offset] != WORKER_READY[..offset] {
-            return Err(io::ErrorKind::InvalidData.into());
-        }
     }
     Ok(())
 }

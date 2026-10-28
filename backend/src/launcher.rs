@@ -7,8 +7,48 @@ use std::process::Child;
 #[cfg(target_os = "linux")]
 mod linux;
 
+#[cfg(target_os = "macos")]
+mod macos;
+
 /// Fixed bootstrap acknowledgement, consumed before returning private stdout.
 pub const WORKER_READY: &[u8] = b"HAGIG-WORKER-READY-v1\n";
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn await_ready(child: &mut Child) -> std::io::Result<()> {
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+    use rustix::io::Errno;
+    use std::io::{self, Read};
+    use std::time::{Duration, Instant};
+
+    let output = child.stdout.as_mut().ok_or(io::ErrorKind::BrokenPipe)?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    // Read only the ACK, never consume bytes belonging to the worker protocol.
+    let mut ack = [0; WORKER_READY.len()];
+    let mut offset = 0;
+    while offset < ack.len() {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .ok_or(io::ErrorKind::TimedOut)?;
+        let timeout = Timespec::try_from(remaining).map_err(|_| io::ErrorKind::TimedOut)?;
+        let mut descriptors = [PollFd::new(&*output, PollFlags::IN)];
+        match poll(&mut descriptors, Some(&timeout)) {
+            Err(Errno::INTR) => continue,
+            Err(error) => return Err(error.into()),
+            Ok(0) => return Err(io::ErrorKind::TimedOut.into()),
+            Ok(_) => {}
+        }
+        match output.read(&mut ack[offset..]) {
+            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+            Ok(count) => offset += count,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        }
+        if ack[..offset] != WORKER_READY[..offset] {
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+    }
+    Ok(())
+}
 
 /// Selected before worker startup, never inferred from an isolation failure.
 /// Disabled is a supported explicit opt-out, not a claim of network blocking.
@@ -143,9 +183,12 @@ impl SandboxedWorkerLauncher for PlatformLauncher {
         {
             linux::launch(worker, self.network_isolation)
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
         {
-            // The independently owned macOS adapter is not integrated yet.
+            macos::launch(worker, self.network_isolation)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
             let _ = worker;
             Err(LaunchError::IsolationUnavailable)
         }
