@@ -13,9 +13,12 @@ use rustix::fs::{Mode, OFlags, RawDir, open};
 use rustix::io::{Errno, FdFlags, fcntl_setfd, write};
 use rustix::thread::{UnshareFlags, set_no_new_privs, unshare_unsafe};
 
-use super::{LaunchError, WORKER_READY, WorkerExecutable};
+use super::{LaunchError, NetworkIsolation, WORKER_READY, WorkerExecutable};
 
-pub(super) fn launch(worker: &WorkerExecutable) -> Result<Child, LaunchError> {
+pub(super) fn launch(
+    worker: &WorkerExecutable,
+    mode: NetworkIsolation,
+) -> Result<Child, LaunchError> {
     // Allocate/format BEFORE fork, not in the async-signal-safe child callback.
     let uid_map = format!("0 {} 1\n", rustix::process::getuid().as_raw());
     let gid_map = format!("0 {} 1\n", rustix::process::getgid().as_raw());
@@ -34,7 +37,7 @@ pub(super) fn launch(worker: &WorkerExecutable) -> Result<Child, LaunchError> {
     #[allow(unsafe_code)]
     unsafe {
         command.pre_exec(move || {
-            isolate(uid_map.as_bytes(), gid_map.as_bytes())
+            prepare(mode, uid_map.as_bytes(), gid_map.as_bytes())
                 .map_err(|_| io::Error::from_raw_os_error(Errno::OPNOTSUPP.raw_os_error()))
         });
     }
@@ -48,21 +51,23 @@ pub(super) fn launch(worker: &WorkerExecutable) -> Result<Child, LaunchError> {
     if ready(&mut child).is_err() {
         let _ = child.kill();
         let _ = child.wait();
-        return Err(LaunchError::IsolationUnavailable);
+        return Err(LaunchError::WorkerNotReady);
     }
     Ok(child)
 }
 
-fn isolate(uid_map: &[u8], gid_map: &[u8]) -> rustix::io::Result<()> {
-    // SAFETY: Only the post-fork, single-threaded child calls this; FILES is not
-    // requested. The parent's namespace and descriptors cannot be changed.
-    #[allow(unsafe_code)]
-    unsafe {
-        unshare_unsafe(UnshareFlags::NEWUSER | UnshareFlags::NEWNET)?
-    };
-    write_control(c"/proc/self/uid_map", uid_map)?;
-    write_control(c"/proc/self/setgroups", b"deny")?;
-    write_control(c"/proc/self/gid_map", gid_map)?;
+fn prepare(mode: NetworkIsolation, uid_map: &[u8], gid_map: &[u8]) -> rustix::io::Result<()> {
+    if mode == NetworkIsolation::Required {
+        // SAFETY: Only the post-fork, single-threaded child calls this; FILES is not
+        // requested. The parent's namespace and descriptors cannot be changed.
+        #[allow(unsafe_code)]
+        unsafe {
+            unshare_unsafe(UnshareFlags::NEWUSER | UnshareFlags::NEWNET)?
+        };
+        write_control(c"/proc/self/uid_map", uid_map)?;
+        write_control(c"/proc/self/setgroups", b"deny")?;
+        write_control(c"/proc/self/gid_map", gid_map)?;
+    }
     set_no_new_privs(true)?;
     let directory = open(
         c"/proc/self/fd",

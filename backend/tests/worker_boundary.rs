@@ -5,7 +5,9 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
-use hagig::launcher::{LaunchError, PlatformLauncher, SandboxedWorkerLauncher, WorkerExecutable};
+use hagig::launcher::{
+    LaunchError, NetworkIsolation, PlatformLauncher, SandboxedWorkerLauncher, WorkerExecutable,
+};
 use hagig::supervisor::{Supervisor, SupervisorError};
 
 // Unrestricted fixtures are compiled ONLY into this integration test binary.
@@ -103,7 +105,7 @@ fn spawn_failure_is_safe_and_does_not_reserve_the_supervisor() {
     for _ in 0..2 {
         let error = supervisor.start().err().unwrap();
         assert_eq!(error, SupervisorError::Launch(LaunchError::SpawnFailed));
-        assert_eq!(error.to_string(), "isolated worker could not start");
+        assert_eq!(error.to_string(), "worker could not start");
     }
     supervisor.stop().unwrap();
 }
@@ -157,6 +159,19 @@ fn dropping_supervisor_terminates_live_worker_even_with_open_input() {
 
 #[test]
 fn production_launch_and_executable_fail_closed() {
+    assert_eq!(NetworkIsolation::default(), NetworkIsolation::Required);
+    assert_eq!(NetworkIsolation::Required.to_string(), "required");
+    assert_eq!(NetworkIsolation::Disabled.to_string(), "disabled");
+    assert_eq!(
+        PlatformLauncher::unconfigured().network_isolation(),
+        NetworkIsolation::Required
+    );
+    assert!(matches!(
+        PlatformLauncher::unconfigured()
+            .with_network_isolation(NetworkIsolation::Disabled)
+            .launch(),
+        Err(LaunchError::IsolationUnavailable)
+    ));
     assert!(matches!(
         PlatformLauncher::unconfigured().launch(),
         Err(LaunchError::IsolationUnavailable)
