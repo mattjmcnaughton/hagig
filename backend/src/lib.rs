@@ -5,7 +5,7 @@
 //! returned private pipes. No client sockets, model paths or content enter the
 //! launch contract.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 pub mod launcher;
 pub mod supervisor;
