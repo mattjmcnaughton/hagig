@@ -1,0 +1,81 @@
+name: macOS Seatbelt isolation
+
+on:
+  push:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/macos-seatbelt.yml'
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/macos-seatbelt.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  seatbelt:
+    runs-on: macos-15
+    timeout-minutes: 10
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    defaults:
+      run:
+        shell: bash
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Record versioned synthetic evidence context
+        run: |
+          mkdir -p "$RUNNER_TEMP/seatbelt-evidence"
+          {
+            echo 'schema=hagig-seatbelt-evidence-v1'
+            echo "commit=$GITHUB_SHA"
+            echo "runner_image=$ImageOS/$ImageVersion"
+            echo 'required_mechanism=sandbox-exec (deprecated); disabled_mechanism=none (explicit opt-out, no OS-network-block claim)'
+            echo 'policy=seatbelt-v1.sb; allow default; deny network*'
+            echo 'fixture=synthetic Rust probe; no model or UI'
+            echo 'limits=loopback TCP IPv4/IPv6 only; no DNS, UDP, remote hosts, model loading, filesystem isolation or package acceptance proof'
+            sw_vers
+            uname -m
+            xcodebuild -version
+            rustc --version --verbose
+            cargo --version
+            shasum -a 256 /usr/bin/sandbox-exec src/launcher/seatbelt-v1.sb
+          } > "$RUNNER_TEMP/seatbelt-evidence/context-v1.txt"
+          cat "$RUNNER_TEMP/seatbelt-evidence/context-v1.txt"
+          rustc --version --verbose | grep -Fx 'host: aarch64-apple-darwin'
+      - name: Build and check
+        run: |
+          cargo fmt --all -- --check
+          rustfmt --edition 2024 --check src/launcher/seatbelt_probe.rs
+          cargo build --locked --all-targets
+          cargo clippy --locked --all-targets -- -D warnings
+      - name: Exercise real launcher and Supervisor
+        id: probe
+        run: |
+          set -o pipefail
+          cargo test --locked --lib launcher::macos::tests -- --nocapture 2>&1 | tee "$RUNNER_TEMP/seatbelt-tests.log"
+          # A zero-test filtered run must never count as isolation proof.
+          grep -F '3 passed; 0 failed' "$RUNNER_TEMP/seatbelt-tests.log"
+          grep -o 'seatbelt-evidence-v1: .*' "$RUNNER_TEMP/seatbelt-tests.log" > "$RUNNER_TEMP/seatbelt-evidence/results-v1.txt"
+          cargo test --locked --all-targets
+          cargo test --locked --doc
+      - name: Record gate outcome
+        if: always()
+        env:
+          PROBE_OUTCOME: ${{ steps.probe.outcome }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/seatbelt-evidence"
+          printf 'native_probe_step=%s\n' "$PROBE_OUTCOME" > "$RUNNER_TEMP/seatbelt-evidence/outcome-v1.txt"
+          echo 'No model, user content, credentials or environment dumps are included.' >> "$RUNNER_TEMP/seatbelt-evidence/outcome-v1.txt"
+      - name: Upload sanitized evidence only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: seatbelt-evidence-v1-${{ github.sha }}
+          path: ${{ runner.temp }}/seatbelt-evidence/
+          if-no-files-found: error
+          retention-days: 5

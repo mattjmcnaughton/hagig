@@ -1,0 +1,5 @@
+; Hagig inference network policy v1. sandbox-exec is deprecated.
+; Not a filesystem, process-creation or general application sandbox.
+(version 1)
+(allow default)
+(deny network*)

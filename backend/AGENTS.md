@@ -20,7 +20,7 @@ Read the root guidance, [constitution](../docs/CONSTITUTION.md) and
   Both modes retain offline/no uploads/no telemetry, process separation and all
   launch hygiene. Installer networking remains outside the worker.
 - `PlatformLauncher::new(WorkerExecutable::new(absolute_path)?)` selects the
-  configured Linux adapter with Required default. Explicitly select
+  configured platform adapter with Required default. Explicitly select
   `.with_network_isolation(NetworkIsolation::Disabled)` before startup to opt out.
   `.network_isolation()` plus Display reports only the content-free selection,
   not enforcement evidence. Only the trusted target and typed mode are configurable,
@@ -32,8 +32,10 @@ Read the root guidance, [constitution](../docs/CONSTITUTION.md) and
   It flushes `HAGIG-WORKER-READY-v1\n` within five seconds, then begins the future
   worker protocol. Adapters consume only this fixed ACK, not protocol bytes.
   No inference library/model loading is allowed before this bootstrap boundary.
-  Required Linux namespace setup precedes even target exec/dynamic loading. macOS adapter
-  integration and its native proof are independently owned by issue #5.
+  Required Linux namespace setup precedes even target exec/dynamic loading.
+  The macOS adapter and its dedicated native proof belong to issue #5; see
+  [platform guidance](src/launcher/AGENTS.md) for its policy, local unsafe sites,
+  typed-libc adoption, exact commands and actual evidence limitations.
 - The launch adapter must sanitize environment/descriptors and suppress native
   diagnostics. Never log audio, transcripts, vocabulary, paths or raw OS errors.
 - Explicit `stop` reports cleanup failures; Drop is best-effort. Immediate kill
@@ -202,9 +204,10 @@ Implementation-checkpoint checks (recorded 2026-10-27, Linux, pinned Rust 1.90.0
 
 API integration order: issue #4 lands shared configuration/ACK and Linux dispatch;
 issue #5 then adds its owned macOS module, dispatch and any needed widening of
-the same pinned rustix target configuration. Until then, configured non-Linux
-launches remain refused and tested as such. Do not import independently owned
-unpushed macOS work without owner integration approval.
+the same pinned rustix target configuration. Issue #5 integrates that landed
+baseline and extracts the unchanged ACK routine for both adapters. Configured
+unsupported platforms still refuse; unconfigured launchers refuse everywhere.
+Do not import independently owned unpushed work without owner integration approval.
 
 Review resolution (2026-10-28): six actual review-suite skill lenses reviewed the
 complete task diff including new files. Seven warnings, no critical/nits: six
