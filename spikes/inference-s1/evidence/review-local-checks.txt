@@ -1,0 +1,48 @@
+Issue #3 preservation review, 2026-10-27
+Execution environment: review orb, not the original inference orb.
+No native inference execution or additional tool/dependency installation here.
+
+bash -n spikes/inference-s1/acquire.sh
+PASS: shell syntax.
+
+python3 inline scratch checks (no retained debug script):
+PASS: ast.parse for fixtures.py, worker_probe.py, verify_worker.py.
+PASS: exact byte comparison against downloaded capture for 11 source/config files:
+  Cargo.toml, Cargo.lock, SHA256SUMS, corpus.tsv, hotwords.txt,
+  fixtures.py, worker_probe.py, verify_worker.py,
+  src/main.rs, src/lib.rs, src/bin/isolated-worker.rs.
+PASS: historical baseline/observed/blocked each contain load + 36 decodes;
+  transcript/fixture metadata agree across all three runs (108 decodes).
+  Spoken controls match references, Hagig improves, Ghostty/sherpa-onnx still
+  fail, silence remains nonempty. Silence is not counted as a passing control.
+PASS: historical worker-observed and worker-blocked JSONL match (11 records).
+PASS: acquisition verify() with synthetic files: valid accepted, missing,
+  corrupt and unlisted rejected. No downloads used for this helper check.
+PASS: same missing-required-file counterfactual: original --ignore-missing
+  exits 0; reviewed required-file helper exits 1.
+PASS: relative Markdown links resolve.
+PASS: whitespace scan except intentional terminal TAB in silence TSV row
+  (empty fourth field required by the original corpus parser).
+PASS: file/evidence scan excludes audio, ONNX/native binaries, build/cache
+  outputs, raw trace/stderr, private home/temp paths and diagnostic canary values.
+
+gh api repos/k2-fsa/sherpa-onnx/releases/tags/v2.0.1
+PASS: selected native release asset digest matches SHA256SUMS; 9,374,461 bytes.
+
+curl -fsSL pinned Hugging Face API tree endpoints and tokens.txt URL:
+PASS: ONNX graph and original NVIDIA .nemo LFS SHA-256 metadata match manifest.
+PASS: downloaded tokens.txt SHA-256 matches manifest.
+Small tokens.txt uses ordinary Git storage, not LFS; checked its bytes directly.
+
+curl -fsSL pinned model cards and sherpa-onnx source URLs:
+CONFIRMED: both cards declare cc-by-4.0; sherpa source/package Apache-2.0.
+CONFIRMED: native build script's local-library override/default download branch;
+  malformed-hotword full-string logging/skipping; platform logging descriptors;
+  Rust/C-API hotword/NeMo decoder path and profiling option.
+NOT CLEARED: native/transitive notices/SBOM, conversion toolchain, source/binary
+  equivalence, vulnerabilities, whole-stack privacy or redistribution adoption.
+
+git diff --check
+PASS for tracked diff; new files independently whitespace-scanned as above.
+Cannot-run locally: Cargo/Rust, strace, eSpeak and model assets absent.
+Native reruns are separately attributed to the source environment.

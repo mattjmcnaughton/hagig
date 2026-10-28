@@ -1,0 +1,5 @@
+Shared configuration refactor: all 36 benchmark transcripts/fixture metadata unchanged; stderr empty
+Silence remains a nonempty hallucination through the isolated worker; speech gating is unresolved
+Network-available and blocked-network sanitized verification outcomes match exactly (11 records each)
+New verification evidence contains no canary values, transcript contents, or raw native diagnostics
+Linux core pattern: core

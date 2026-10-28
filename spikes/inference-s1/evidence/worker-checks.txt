@@ -1,0 +1,4 @@
+    Finished `release` profile [optimized] target(s) in 0.70s
+Rust formatting: passed
+Python syntax: passed (no bytecode/cache written)
+git diff --check: passed

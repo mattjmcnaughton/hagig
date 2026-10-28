@@ -1,0 +1,9 @@
+[package]
+name = "hagig-inference-s1"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+sherpa-onnx = { git = "https://github.com/k2-fsa/sherpa-onnx", rev = "af2d8d81dbfa61c4cea4c568da78f3982edca005", default-features = false, features = ["shared"] }
+serde_json = "1.0"

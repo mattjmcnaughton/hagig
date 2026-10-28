@@ -1,0 +1,14 @@
+baseline: 36 decodes, expected Hagig improvement, 4 unchanged spoken controls, silence hallucination reproduced; identical outputs across runs/passes
+observed: 36 decodes, expected Hagig improvement, 4 unchanged spoken controls, silence hallucination reproduced; identical outputs across runs/passes
+blocked: 36 decodes, expected Hagig improvement, 4 unchanged spoken controls, silence hallucination reproduced; identical outputs across runs/passes
+observed: zero network syscalls, zero writable opens, 37 writes to stdout
+blocked: zero network syscalls, zero writable opens, 37 writes to stdout
+observed-missing: zero network syscalls, zero writable opens, 5 writes to stderr
+observed-corrupt: zero network syscalls, zero writable opens, 8 writes to stderr
+blocked-missing: zero network syscalls, zero writable opens, 5 writes to stderr
+blocked-corrupt: zero network syscalls, zero writable opens, 8 writes to stderr
+Baseline warm boosted=False: n=17, median=0.409585415s, max=0.507830548s
+Baseline warm boosted=True: n=18, median=0.421603522s, max=0.515242797s
+All 1024 tokenizer pieces match recognition tokens in order, excluding final blank
+Blocked-network direct connection probe failed with exit 7
+Expected failures are retained, not passing product gates: silence hallucination and native corrupt-model path disclosure

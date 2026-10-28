@@ -1,0 +1,11 @@
+{"native_positive_controls": "passed", "path_and_vocabulary_actually_emitted": true, "real_reply_preceded_sigabrt": true, "raw_diagnostics_persisted": false}
+{"case": "missing", "client_exit": 1, "error": "model_missing", "stdout_empty": true, "network_syscalls": 0, "writable_opens_except_dev_null": 0, "discarded_stderr_writes": 0, "discarded_stdout_writes": 0, "private_reply_written": true}
+{"case": "corrupt-canary", "client_exit": 1, "error": "model_invalid", "stdout_empty": true, "network_syscalls": 0, "writable_opens_except_dev_null": 0, "discarded_stderr_writes": 3, "discarded_stdout_writes": 0, "private_reply_written": true}
+{"case": "native-vocabulary-warning", "client_exit": 0, "error": null, "stdout_empty": false, "network_syscalls": 0, "writable_opens_except_dev_null": 0, "discarded_stderr_writes": 6, "discarded_stdout_writes": 0, "private_reply_written": true}
+{"case": "crash-after-real-result", "client_exit": 1, "error": "worker_failed", "stdout_empty": true, "network_syscalls": 0, "writable_opens_except_dev_null": 0, "discarded_stderr_writes": 6, "discarded_stdout_writes": 1, "private_reply_written": true}
+{"case": "cancel-buffered-real-result", "client_exit": 130, "error": "cancelled", "stdout_empty": true, "network_syscalls": 0, "writable_opens_except_dev_null": 0, "discarded_stderr_writes": 0, "discarded_stdout_writes": 0, "private_reply_written": true}
+{"case": "timeout-buffered-real-result", "client_exit": 1, "error": "deadline_exceeded", "stdout_empty": true, "network_syscalls": 0, "writable_opens_except_dev_null": 0, "discarded_stderr_writes": 0, "discarded_stdout_writes": 0, "private_reply_written": true}
+{"case": "fresh-worker-recovery", "client_exit": 0, "error": null, "stdout_empty": false, "network_syscalls": 0, "writable_opens_except_dev_null": 0, "discarded_stderr_writes": 0, "discarded_stdout_writes": 0, "private_reply_written": true}
+{"sigint_during_request": "passed", "child_reaped": true, "client_stdout_empty": true, "client_exit": 130}
+{"same_supervisor_failure_cancel_recovery": "passed", "unreaped_children": 0, "native_libraries_in_supervisor": false}
+{"input_hashes_unchanged": 14, "core_limit": [0, 0], "verification": "passed"}
