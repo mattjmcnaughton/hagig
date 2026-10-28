@@ -11,7 +11,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use hagig::launcher::{LaunchError, PlatformLauncher, SandboxedWorkerLauncher, WorkerExecutable};
+use hagig::launcher::{
+    LaunchError, NetworkIsolation, PlatformLauncher, SandboxedWorkerLauncher, WorkerExecutable,
+};
 use hagig::supervisor::{Supervisor, SupervisorError};
 
 struct Fixture(PathBuf);
@@ -116,16 +118,25 @@ fn expect_launch_failure(result: Result<Child, LaunchError>) -> LaunchError {
 
 #[test]
 fn linux_worker_isolation_and_failure_contract() {
+    worker_contract(NetworkIsolation::Required);
+}
+
+#[test]
+fn disabled_worker_hygiene_and_failure_contract() {
+    worker_contract(NetworkIsolation::Disabled);
+}
+
+fn worker_contract(isolation: NetworkIsolation) {
     const CAPTURED: &str = "HAGIG_TEST_ISOLATION_CAPTURED";
     if std::env::var_os(CAPTURED).is_none() {
         // Observe inherited stderr at the process boundary: Child::stderr=None
         // alone cannot distinguish suppressed diagnostics from inherited ones.
+        let test = match isolation {
+            NetworkIsolation::Required => "linux_worker_isolation_and_failure_contract",
+            NetworkIsolation::Disabled => "disabled_worker_hygiene_and_failure_contract",
+        };
         let output = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "linux_worker_isolation_and_failure_contract",
-                "--nocapture",
-            ])
+            .args(["--exact", test, "--nocapture"])
             .env(CAPTURED, "1")
             .output()
             .unwrap();
@@ -138,6 +149,7 @@ fn linux_worker_isolation_and_failure_contract() {
         return;
     }
     let fixture = Fixture::compile();
+    let launcher = |name| fixture.launcher(name).with_network_isolation(isolation);
     let ipv4 = TcpListener::bind("127.0.0.1:0").unwrap();
     let ipv6 = TcpListener::bind("[::1]:0").expect("UNSUPPORTED: host IPv6 loopback unavailable");
     let connected_socket = TcpStream::connect(ipv4.local_addr().unwrap()).unwrap();
@@ -194,7 +206,10 @@ fn linux_worker_isolation_and_failure_contract() {
             break;
         }
 
-        let mut supervisor = Supervisor::new(fixture.launcher("worker"));
+        let selected = launcher("worker");
+        assert_eq!(selected.network_isolation(), isolation);
+        eprintln!("selected network isolation={isolation}");
+        let mut supervisor = Supervisor::new(selected);
         for generation in 0..2 {
             let mut pipes = match supervisor.start() {
                 Ok(pipes) => pipes,
@@ -207,16 +222,25 @@ fn linux_worker_isolation_and_failure_contract() {
             };
             pipes.input.write_all(input.as_bytes()).unwrap();
             let isolated = report(pipes.output);
-            assert_ne!(isolated["netns"], parent_namespace.to_str().unwrap());
             assert_eq!(isolated["boot_netns"], isolated["netns"]);
             // Fresh namespace has no configured routes and loopback is down.
             // IPv6 can fail earlier for lack of a usable source address. Require
             // these specific kernel reasons, not arbitrary connect failures.
-            assert_eq!(isolated["ipv4"], "errno:101");
-            assert!(matches!(
-                isolated["ipv6"].as_str(),
-                "errno:99" | "errno:101"
-            ));
+            match isolation {
+                NetworkIsolation::Required => {
+                    assert_ne!(isolated["netns"], parent_namespace.to_str().unwrap());
+                    assert_eq!(isolated["ipv4"], "errno:101");
+                    assert!(matches!(
+                        isolated["ipv6"].as_str(),
+                        "errno:99" | "errno:101"
+                    ));
+                }
+                NetworkIsolation::Disabled => {
+                    assert_eq!(isolated["netns"], parent_namespace.to_str().unwrap());
+                    assert_eq!(isolated["ipv4"], "connected");
+                    assert_eq!(isolated["ipv6"], "connected");
+                }
+            }
             assert_eq!(isolated["inherited_fd"], "false");
             assert_eq!(isolated["env_count"], "0");
             assert_eq!(isolated["cwd_root"], "true");
@@ -234,7 +258,7 @@ fn linux_worker_isolation_and_failure_contract() {
             );
             drop(pipes.input);
             eprintln!(
-                "round={round} generation={generation}: unrestricted IPv4/IPv6 connected; isolated IPv4={} IPv6={}; distinct namespace; inherited socket removed; empty env; no_new_privs; kill/reap passed",
+                "round={round} generation={generation}: isolation={isolation}; worker IPv4={} IPv6={}; inherited socket removed; empty env; no_new_privs; kill/reap passed",
                 isolated["ipv4"], isolated["ipv6"]
             );
         }
@@ -250,13 +274,18 @@ fn linux_worker_isolation_and_failure_contract() {
         drop(pipes.input);
     }
 
-    let mut fragmented = Supervisor::new(fixture.launcher("fragmented-worker"));
+    let mut fragmented = Supervisor::new(launcher("fragmented-worker"));
     let mut pipes = fragmented.start().unwrap();
     pipes.input.write_all(input.as_bytes()).unwrap();
     let response = report(pipes.output);
     assert_eq!(response["boot_netns"], response["netns"]);
-    assert_ne!(response["netns"], parent_namespace.to_str().unwrap());
-    assert_eq!(response["ipv4"], "errno:101");
+    if isolation == NetworkIsolation::Required {
+        assert_ne!(response["netns"], parent_namespace.to_str().unwrap());
+        assert_eq!(response["ipv4"], "errno:101");
+    } else {
+        assert_eq!(response["netns"], parent_namespace.to_str().unwrap());
+        assert_eq!(response["ipv4"], "connected");
+    }
     let pid = response["pid"].parse().unwrap();
     fragmented.stop().unwrap();
     assert!(!exists(pid));
@@ -264,7 +293,7 @@ fn linux_worker_isolation_and_failure_contract() {
     eprintln!("fragmented ACK: accepted; following protocol preserved; child reaped");
 
     assert_eq!(
-        expect_launch_failure(fixture.launcher("missing-worker").launch()),
+        expect_launch_failure(launcher("missing-worker").launch()),
         LaunchError::SpawnFailed
     );
     for mode in [
@@ -277,8 +306,8 @@ fn linux_worker_isolation_and_failure_contract() {
     ] {
         let start = Instant::now();
         assert_eq!(
-            expect_launch_failure(fixture.launcher(mode).launch()),
-            LaunchError::IsolationUnavailable
+            expect_launch_failure(launcher(mode).launch()),
+            LaunchError::WorkerNotReady
         );
         assert!(
             start.elapsed() < Duration::from_secs(7),
@@ -294,13 +323,54 @@ fn linux_worker_isolation_and_failure_contract() {
         );
     }
     assert!(
-        fixture.launcher("worker").launch().is_ok_and(|mut child| {
+        launcher("worker").launch().is_ok_and(|mut child| {
             child.kill().unwrap();
             child.wait().unwrap();
             !exists(child.id())
         }),
         "valid launch after all startup failures must recover"
     );
+}
+
+#[test]
+fn required_mode_reports_enforcement_or_refusal() {
+    let fixture = Fixture::compile();
+    let launcher = fixture.launcher("worker");
+    assert_eq!(launcher.network_isolation(), NetworkIsolation::Required);
+    let mut supervisor = Supervisor::new(launcher);
+    match supervisor.start() {
+        Ok(pipes) => {
+            let (sender, receiver) = mpsc::channel();
+            let reader = std::thread::spawn(move || {
+                let mut output = BufReader::new(pipes.output);
+                let mut boot_namespace = String::new();
+                output.read_line(&mut boot_namespace).unwrap();
+                sender.send(boot_namespace).unwrap();
+            });
+            let boot_namespace = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+            let pid = fixture.pid("worker");
+            supervisor.stop().unwrap();
+            reader.join().unwrap();
+            assert!(!exists(pid));
+            assert_ne!(
+                boot_namespace.trim(),
+                format!(
+                    "boot_netns={}",
+                    std::fs::read_link("/proc/self/ns/net").unwrap().display()
+                )
+            );
+            eprintln!(
+                "required mode: distinct namespace; full network enforcement proof is a separate gate"
+            );
+        }
+        Err(SupervisorError::Launch(LaunchError::IsolationUnavailable)) => {
+            assert!(!fixture.0.join("worker.pid").exists());
+            eprintln!(
+                "required mode: host refused isolation; target never executed; NOT enforcement proof"
+            );
+        }
+        Err(error) => panic!("unexpected launch failure: {error}"),
+    }
 }
 
 #[test]

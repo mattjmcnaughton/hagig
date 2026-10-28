@@ -38,32 +38,47 @@ logic. This preserves a credible Linux path without a Linux desktop implementati
 
 ### Inference network-isolation decision
 
-Owner decision, 2026-10-27: enforce external-network isolation around the inference
-worker, not the entire app/server/CLI. Use `sandbox-exec` on macOS initially.
-It is deprecated; treat continued availability and behavior on supported macOS
-versions as a validation gate, not a stable long-term platform guarantee. If it
-is unavailable or enforcement fails, refuse inference and report an actionable,
-content-free error; do not silently retry without isolation.
+Owner decision, revised 2026-10-28: two explicit modes, `required` and `disabled`.
+Default to `required`; omission must not disable enforcement. Users may explicitly
+select `disabled` as a supported product mode, not just a development exception.
+There is no automatic mode or fallback. Reject unknown mode values rather than
+loosening isolation. In required mode, unavailable or failed enforcement refuses
+worker startup with an actionable, content-free error. In disabled mode, keep the
+separate worker, private pipes, diagnostic containment, and environment/descriptor
+hygiene, but do not claim OS-enforced network blocking. Neither mode permits
+uploads, telemetry, automatic model downloads, or network-dependent inference.
+
+The boundary remains the inference worker, not the entire app/server/CLI.
+Required mode initially uses `sandbox-exec` on macOS. It is deprecated; treat
+availability and behavior on supported macOS versions as a validation gate, not
+a stable long-term platform guarantee. Disabling isolation is an intentional
+configuration choice, never an implicit retry after sandbox setup fails.
 
 The initial Linux approach is a separate network namespace, as exercised by the
 local inference experiment with `unshare -Urn`. Unprivileged user namespaces may
 be restricted by the host. This is a candidate production launch mechanism, not
 a claim of portability to every Linux installation.
 
-Establish isolation before native loading. The worker communicates through private
-pipes, not the server's Unix socket. Close unnecessary inherited descriptors and
-do not pass preconnected network sockets or network-capable proxies. Explicit
-model installation remains a separate operation outside this boundary. A network
-sandbox alone does not restrict filesystem access or prove absence of network
-attempts, diagnostic leakage, or other privacy violations.
+In required mode, establish isolation before native loading. In both modes, the
+worker communicates through private pipes, not the server's Unix socket. Close
+unnecessary inherited descriptors and do not pass preconnected network sockets
+or network-capable proxies. Explicit model installation remains a separate
+operation outside this boundary. A network sandbox alone does not restrict
+filesystem access or prove absence of network attempts, diagnostic leakage,
+or other privacy violations.
 
 Before adoption, exercise the real worker under the policy: successful inference,
 missing/corrupt assets, worker restart, blocked outbound IPv4/IPv6 and DNS paths,
 and an independent connectivity control outside the sandbox. Verify required pipe
 IPC still works and denied networking cannot escape through inherited resources.
-Record policy, OS/tool versions, and observed denials separately from source
-inspection. The macOS policy and these enforcement checks remain unimplemented
-and unverified in this checkout.
+Record the selected mode, policy, OS/tool versions, and observed denials separately
+from source inspection. Test required-mode failure without target execution or
+automatic fallback on restricted hosts; separately demonstrate explicit disabled
+mode can launch there without a network-blocking claim. Disabled-mode success
+must not count as required-mode enforcement evidence. Ubuntu support is not
+capped at 22.04: on hosts that reject required namespace setup, explicit disabled
+mode is the supported path while modern-host enforcement investigation is deferred.
+Neither these documents nor workflow definitions establish runtime enforcement.
 
 ## 2. Native inference adoption gate
 
@@ -111,6 +126,9 @@ hold = "ctrl+shift+space" # Example; validate against the owner's shortcuts.
 [model]
 id = "parakeet-tdt-0.6b-v2" # Candidate alias resolved by the pinned manifest.
 
+[inference]
+network_isolation = "required" # Default. "disabled" is an explicit opt-out.
+
 [vocabulary]
 terms = ["Hagig", "Ghostty", "sherpa-onnx", "Parakeet", "Amp"]
 ```
@@ -123,6 +141,12 @@ alpha, apply edits by quitting the app, running `hagig stop`, and relaunching th
 app. No file watcher or live reload command is needed; an active request's settings
 never change. Invalid startup configuration returns an actionable error instead
 of silently falling back to different settings.
+
+The proposed `inference.network_isolation` field selects the agreed mode contract
+above. Apply it at server/worker startup, not per audio chunk or an untrusted client
+request. Report the selected mode in content-free status so explicit opt-out cannot
+be mistaken for sandbox enforcement. The scaffold's launcher-mode API can precede
+TOML/server integration; documenting this field does not make it executable today.
 
 Shortcut syntax and supported key combinations need one documented grammar and
 shared fixtures between Rust validation and Swift interpretation. The example

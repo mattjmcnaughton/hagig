@@ -42,6 +42,8 @@ unverifiable destinations must fail safely rather than receive a speculative pas
 - Vocabulary boosting for project names and technical terms.
 - Focus-safe automatic paste, without submitting, plus Copy/Dismiss fallback.
 - Human-editable TOML configuration and explicit model installation.
+- Required-by-default worker network isolation, with explicit user opt-out as a
+  supported mode; never automatic fallback to disabled isolation.
 - Rust server, isolated inference worker, and file-transcription CLI.
 - Self-contained Apple Silicon app bundle without a separately installed Rust,
   Python, or inference-library runtime.
@@ -166,7 +168,7 @@ or measured results. Review them before collecting final acceptance evidence.
 | AC8 | Demonstrate vocabulary improvement on at least 10 term-bearing clips, with at least 10 non-vocabulary controls. Report paired boosted/unboosted results, missed terms, false insertions, and ordinary-word regressions. No material overall regression is accepted without explicit review. |
 | AC9 | Silence, empty input, invalid configuration, unsupported file, missing/corrupt model, and busy each yield clear non-content-bearing outcomes without unintended delivery or automatic downloading. |
 | AC10 | Crash or stall the worker; the app and server remain responsive, the affected request terminates without delivery, and a subsequent request can succeed. Stop and client-disconnect paths release the active slot. |
-| AC11 | Validate normal dictation/file transcription using separate dependency source review, observation of attempted networking and local writes, and execution with outbound networking blocked. Logs contain no audio, transcripts, vocabulary, or raw sensitive configuration. |
+| AC11 | Validate normal dictation/file transcription using separate dependency source review, observation of attempted networking and local writes, and execution with outbound networking blocked. Required isolation is the default and refuses startup if unavailable, without automatic fallback. Explicit disabled mode retains a separate worker and offline/no-upload behavior but makes no OS-network-block claim; validate that mode separately on restricted hosts. Record the selected mode with evidence. Logs contain no audio, transcripts, vocabulary, or raw sensitive configuration. |
 | AC12 | Install the alpha bundle on the acceptance Mac without developer-language runtimes or developer-checkout library paths. Explicitly install the model, grant permissions, transcribe, stop, and relaunch successfully. |
 | AC13 | CLI WAV transcription outputs text only to stdout; failures use stderr/nonzero status; no clipboard side effects. The supplied input remains unchanged, including on cancellation and errors. |
 | AC14 | Recording/transcribing states are distinguishable with and without animation. Copy and Dismiss are keyboard-accessible and named for assistive technology. |

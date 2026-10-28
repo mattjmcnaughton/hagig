@@ -46,15 +46,20 @@ Cancellation cannot undo delivery already initiated.
 Native inference must run in a separate worker process. Worker failure must not
 crash the macOS application or compromise the server's request state.
 
-The inference worker must run with OS-enforced external-network isolation,
-established before loading native inference code or model assets. If isolation
-cannot be established, inference must fail closed rather than run unrestricted.
-Process separation alone does not meet this requirement.
+OS-enforced external-network isolation is required by default. Users may
+explicitly select disabled isolation as a supported product mode, accepting
+reduced defense-in-depth. Disabled mode retains process separation but makes no
+claim that the OS blocks worker networking. It does not permit telemetry,
+uploads, automatic downloads, or a dependency on network access for inference.
+
+In required mode, establish isolation before loading native inference code or
+model assets. If isolation cannot be established, refuse worker startup. Never
+automatically fall back from required to disabled mode; omission or failure is
+not an explicit opt-out.
 
 This boundary applies to inference, not a blanket sandbox around the application,
-server, or CLI. Explicit model acquisition runs outside the inference worker;
-it does not grant that worker network access. Platform mechanisms belong in the
-technical design and must preserve the worker's required private IPC.
+server, or CLI. Explicit model acquisition remains outside the inference worker.
+Platform mechanisms belong in the technical design and must preserve private IPC.
 
 ## 6. Privacy claims require evidence
 
@@ -89,11 +94,17 @@ date and rationale of an amendment here. Do not silently weaken a principle to
 match existing code; identify the conflict and resolve it explicitly.
 
 Amended 2026-10-27: the owner agreed to isolate inference specifically and use
-`sandbox-exec` as the initial macOS mechanism. Section 5 now requires enforced
-network isolation with fail-closed startup, strengthening offline behavior beyond
-process separation. This records a requirement and implementation direction, not
-evidence of macOS enforcement; the mechanism and its limitations live in the
-technical design.
+`sandbox-exec` as the initial macOS mechanism. At that point, section 5 required
+enforced network isolation with fail-closed startup in every mode. This recorded
+a requirement and implementation direction, not evidence of macOS enforcement.
+
+Amended 2026-10-28: the owner accepted required-by-default isolation with an
+explicit disabled mode for users, not just development. OS blocking is optional
+defense-in-depth so host restrictions need not prevent local development or use.
+This supersedes the unconditional enforcement requirement, not process separation
+or the offline/no-upload/privacy commitments. Required mode still fails closed,
+and automatic fallback is prohibited. Mechanisms and verification belong in the
+technical design; this amendment does not establish their implementation.
 
 Implementation plans and reviews must identify relevant principles and the
 evidence needed to check them. Document unverified behavior and platform-testing

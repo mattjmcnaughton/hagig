@@ -1,4 +1,4 @@
-//! Platform launch effects. No unrestricted production launch path exists.
+//! Platform launch effects. Network blocking is required unless explicitly disabled.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -10,12 +10,31 @@ mod linux;
 /// Fixed bootstrap acknowledgement, consumed before returning private stdout.
 pub const WORKER_READY: &[u8] = b"HAGIG-WORKER-READY-v1\n";
 
+/// Selected before worker startup, never inferred from an isolation failure.
+/// Disabled is a supported explicit opt-out, not a claim of network blocking.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkIsolation {
+    #[default]
+    Required,
+    Disabled,
+}
+
+impl fmt::Display for NetworkIsolation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Required => "required",
+            Self::Disabled => "disabled",
+        })
+    }
+}
+
 /// Content-free failures: never include OS errors, paths or worker diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchError {
     InvalidExecutable,
     IsolationUnavailable,
     SpawnFailed,
+    WorkerNotReady,
     PrivatePipesUnavailable,
 }
 
@@ -24,7 +43,8 @@ impl fmt::Display for LaunchError {
         f.write_str(match self {
             Self::InvalidExecutable => "worker executable must be an absolute path",
             Self::IsolationUnavailable => "worker network isolation is unavailable",
-            Self::SpawnFailed => "isolated worker could not start",
+            Self::SpawnFailed => "worker could not start",
+            Self::WorkerNotReady => "worker readiness check failed",
             Self::PrivatePipesUnavailable => "worker private pipes are unavailable",
         })
     }
@@ -64,9 +84,10 @@ impl WorkerExecutable {
 
 /// Constructor-injected platform boundary, not an inference-engine plugin API.
 ///
-/// Production implementations must establish OS-enforced external-network
-/// isolation BEFORE any native/model loading, fail closed on setup errors, and
-/// return a child with private piped stdin/stdout and suppressed stderr. They
+/// Required mode establishes OS-enforced external-network isolation BEFORE any
+/// native/model loading and fails closed on setup errors, never retrying with
+/// isolation disabled. Explicit disabled mode makes no network-blocking claim.
+/// Both modes return a child with private piped stdin/stdout and suppressed stderr. They
 /// must sanitize inherited descriptors and environment (including proxies),
 /// never inherit connected sockets, and clean up any child on launch failure.
 /// The worker must not spawn descendants that outlive its supervision.
@@ -78,21 +99,37 @@ pub trait SandboxedWorkerLauncher {
     fn launch(&self) -> Result<Child, LaunchError>;
 }
 
-/// OS-specific launch, never an unrestricted fallback. An unconfigured launcher
-/// and platforms without an implemented isolation adapter always refuse startup.
+/// OS-specific launch with required isolation by default, never automatic fallback.
+/// Unconfigured launchers and platforms without an implemented hygiene adapter
+/// refuse startup in either mode. TOML/server configuration is not implemented.
 pub struct PlatformLauncher {
     worker: Option<WorkerExecutable>,
+    network_isolation: NetworkIsolation,
 }
 
 impl PlatformLauncher {
     pub fn new(worker: WorkerExecutable) -> Self {
         Self {
             worker: Some(worker),
+            network_isolation: NetworkIsolation::Required,
         }
     }
 
+    pub fn with_network_isolation(mut self, mode: NetworkIsolation) -> Self {
+        self.network_isolation = mode;
+        self
+    }
+
+    /// Content-free selected policy; selection is not evidence of enforcement.
+    pub fn network_isolation(&self) -> NetworkIsolation {
+        self.network_isolation
+    }
+
     pub fn unconfigured() -> Self {
-        Self { worker: None }
+        Self {
+            worker: None,
+            network_isolation: NetworkIsolation::Required,
+        }
     }
 }
 
@@ -104,7 +141,7 @@ impl SandboxedWorkerLauncher for PlatformLauncher {
             .ok_or(LaunchError::IsolationUnavailable)?;
         #[cfg(target_os = "linux")]
         {
-            linux::launch(worker)
+            linux::launch(worker, self.network_isolation)
         }
         #[cfg(not(target_os = "linux"))]
         {

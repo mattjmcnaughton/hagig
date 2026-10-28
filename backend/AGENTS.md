@@ -12,20 +12,27 @@ Read the root guidance, [constitution](../docs/CONSTITUTION.md) and
   owns the child and reap. The future request layer owns protocol/state and the
   returned private pipes. Keep request admission, generations, cancellation and
   result delivery out of the launcher. They are not implemented in this ticket.
-- Inference-only external-network isolation MUST be enforced before native/model
-  loading. Linux uses a new user/network namespace; macOS initially sandbox-exec
-  (deprecated, requiring explicit validation). Installer networking stays outside
-  the worker. No unrestricted fallback, disable-sandbox flag or environment bypass.
+- Inference-only external-network isolation defaults to Required; an explicit
+  Disabled startup mode is a supported product opt-out, not an automatic fallback
+  or development-only exception. Required enforces before native/model loading
+  or refuses; Linux uses user/network namespaces, macOS initially sandbox-exec
+  (deprecated, requiring validation). Disabled makes no network-block claim.
+  Both modes retain offline/no uploads/no telemetry, process separation and all
+  launch hygiene. Installer networking remains outside the worker.
 - `PlatformLauncher::new(WorkerExecutable::new(absolute_path)?)` selects the
-  configured Linux adapter. Only a target path is configurable, not arguments,
-  shell commands, environment or policy. `unconfigured()` and platforms without
+  configured Linux adapter with Required default. Explicitly select
+  `.with_network_isolation(NetworkIsolation::Disabled)` before startup to opt out.
+  `.network_isolation()` plus Display reports only the content-free selection,
+  not enforcement evidence. Only the trusted target and typed mode are configurable,
+  not arguments, shell commands, environment or arbitrary policy. TOML/server
+  parsing/status integration remains future work. `unconfigured()` and platforms without
   an integrated adapter fail closed. The scaffold executable stays unconfigured.
   Test-only unrestricted launchers live in `tests/`, never production options.
 - The target must be a trusted small Rust bootstrap, not linked inference code.
   It flushes `HAGIG-WORKER-READY-v1\n` within five seconds, then begins the future
   worker protocol. Adapters consume only this fixed ACK, not protocol bytes.
   No inference library/model loading is allowed before this bootstrap boundary.
-  Linux namespace setup precedes even target exec/dynamic loading. macOS adapter
+  Required Linux namespace setup precedes even target exec/dynamic loading. macOS adapter
   integration and its native proof are independently owned by issue #5.
 - The launch adapter must sanitize environment/descriptors and suppress native
   diagnostics. Never log audio, transcripts, vocabulary, paths or raw OS errors.
@@ -37,7 +44,9 @@ Read the root guidance, [constitution](../docs/CONSTITUTION.md) and
   audited sites: pre_exec, unshare_unsafe, and enumerated BorrowedFd construction.
   No module-wide unsafe allowance. The callback uses syscalls, stack buffers and bytes
   allocated before fork: unshare, uid/gid maps, no_new_privs, and /proc/self/fd
-  enumeration to mark all descriptors >=3 CLOEXEC. Do not add allocation, locks,
+  enumeration to mark all descriptors >=3 CLOEXEC. Disabled bypasses only namespace
+  creation/maps; no_new_privs, descriptor/environment/cwd/pipe/ACK hygiene remains.
+  Do not add allocation, locks,
   std I/O, logging or panics there. CLOEXEC preserves std's exec-error pipe until
   exec while closing preconnected sockets before target/native loading.
 
@@ -138,10 +147,10 @@ is incorporated from PR #11. Root docs and other threads' work remain untouched.
 
 ## Linux adapter evidence (#4)
 
-Run `cargo test --locked --test linux_isolation -- --nocapture` for actual
-controlled-process isolation evidence through PlatformLauncher and Supervisor.
-It fails with an explicit UNSUPPORTED diagnostic if namespaces/proc facilities or
-host IPv6 are unavailable; it does NOT skip or count that as isolation success.
+Run `cargo test --locked --test linux_isolation -- --nocapture` on a capable host
+for both explicit modes through PlatformLauncher and Supervisor. The required
+enforcement test fails UNSUPPORTED if namespaces/proc facilities or host IPv6
+are unavailable; it does NOT count refusal or disabled success as enforcement.
 Do not change host sysctls/AppArmor/seccomp policy to manufacture a pass.
 
 The same worker connects to the same outside listeners before and after isolated
@@ -209,3 +218,55 @@ per-read deadline reset failed the <7s bound. Neither mutation touched productio
 source; scratch copies were removed. Final combined checks and exact-head remote
 native CI remain separate gates, not substituted by the suite. Local ignored
 current-capture plan/diary/review-resolution records are not shipped source.
+
+### Hosted Linux support/evidence checkpoint (2026-10-28)
+
+There is no 22.04-only product ceiling: explicit Disabled is supported on modern
+Ubuntu; Required still enforces or refuses without retry. CI separately labels
+22.04 capable-host enforcement evidence, 24.04 disabled/refusal evidence, and Mac
+portable shared checks (not yet Seatbelt proof). Both Linux jobs build/lint the
+whole package; 24.04 executes the full disabled hygiene/failure contract, required
+enforcement-or-refusal classification, real unmapped-userns denial and portable
+tests. It does NOT claim a passing full required-network gate. Diagnostics assert
+that the observed 24.04 mapped probe is denied; a policy change needs investigation,
+not an automatic status reinterpretation.
+
+The 22.04 enforcement host is available but deprecated since 2026-09-17 and retires
+2027-04-17, with March/April brownouts. Replace that evidence host before then with
+independently verified capability and the full unchanged required-network gate.
+This is a CI-evidence prerequisite, not an installer or product OS maximum.
+Do not disable AppArmor, change sysctls, add privileged containers, or count
+unsupported acceptance probes as green enforcement evidence.
+See the [official retirement notice](https://github.com/actions/runner-images/issues/14254).
+
+At comparison head `8f79248bf8bb09a0fd56d883086e78334e7d3e35`, the
+[PR 22.04 job](https://github.com/mattjmcnaughton/hagig/actions/runs/40688513118/job/122817010028)
+and [push 22.04 job](https://github.com/mattjmcnaughton/hagig/actions/runs/40688506386/job/122816985848)
+actually ran build, formatting, Clippy, both Linux isolation tests, six scaffold
+tests, and doctests successfully, with zero ignored tests. Independent userns
+and mapped user/network probes both returned 0. Kernel 6.8.0-1064-azure, pinned
+Rust 1.90.0 x86_64-unknown-linux-gnu. Setup logs identify ubuntu-22.04 image
+20261012.322.1; ImageVersion environment metadata reports 20261023.322.3. These
+different metadata values are recorded as observed, not reconciled by guessing;
+the label is OS-version-pinned, not an immutable VM image. AppArmor restriction
+value 0 was observed on these hosts, never changed by the workflow.
+
+The [same-head 24.04 job](https://github.com/mattjmcnaughton/hagig/actions/runs/40688513118/job/122817010345)
+is explicitly NOT a passing isolation host: unrestricted IPv4/IPv6 controls
+succeeded, configured launch failed closed, and independent `unshare` failed
+writing `/proc/self/uid_map` with EPERM. Userns-only control returned 0, mapped
+user/network control returned 1. Kernel 7.0.0-1017-azure; setup image
+20261025.353.1, ImageVersion metadata 20261026.354.1. Restriction value 1 observed;
+the exact responsible LSM rule/first failing production syscall was not uniquely
+established. This is historical required-mode refusal evidence, NOT a passing
+24.04 network-enforcement test. The subsequently accepted explicit-mode contract
+adds a supported disabled path; it does not reinterpret that historical failure.
+
+Read-only namespace diagnostics now run on Linux after both successful and failed
+gates, report both independent probe statuses and expected capability/refusal, and print
+specific kernel/image/policy observations only. They read no secrets and change
+no host security policy. Native Apple Silicon shared/scaffold checks also passed
+at the comparison head; this is not macOS Seatbelt/inference evidence. The rejected
+22-only pin was never published. Final explicit-mode source and transferred policy
+docs require a new complete-task review/resolution and actual exact-head native CI
+before merge. No profile installation, sudo, host policy change or new dependency.

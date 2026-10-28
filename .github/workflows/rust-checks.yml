@@ -15,17 +15,22 @@ permissions:
 
 jobs:
   check:
-    name: Rust (${{ matrix.os }})
+    name: Rust (${{ matrix.os }}; ${{ matrix.suite }})
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Capable-host enforcement evidence, NOT a product support ceiling.
+          # 22.04 retires 2027-04-17; replace this evidence host before brownouts.
           - os: ubuntu-22.04
             host: x86_64-unknown-linux-gnu
+            suite: enforcement
           - os: ubuntu-24.04
             host: x86_64-unknown-linux-gnu
+            suite: disabled-and-refusal
           - os: macos-15
             host: aarch64-apple-darwin
+            suite: portable
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     defaults:
@@ -54,11 +59,23 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Tests
+        env:
+          TEST_SUITE: ${{ matrix.suite }}
         run: |
-          cargo test --locked --all-targets
+          if test "$TEST_SUITE" = disabled-and-refusal; then
+            # These are explicit product-mode checks, NOT enforcement proof.
+            cargo test --locked --test worker_boundary
+            cargo test --locked --test linux_isolation disabled_worker_hygiene_and_failure_contract -- --exact --nocapture
+            cargo test --locked --test linux_isolation required_mode_reports_enforcement_or_refusal -- --exact --nocapture
+            cargo test --locked --test linux_isolation unmapped_user_namespace_fails_closed -- --exact --nocapture
+          else
+            cargo test --locked --all-targets -- --nocapture
+          fi
           cargo test --locked --doc
       - name: Linux namespace diagnostics (read-only)
         if: ${{ always() && runner.os == 'Linux' }}
+        env:
+          TEST_SUITE: ${{ matrix.suite }}
         run: |
           uname -srmo
           printf 'Runner image: %s %s\n' "${ImageOS:-unavailable}" "${ImageVersion:-unavailable}"
@@ -85,6 +102,11 @@ jobs:
           network_status=0
           unshare --user --map-root-user --net /usr/bin/true || network_status=$?
           printf 'user+network namespace/map probe status=%s\n' "$network_status"
-          if test "$user_status" -ne 0 || test "$network_status" -ne 0; then
+          if test "$TEST_SUITE" = disabled-and-refusal; then
+            # Assert observed restricted-host prerequisite; never label refusal enforcement.
+            test "$user_status" -eq 0
+            test "$network_status" -eq 1
+            printf 'Restricted-host evidence: required refusal + explicit disabled; NOT network enforcement\n'
+          elif test "$user_status" -ne 0 || test "$network_status" -ne 0; then
             exit 1
           fi
