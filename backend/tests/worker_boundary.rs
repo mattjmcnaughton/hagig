@@ -5,7 +5,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
-use hagig::launcher::{LaunchError, PlatformLauncher, SandboxedWorkerLauncher};
+use hagig::launcher::{LaunchError, PlatformLauncher, SandboxedWorkerLauncher, WorkerExecutable};
 use hagig::supervisor::{Supervisor, SupervisorError};
 
 // Unrestricted fixtures are compiled ONLY into this integration test binary.
@@ -158,7 +158,7 @@ fn dropping_supervisor_terminates_live_worker_even_with_open_input() {
 #[test]
 fn production_launch_and_executable_fail_closed() {
     assert!(matches!(
-        PlatformLauncher.launch(),
+        PlatformLauncher::unconfigured().launch(),
         Err(LaunchError::IsolationUnavailable)
     ));
     let output = Command::new(env!("CARGO_BIN_EXE_hagig"))
@@ -169,4 +169,22 @@ fn production_launch_and_executable_fail_closed() {
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     assert_eq!(output.stderr, b"worker network isolation is unavailable\n");
+}
+
+#[test]
+fn worker_executable_rejects_relative_paths() {
+    assert!(matches!(
+        WorkerExecutable::new("relative/sensitive-name"),
+        Err(LaunchError::InvalidExecutable)
+    ));
+}
+
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn configured_unimplemented_platform_still_refuses() {
+    let worker = WorkerExecutable::new(std::env::current_exe().unwrap()).unwrap();
+    assert!(matches!(
+        PlatformLauncher::new(worker).launch(),
+        Err(LaunchError::IsolationUnavailable)
+    ));
 }

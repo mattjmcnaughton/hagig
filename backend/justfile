@@ -6,9 +6,11 @@ build:
 
 fmt:
     cargo fmt --all
+    rustfmt --edition 2024 tests/fixtures/linux_worker.rs
 
 fmt-check:
     cargo fmt --all -- --check
+    rustfmt --edition 2024 --check tests/fixtures/linux_worker.rs
 
 lint:
     cargo clippy --locked --all-targets -- -D warnings

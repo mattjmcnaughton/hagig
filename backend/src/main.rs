@@ -6,7 +6,7 @@ use hagig::launcher::PlatformLauncher;
 use hagig::supervisor::Supervisor;
 
 fn main() -> std::process::ExitCode {
-    let mut supervisor = Supervisor::new(PlatformLauncher);
+    let mut supervisor = Supervisor::new(PlatformLauncher::unconfigured());
     if let Err(error) = supervisor.start() {
         eprintln!("{error}");
         return std::process::ExitCode::FAILURE;
