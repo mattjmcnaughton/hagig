@@ -139,7 +139,8 @@ through the real Supervisor: Required must deny both families; Disabled must con
 while preserving the same FD/env/cwd/private-pipe hygiene. A failing Required tool/
 policy must return an error rather than trying Disabled. ACK refusal/reap runs in
 both modes, including slow partial progress that catches per-byte deadline resets.
-These native scenarios remain unexecuted until actual authorized Mac CI runs.
+These native synthetic scenarios passed in the runs recorded below; they are not
+real inference or physical-Mac acceptance.
 An intentionally inheritable high-numbered connected socket must be visible to
 the positive control and absent in the isolated child. A dedicated test subprocess
 injects sentinel/proxy environment without mutating the parallel test runner.
@@ -166,10 +167,10 @@ ran all six actual lenses over the complete integrated diff/new files; no critic
 findings. Resolve-review extracted the unchanged Linux ACK implementation into
 the shared launcher for both adapters and added a full correct-prefix/wrong-version
 ACK case in both Mac modes. Three dependency/test-I/O/artifact inventories are
-intentional approved scope. Native execution is still pending; cross-checks are
-not Mac linking, ABI or enforcement evidence.
+intentional approved scope. Cross-checks alone are not Mac linking, ABI or
+enforcement evidence; subsequent native results are recorded below.
 
-Implementation is local pending reviewed publication and actual native CI. Issue
+Issue
 #4's amended policy/typed API landed in origin/main at f9a80ee and is integrated
 with cfg-gated `mod macos` and `macos::launch(worker, self.network_isolation)`.
 Owner authorized commit/push/PR and automatic native CI plus gated review/resolution
@@ -178,6 +179,39 @@ Unconfigured launchers remain fail-closed;
 respect shared required/disabled behavior on unsupported OSes. The mode amendment
 was explicitly accepted by the owner and root policy lands atomically with #4;
 do not publish against the old policy. No broad bypass was inferred.
+
+### Native checkpoint (2026-10-28)
+
+At PR #17 head `170ba2a3ea03e6bd403440b645ad9daeb6d61da2`, the actual
+[push Seatbelt run](https://github.com/mattjmcnaughton/hagig/actions/runs/40694954743)
+and [PR Seatbelt run](https://github.com/mattjmcnaughton/hagig/actions/runs/40695047523)
+passed build, formatting, Clippy, the filtered three native test groups, all-target
+tests (three Mac groups plus six portable tests) and doctests (zero), zero ignored.
+Logs and all three sanitized artifact files from BOTH runs were downloaded and
+inspected, including `native_probe_step=success` and every expected result line.
+The PR artifact identifies its synthetic merge commit f7e205c; the push artifact
+identifies the exact branch head above. Do not confuse these checkout identities.
+
+- Host: macOS 15.7.9 build 24G830, arm64, runner image macos15/20260907.0337.1;
+  Xcode 16.4 build 16F6, Rust/Cargo 1.90.0, native aarch64-apple-darwin.
+- SHA-256: sandbox-exec
+  `2ff75194b3e5689debee061c69f27f873ca21ff8fc54b7d49cbf5f2fb673f6ea`;
+  policy `d648b0d827fae5c4c0587c72601b989c9839734901718650f5f3898aa98e9111`.
+- Outside IPv4/IPv6 controls connected; default Required returned permission
+  denial for both; explicit Disabled connected to both without a sandbox claim.
+  Both modes passed private pipe exchanges, inherited connected-socket closure,
+  clean environment/root cwd, and failed-bootstrap kill/reap checks.
+- Invalid policy, denied exec, missing tool/target, wrong ACK including full
+  correct-prefix/wrong-version, absent/partial/EOF and slow-progress ACK refused.
+  Total-deadline tests passed. No retry into Disabled occurred.
+- Same-head Rust checks passed on Ubuntu 22.04 (required enforcement), 24.04
+  (explicit Disabled/required refusal) and native Mac; native presentation CI
+  also passed. This does not expand the finite network evidence described here.
+
+Resolve-review disposition: two scoped findings fixed and natively validated,
+three intentional approved inventories skipped, no open critical or policy finding.
+The six-lens report and resolution workspace stay ignored/local, not shipped plans.
+Publication and evidence are not themselves proof of merge or deployment.
 
 Prior local checks in the Linux x86_64 orb with Rust 1.90.0, before the mode API
 amendment (do not infer these revalidated the revised typed seam):
