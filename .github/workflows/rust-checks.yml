@@ -20,6 +20,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - os: ubuntu-22.04
+            host: x86_64-unknown-linux-gnu
           - os: ubuntu-24.04
             host: x86_64-unknown-linux-gnu
           - os: macos-15
@@ -56,9 +58,10 @@ jobs:
           cargo test --locked --all-targets
           cargo test --locked --doc
       - name: Linux namespace diagnostics (read-only)
-        if: ${{ failure() && runner.os == 'Linux' }}
+        if: ${{ always() && runner.os == 'Linux' }}
         run: |
           uname -srmo
+          printf 'Runner image: %s %s\n' "${ImageOS:-unavailable}" "${ImageVersion:-unavailable}"
           for setting in \
             /proc/sys/user/max_user_namespaces \
             /proc/sys/user/max_net_namespaces \
