@@ -55,3 +55,33 @@ jobs:
         run: |
           cargo test --locked --all-targets
           cargo test --locked --doc
+      - name: Linux namespace diagnostics (read-only)
+        if: ${{ failure() && runner.os == 'Linux' }}
+        run: |
+          uname -srmo
+          for setting in \
+            /proc/sys/user/max_user_namespaces \
+            /proc/sys/user/max_net_namespaces \
+            /proc/sys/kernel/unprivileged_userns_clone \
+            /proc/sys/kernel/apparmor_restrict_unprivileged_userns; do
+            if value=$(cat "$setting" 2>/dev/null); then
+              printf '%s=%s\n' "$setting" "$value"
+            else
+              printf '%s=unavailable\n' "$setting"
+            fi
+          done
+          if profile=$(cat /proc/self/attr/current 2>/dev/null); then
+            printf 'Current security profile: %s\n' "$profile"
+          else
+            printf 'Current security profile: unavailable\n'
+          fi
+          unshare --version || printf 'unshare version unavailable (status=%s)\n' "$?"
+          user_status=0
+          unshare --user /usr/bin/true || user_status=$?
+          printf 'user namespace probe status=%s\n' "$user_status"
+          network_status=0
+          unshare --user --map-root-user --net /usr/bin/true || network_status=$?
+          printf 'user+network namespace/map probe status=%s\n' "$network_status"
+          if test "$user_status" -ne 0 || test "$network_status" -ne 0; then
+            exit 1
+          fi
