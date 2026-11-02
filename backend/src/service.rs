@@ -70,16 +70,14 @@ fn packet(value: &serde_json::Value) -> Vec<u8> {
 fn read_before(stream: &mut UnixStream, bytes: &mut [u8], deadline: Instant) -> SafeResult<()> {
     let mut offset = 0;
     while offset < bytes.len() {
-        let remaining = deadline
-            .checked_duration_since(Instant::now())
-            .ok_or("connection_timeout")?;
-        stream
-            .set_read_timeout(Some(remaining))
-            .map_err(|_| "connection_read_timeout_setup_failed")?;
+        if Instant::now() >= deadline {
+            return Err("connection_timeout");
+        }
         match stream.read(&mut bytes[offset..]) {
             Ok(0) => return Err("connection_read_eof"),
             Ok(n) => offset += n,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => (),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(TICK),
             Err(_) => return Err("connection_read_failed"),
         }
     }
@@ -96,16 +94,14 @@ fn exchange(stream: &mut UnixStream, kind: &str) -> SafeResult<serde_json::Value
     let outgoing = packet(&value);
     let mut offset = 0;
     while offset < outgoing.len() {
-        let remaining = deadline
-            .checked_duration_since(Instant::now())
-            .ok_or("connection_timeout")?;
-        stream
-            .set_write_timeout(Some(remaining))
-            .map_err(|_| "connection_write_timeout_setup_failed")?;
+        if Instant::now() >= deadline {
+            return Err("connection_timeout");
+        }
         match stream.write(&outgoing[offset..]) {
             Ok(0) => return Err("connection_write_zero"),
             Ok(n) => offset += n,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => (),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(TICK),
             Err(_) => return Err("connection_write_failed"),
         }
     }
