@@ -1,15 +1,11 @@
-//! Scaffold entry point; not the future transcribe/server/model-install CLI.
+//! Lifecycle CLI; real transcription/model installation is not implemented.
 
 #![forbid(unsafe_code)]
 
-use hagig::launcher::PlatformLauncher;
-use hagig::supervisor::Supervisor;
-
 fn main() -> std::process::ExitCode {
-    let mut supervisor = Supervisor::new(PlatformLauncher::unconfigured());
-    if let Err(error) = supervisor.start() {
+    if let Err(error) = hagig::service::cli() {
         eprintln!("{error}");
-        return std::process::ExitCode::FAILURE;
+        return std::process::ExitCode::from(if error == "busy" { 3 } else { 1 });
     }
     std::process::ExitCode::SUCCESS
 }

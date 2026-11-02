@@ -71,8 +71,10 @@ fn private_ipc_and_relaunch_after_reap() {
     let launcher = ControlledLauncher::echo();
     let pids = launcher.pids.clone();
     let mut supervisor = Supervisor::new(launcher);
+    assert_eq!(supervisor.child_id(), None);
     for request in ["first asymmetric fixture", "second request"] {
         let mut pipes = supervisor.start().unwrap();
+        assert_eq!(supervisor.child_id(), pids.lock().unwrap().last().copied());
         assert!(matches!(
             supervisor.start(),
             Err(SupervisorError::AlreadyRunning)
@@ -90,7 +92,13 @@ fn private_ipc_and_relaunch_after_reap() {
         let response = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
         assert_eq!(response, format!("reply:{request}"));
         reader.join().unwrap();
+        assert_eq!(
+            supervisor.child_id(),
+            pids.lock().unwrap().last().copied(),
+            "ownership persists until reap"
+        );
         supervisor.stop().unwrap();
+        assert_eq!(supervisor.child_id(), None);
         supervisor.stop().unwrap();
         assert_reaped(&pids);
     }
@@ -183,7 +191,9 @@ fn production_launch_and_executable_fail_closed() {
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
-    assert_eq!(output.stderr, b"worker network isolation is unavailable\n");
+    // The lifecycle CLI now rejects the legacy bypass as an unknown argument;
+    // it still must not silently launch an unrestricted worker.
+    assert_eq!(output.stderr, b"invalid_arguments\n");
 }
 
 #[test]
