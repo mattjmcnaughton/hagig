@@ -1,9 +1,13 @@
 # Hagig private-alpha technical design
 
-Status: proposed implementation design; no native implementation or spike results
-exist yet. Swift/Rust ownership, worker isolation, local processing, and safe
-delivery are agreed boundaries. Concrete protocols, paths, limits, CLI syntax,
-and timeout defaults below are proposals to implement or revise with evidence.
+Status: copy-only alpha implementation design, not a working alpha. The native
+synthetic shell and merged #7 controlled lifecycle/launch code exist; see
+[native guidance](../../../clients/macos/AGENTS.md) and
+[backend guidance](../../../backend/AGENTS.md) for implemented commands/evidence.
+Real transcription, TOML integration, editable review and local `.app` assembly
+remain planned. #6/PR18 is a blocked partial candidate, not inference adoption.
+Agreed scope is in the PRD; unimplemented protocol/configuration details below
+remain proposals unless explicitly identified as settled owner choices.
 
 Read the [constitution](../../CONSTITUTION.md) and [MVP PRD](../../product/prds/01-mvp.md) first. This
 document does not certify dependency privacy or model performance.
@@ -18,8 +22,8 @@ Rust CLI ──────── Unix-domain socket ──┘                  
                                                                   Parakeet TDT
 ```
 
-- **Swift app:** AppKit menu-bar lifecycle, global shortcut, permissions, microphone
-  capture/conversion, intended-destination identity, final delivery, and fallback UI.
+- **Swift app:** AppKit menu-bar Record/Stop lifecycle, permissions, microphone
+  capture/conversion, in-memory editor and explicit current-device-only Copy.
 - **Rust server:** single-request admission, authoritative backend request state,
   configuration/model validation, audio buffering, worker supervision, and cancellation.
 - **Rust worker:** native inference, plus any adopted native audio decoding. Native crashes remain
@@ -30,8 +34,9 @@ Rust CLI ──────── Unix-domain socket ──┘                  
 Start with one Rust package containing shared protocol/state/configuration code
 and separate executable entry points. Do not create a crate per process merely
 because there are several executables. The Swift app lives in `clients/macos/`.
-The package layout and exact build commands should be established with the first
-validated scaffold, not invented as working commands in the README now.
+The scaffold is implemented in `backend/`; use its guidance for current commands.
+Complete app build/terminal launch commands belong to #23 once validated; do not
+invent them as working instructions now.
 
 Keep portable backend code free of AppKit, Accessibility, and macOS permission
 logic. This preserves a credible Linux path without a Linux desktop implementation.
@@ -54,10 +59,10 @@ availability and behavior on supported macOS versions as a validation gate, not
 a stable long-term platform guarantee. Disabling isolation is an intentional
 configuration choice, never an implicit retry after sandbox setup fails.
 
-The initial Linux approach is a separate network namespace, as exercised by the
-local inference experiment with `unshare -Urn`. Unprivileged user namespaces may
-be restricted by the host. This is a candidate production launch mechanism, not
-a claim of portability to every Linux installation.
+The implemented Linux launcher uses separate user/network namespaces.
+Unprivileged namespaces may be restricted by the host; enforcement or refusal
+evidence for the controlled worker is not real-inference privacy certification
+or a claim of portability to every Linux installation.
 
 In required mode, establish isolation before native loading. In both modes, the
 worker communicates through private pipes, not the server's Unix socket. Close
@@ -115,13 +120,13 @@ Do not claim Core ML/Neural Engine acceleration without observing the actual pat
 ## 3. Configuration and filesystem locations
 
 Use TOML only for the alpha. YAML in the prototype was an alternative representation,
-not another format to implement. Proposed schema:
+not another format to implement. Proposed schema (not parsed by the scaffold yet):
 
 ```toml
 # $XDG_CONFIG_HOME/hagig/config.toml
 # Default: ~/.config/hagig/config.toml, including on macOS.
-[shortcut]
-hold = "ctrl+shift+space" # Example; validate against the owner's shortcuts.
+[editor]
+mode = "standard" # Default. Optional "vim" selects the bounded table in §8.
 
 [model]
 id = "parakeet-tdt-0.6b-v2" # Candidate alias resolved by the pinned manifest.
@@ -135,7 +140,7 @@ terms = ["Hagig", "Ghostty", "sherpa-onnx", "Parakeet", "Amp"]
 
 The Rust server parses and validates configuration; Swift receives only its needed
 settings through the protocol, not the vocabulary. Reject unknown keys, unsupported
-model aliases, invalid shortcuts, and invalid types with field names and error
+model aliases, unknown editor modes, and invalid types with field names and error
 codes, not raw offending values. Read configuration at server startup. For the
 alpha, apply edits by quitting the app, running `hagig stop`, and relaunching the
 app. No file watcher or live reload command is needed; an active request's settings
@@ -148,9 +153,9 @@ request. Report the selected mode in content-free status so explicit opt-out can
 be mistaken for sandbox enforcement. The scaffold's launcher-mode API can precede
 TOML/server integration; documenting this field does not make it executable today.
 
-Shortcut syntax and supported key combinations need one documented grammar and
-shared fixtures between Rust validation and Swift interpretation. The example
-binding is not an accepted conflict-free default on the owner's machine.
+The settled editor choices are Standard by default and explicit Vim opt-in.
+Reject unknown values; no global shortcut field or key-hook permission is needed
+in this milestone. Native key routing and the bounded command table are in §8.
 
 | Purpose | Proposed location/policy |
 | --- | --- |
@@ -182,6 +187,13 @@ if unpacking archives. A failed install must not replace a valid installation.
 Normal loading resolves only installed manifest entries, validates the expected
 assets, and returns `model_missing` or `model_invalid` without attempting recovery
 networking. A versioned installation must not change beneath a warm worker.
+
+Local-first plan (#23), not an implemented build/install recipe: build from a
+clone and launch the resulting relocatable `.app` from a terminal. The eventual
+verified instructions must name prerequisites, exact build command, artifact,
+terminal launch command, explicit model install and stop/relaunch procedure.
+No `/Applications` placement, Homebrew or public release is required. #24 owns
+later distribution; it is not a prerequisite for this source-build workflow.
 
 Bundle the app, server, worker, CLI, and required native libraries together.
 Resolve helper paths relative to the installed bundle, not ambient PATH or the
@@ -238,7 +250,7 @@ Proposed controls:
 
 | Message | Contract |
 | --- | --- |
-| `hello` / `hello_ok` | Negotiate protocol version; report display model, shortcut, capture format and limits; no vocabulary |
+| `hello` / `hello_ok` | Negotiate protocol version; planned app settings include display model, editor mode, capture format and limits; no vocabulary |
 | `begin` / `accepted` | Reserve the single active slot before app recording or CLI audio submission; freeze configuration generation and model identity |
 | `end_audio` | Finish PCM submission and start inference |
 | `cancel` / `cancelled` | Cancel the connection's matching request; idempotent acknowledgment for an already terminal request |
@@ -254,7 +266,7 @@ native unsafe code, move that decoding into an isolated helper/worker rather tha
 loading it into the server. Do not pass arbitrary filesystem paths to the server.
 
 Reserve the slot before capture to avoid five minutes of recording followed by
-busy rejection. Keep audio in the Swift process until release, then submit bounded
+busy rejection. Keep audio in the Swift process until Stop/cap, then submit bounded
 chunks. The server buffers the complete request in memory, then forwards it over
 private worker pipes using the same bounded framing. Five minutes of canonical
 PCM is 19,200,000 bytes per full buffer; peak memory includes multiple buffers and
@@ -286,16 +298,16 @@ generation as well as the request identity; a stale worker response cannot match
 a new request that reuses a client ID.
 
 Swift additionally owns local states: ready, awaiting admission, recording,
-uploading/transcribing, result pending, fallback, delivery initiated, and cancelled.
+uploading/transcribing, review/editing, copy initiated, and cancelled.
 The server cannot enforce final UI delivery; **both sides must invalidate work**.
 
-- On Escape, first invalidate the local generation and discard pending display/
-  delivery work, then send cancellation. Do not wait for an acknowledgment before
-  preventing delivery.
-- Serialize cancel, result handling, focus checks, and delivery initiation through
+- On Escape/Cancel during capture or transcription, first invalidate the local
+  generation and discard pending display/delivery work, then send cancellation.
+  Do not wait for an acknowledgment before preventing delivery.
+- Serialize cancel, result handling, editor changes and Copy initiation through
   the app's main-actor state. Recheck the live generation immediately before any
-  display, clipboard write, or paste request.
-- Shortcut release/cancellation before admission completes must not later start
+  display or clipboard write. Vim review Escape is mode switching, not Cancel.
+- Stop/cancellation before admission completes must not later start
   microphone capture. Cancel a subsequently accepted reservation.
 - Server cancellation invalidates the request before stopping native computation.
   If inference cannot be interrupted safely, terminate the worker; never call
@@ -305,61 +317,72 @@ The server cannot enforce final UI delivery; **both sides must invalidate work**
 - A worker crash fails that request. Do not retry the recording automatically;
   restart lazily for the next user request and avoid an automatic crash loop.
 
-Cancellation that wins before delivery initiation prevents delivery. Cancellation
-after a clipboard write or paste request cannot undo that effect; communicate
+Cancellation that wins before display/Copy initiation prevents that effect. Cancellation
+after a clipboard write cannot undo that effect or the user's later paste; communicate
 the boundary accurately. Tests must exercise both orderings rather than promise
 an impossible rollback.
 
-The fallback transcript is app-owned memory after server completion. Starting a
-new recording discards any previous fallback; do not accumulate a transcript list.
+The review transcript, Vim register and undo state are app-owned memory after
+server completion. Dismiss, a new recording or app exit discards them; do not
+accumulate a transcript list or serialize editor state.
 
-## 8. macOS capture, focus verification, and delivery
+## 8. macOS capture, editable review and Copy
 
 Use native microphone capture and sample-rate conversion. Check permissions before
 recording, handle device loss/interruption explicitly, and never persist captured
 audio. An interruption cancels capture rather than delivering an unexplained
 partial prompt. The five-minute cap intentionally produces a partial recording;
-it is a separate, documented completion path. Warn 15 seconds before the cap as
-the proposed PRD default. Release and cap firing must converge on one completion.
+it is a separate, documented completion path. Warn at 4:45; Stop and 5:00 cap
+firing must converge on one completion. Cancel discards rather than transcribes.
+Record/Stop are menu-bar controls; there is no global shortcut or key injection.
 
-Use Accessibility/native application identity APIs to snapshot the intended app,
-window, and focused editable element at recording start. Snapshot only identity
-and capability metadata needed for delivery, not destination text or screen
-contents. App PID alone is insufficient. Exclude password/secure inputs.
+Every live nonempty result enters editable review. Standard native editing is the
+default. Optional Vim mode is selected by the TOML schema in §3. This table is the
+bounded agreed command set, not a promise of full Vim compatibility:
 
-Before automatic delivery, verify the same live input/window/app identity and
-observe focus changes throughout the session. Once destination identity changes,
-is lost, or cannot distinguish a relevant tab/pane/input transition, use fallback
-even if the user later returns. Do not silently treat a terminal-wide accessibility
-element as proof of a particular pane. Do not activate the destination application.
+| Area | Supported keys / behavior |
+| --- | --- |
+| Modes | Vim starts in Normal with a visible mode label; Normal, Insert, character Visual and line Visual; `i`/`a` enter Insert before/after cursor, Escape returns to Normal, `v`/`V` enter character/line Visual |
+| Motions | `h`/`j`/`k`/`l`, `w`/`b`/`e`, `0`/`$`, `gg`/`G`, counts for supported motions/commands |
+| Changes | `x`, `dd`, `dw`, `cw`; `cw` enters Insert |
+| Register | `yy`, `p`; Vim deletes/yanks/paste use an in-memory register, never the macOS clipboard |
+| History | `u`, `Ctrl-R`; in-memory undo/redo, cleared with the transcript |
+| Native editing | Cmd-A selects all; Cmd-C copies selected text; Copy all / Cmd-Shift-C copies the entire edited buffer. Native paste and undo remain available; every system clipboard cut/copy route uses the currentHostOnly writer |
+| Enter | Inserts a newline only in Standard editing or Vim Insert mode; never submits |
+| Excluded | Ex commands, plugins, macros, dot-repeat, external editor integration and broader Vim emulation |
 
-**This is a blocking feasibility question, not a proven API solution.** Ghostty
-may not expose enough input identity, and browser editors differ. The native spike
-must test actual pane/tab/input changes and the focus race immediately around
-clipboard/paste initiation. If macOS cannot support sufficiently safe automatic
-delivery for a target, ship safe fallback there only with explicit owner acceptance
-of that limitation; do not quietly relax the constitution or AC1/AC2.
+Fixtures must exercise the entire table in multiline and empty text, word/line
+boundaries, counts, mode transitions, Visual selections, undo/redo and register
+lifetime; unsupported commands must not invoke an external editor or write the
+clipboard. Escape in review is an editor-mode action; Dismiss is explicit and
+keyboard-accessible. Standard editing and native Command routes must remain usable
+with Vim enabled. #22 implements/tests these details, not this document.
 
-After final identity/generation validation, write the general pasteboard using
-the current-device-only option and request the ordinary paste action. Never send
-Enter. Keep the gap between validation and paste minimal; changing focus races
-must be investigated, not dismissed as solved by a single API call. Do not claim
-a universal destination acknowledgment.
+One app-owned clipboard adapter must mediate the Copy button, keyboard equivalents,
+menu/context-menu Copy and Cut, and native Command-C/Command-X in either editor
+mode. Use `NSPasteboard` current-device-only writes (`currentHostOnly`); do not let
+a default text-view responder bypass that policy. Explicit Copy all / Cmd-Shift-C
+copies the entire current edited buffer; Cmd-C and native selection Copy/Cut act
+on the selected text. Empty text must not clobber the clipboard.
+Vim's register operations never use that adapter. Native paste reads the clipboard
+into review only; it never targets another application. No clipboard change on
+result display, edits, internal Vim operations or Dismiss. Copy feedback reflects
+write success and is invalidated by edits; failure retains text for retry.
 
-Explicit Copy uses the same current-device-only pasteboard write but no focus
-verification or simulated paste. It follows an intentional click/key activation
-on the fallback UI. Once the clipboard write occurs, cancellation cannot undo it.
-Do not restore or clear the user's clipboard in the alpha.
+Do not restore or clear the user's clipboard. Current-device-only writes do not
+control local clipboard managers or destination retention/transmission. Require
+the second-device check with an ordinary-copy positive control in PRD AC5.
 
-Use a nonactivating status surface for routine recording/transcription feedback.
-If the UI surface itself changes focus, it invalidates automatic delivery rather
-than granting itself a focus-verification exception. Interactive fallback appears
-only after automatic delivery has been abandoned. Respect reduced-motion settings,
-use native accessibility labels, and show the installed model's display name.
+No Accessibility destination inspection, app/window/input identity snapshot,
+focus restoration, simulated paste, or automatic submission is in this milestone.
+The constitution's stricter rules still govern any future automatic delivery;
+AC1/AC2 destination work is deferred, not a blocking feasibility spike for Copy.
+Review can take editor focus intentionally. Routine feedback must not activate a
+destination. Respect reduced motion, native accessibility names and model display.
 
 ## 9. CLI contract
 
-Proposed alpha commands, not currently executable:
+Planned alpha command surface; `transcribe` and `model install` are not implemented:
 
 ```text
 hagig transcribe <audio.wav>
@@ -367,6 +390,13 @@ hagig model install <manifest-id>
 hagig status
 hagig stop
 ```
+
+`status` and `stop` already exist in #7's controlled lifecycle CLI. Current
+`start --fake-worker` and `fake-request --fake-worker` explicitly select a
+controlled fake, never inference or model installation. Both modes of that slice
+and its build instructions live in backend guidance; no complete app startup
+command exists yet. App launch must eventually start/connect to the bundled real
+server, not silently select the fake worker.
 
 Accept PCM WAV at 16-bit integer or 32-bit float, mono/stereo, 16/44.1/48 kHz,
 maximum five minutes; convert/resample deterministically. Reject unsupported or
@@ -405,6 +435,22 @@ path. Explicit installer traffic is distinct from forbidden runtime traffic.
 Observe actual network attempts and local writes, not just successful connections.
 Test missing/corrupt models with networking both available and blocked.
 
+### Tool and dependency approval inventory
+
+This documentation change needs no new dependency, installation or tool.
+Repository guidance owns approval policy; this inventory records its application
+to the milestone, not an additional grant:
+
+| Surface | Approval / constraint |
+| --- | --- |
+| Rust starting set | `tokio` (needed features only), `serde`, `serde_json`, `clap`, `toml`, either `rustix` or `nix` when std is insufficient (not both), `tempfile` for tests; existing backend uses rustix |
+| Inference | Existing pinned sherpa-onnx candidate only subject to #6/#25 adoption; audit transitive/native build, model-loader and download paths, licensing separately from privacy; no new engine/plugin framework |
+| Native editor/UI | Existing Swift/AppKit/SwiftUI and shared render harness; no external editor, Vim dependency or new tool needed for this contract |
+| Build/test | Existing Rust/Swift/Xcode and repository commands; GitHub-hosted native CI for development, normal automatic CI allowed in this run; ask before any manual workflow dispatch |
+| Network observation | Distro-packaged strace approved for Linux observation only, not an app dependency; other new development tools need specific approval |
+| Not selected | Download/checksum/WAV/resampling libraries and additional build tools require owner approval before introduction; no DI or async-trait crate needed |
+| Packaging | Local ad-hoc signing as needed; public certificates/notarization, releases and Homebrew-tap writes deferred and not granted |
+
 ## 11. Verification strategy
 
 Map implementation tickets to the PRD's AC identifiers. Keep enduring tests at
@@ -417,7 +463,7 @@ tests of private call order or decorative formatting.
 | Portable Rust | Framing/limits, busy admission, startup contention, configuration validation, malformed audio, request-owner disconnect, cancellation/late results, worker crash/deadline recovery, CLI stdout/errors/input preservation |
 | Inference integration | Actual pinned model; paired boosted/unboosted fixtures and controls, silence, supported WAV variants, long audio, cold/warm latency and memory |
 | macOS build | Swift target and bundled Rust helpers/native library linkage on macOS; Linux success is not a macOS build |
-| Physical Mac | Global shortcut, permissions, microphone/device loss, nonactivating feedback, Ghostty/Chrome identity changes, cancel/delivery races, current-device-only clipboard, installation and performance |
+| Physical Mac | Record/Stop, permissions, microphone/device loss, native editor/keyboard routing, cancel/Copy races, second-device clipboard control, relocated local app and human usefulness; owner final tests deferred |
 | Privacy | Distinct source inspection, observed network/write behavior, blocked-network operation; include failure and recovery paths |
 
 Automated fake-worker tests should intentionally return results after cancellation,
@@ -427,41 +473,46 @@ cleanup, not just returned text. An additional Apple device is needed for the
 observational Universal Clipboard check; API inspection alone is not that evidence.
 
 The prototype's browser checks establish only the HTML artifact's behavior.
-GitHub macOS build jobs and VMs can help but do not replace physical-Mac acceptance.
-Do not assume acceleration availability in a VM.
+GitHub-hosted macOS build, shared-view rendering and feasible automated native
+interaction checks are the development path. Prove/inspect the Ready artifact
+path before representative state collection; the synthetic shell has historical
+render evidence, not real capture/editing evidence. Hosted checks do not replace
+physical-Mac, second-device or human-corpus acceptance. Use synthetic non-sensitive
+public fixtures only; do not assume acceleration availability in a VM. PRD §5
+owns the AC-to-ticket/environment evidence matrix; do not duplicate it here.
 
 ## 12. Spike-first implementation sequence
 
-This is an ordering proposal, not a created ticket backlog. Bound each spike to
-one focused investigation and review the result before expanding it. A proposed
-timebox is 1–2 working days per spike once its environment and fixtures are ready.
-An exhausted timebox produces findings and a decision request, not an endless
-prototype or an unsupported pass. Keep independently useful experimental code only
-when its ownership and verification are clear.
+The ticket backlog now exists; this table retains bounded risk investigations,
+not a new architecture or an additional time/spend cap. #7 is merged and present;
+do not reimplement it. Keep experiments scoped and report exhausted evidence paths
+honestly rather than claiming acceptance. #6 remains blocked/partial in PR18.
 
 | Spike | Question, evidence, and exit decision | Unblocks |
 | --- | --- | --- |
-| S1: inference and vocabulary | Can Rust run the candidate, improve technical vocabulary without material control regressions, and plausibly meet AC6–AC8? Produce build recipe, exact artifacts, paired outputs, latency/memory and long-input results. Proceed with pins, narrow the binding gap, or propose a different candidate. | Model adoption, worker, audio conversion, performance budgets |
-| S2: native destination safety | Can Ghostty and Chrome/Amp expose stable intended-input identity and accept paste without focus theft/submission? Exercise tab/pane/input changes, cancellation races, permissions and clipboard locality. Proceed per target or bring an explicit fallback-only limitation/design change for review. | Capture/delivery shell, permission UX, platform acceptance scope |
+| S1: inference and vocabulary (#6) | Can Rust run the candidate and expose boosting? Produce build recipe, exact artifacts, paired outputs, latency/memory and long-input measurements under AC6–AC8; numeric targets are not first-working-app gates. Resolve binding/adoption blockers with evidence, not assumed adoption. | Real worker/file transcription, audio conversion |
+| S2: native copy-only path (#21/#22) | Validate Record/Stop/cap/Cancel, editable Standard/Vim review, all currentHostOnly cut/copy routes and keyboard/accessibility behavior. No destination-identity or automatic-paste spike in this milestone. | Usable capture/review/Copy, final platform acceptance |
 | S3: packaging and privacy | Can the chosen native stack run from a relocatable self-contained bundle without forbidden runtime behavior? Produce loader/install evidence plus separate source/network/write/blocked-network findings. Proceed, patch dependencies, or reject adoption. | Distribution layout, dependency lock-in, alpha installation |
 
-S1 and S2 can run independently once Mac execution is available. Begin source
+S1 and S2 can run independently using hosted Mac development evidence. Begin source
 privacy review during S1 rather than after adoption; S3's final native packaging
 and runtime evidence depends on the candidate S1 selects. Stop early on a privacy
 violation rather than spending the remaining spike budget on speed measurements.
 
 Then implement vertical slices:
 
-1. **Reproducible scaffold:** portable Rust checks plus a buildable minimal Swift
-   target and Mac execution instructions. No speculative framework layers.
+1. **Existing scaffold:** #7 controlled lifecycle and synthetic Swift shell are
+   present. Extend them; their fake/synthetic results are not real dictation.
 2. **File to text:** real CLI → server → isolated worker, explicit model install,
    WAV input, one active request, errors and cancellation. AC8–AC13 as applicable.
-3. **Hold to safe fallback:** Swift capture → same server → in-memory transcript,
-   Copy/Dismiss, state feedback, duration cap and permissions. AC3–AC5, AC9, AC14.
-4. **Verified delivery:** enable automatic paste only for spike-validated inputs;
-   complete Ghostty/Chrome safety matrix. AC1–AC5.
-5. **Daily-use alpha:** bundle installation, warm-path tuning, held-out usefulness
-   corpus, privacy/failure evidence, and full acceptance run. AC1–AC14.
+3. **Record to review:** #21 Swift capture → same server → #22 editable in-memory
+   transcript, explicit Copy/Dismiss, cap and permissions. AC3–AC5, AC9, AC14.
+4. **Local bundle:** #23 can begin bundle feasibility early; its built artifact
+   against integrated capture/editor/backend feeds final #10 acceptance. Do not
+   make their issue closure dependencies circular.
+5. **Daily-use alpha:** #10 held-out human measurements and mandatory privacy/
+   failure evidence; owner physical Mac/second-device tests remain deferred, not
+   satisfied by CI. #24 public distribution follows separately.
 
 Each eventual ticket should name a user-visible or risk-retirement outcome, relevant
 ACs/constitutional boundaries, dependencies, bounded scope, verification environment,
@@ -470,18 +521,24 @@ Create external tracker issues only when requested.
 
 ## 13. Decisions to review, and evidence still missing
 
-Owner review is requested for the PRD's proposed corpus thresholds and the design's
-WAV-only CLI, restart-to-apply configuration, resource caps, warning timing, and hard deadlines.
-These are reversible defaults, not new constitutional commitments.
+Settled owner choices: Standard default, optional bounded Vim, menu-bar Record/
+Stop without a global shortcut, 5:00 cap/4:45 warning, local bundle before separate
+distribution, required-default/explicit-disabled isolation, and functionality-first
+numeric measurements. Do not reopen these as unanswered gates. WAV formats,
+restart-to-apply configuration, remaining resource caps and hard deadlines retain
+their proposed status until implementation evidence validates them; changes must
+not silently alter safety/privacy commitments.
 
 No review can substitute for these still-unverified facts:
 
 - Exact Rust binding coverage and model/tokenizer/native dependency pins.
-- Ghostty pane/tab and Chrome input identity fidelity, including delivery races.
+- Native capture/editor/clipboard routing and cancellation boundary behavior.
 - Actual latency, correction burden, memory use, native loading, and privacy behavior.
-- Physical-Mac execution path and fixture handling; no live runner was connected
-  when planning began.
+- Validated local app build/terminal launch recipe, hosted exact-head evidence,
+  and owner final physical-Mac/human/second-device tests and consented fixtures.
 
 Resolve technical unknowns through S1–S3. If evidence contradicts an agreed product
 or constitutional requirement, document the conflict and obtain an explicit decision;
-do not relabel an unsafe or slow implementation as satisfying the requirement.
+do not relabel an unsafe implementation as satisfying the requirement. Missed
+numeric performance/usefulness targets must be reported as measurements, not
+misrepresented as either passing results or unagreed first-working-app blockers.
