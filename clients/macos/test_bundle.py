@@ -15,7 +15,7 @@ class BundleContracts(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="hagig bundle contracts ")
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.mac = self.root / "clients/macos"
         self.mac.mkdir(parents=True)
         (self.root / "backend").mkdir()
