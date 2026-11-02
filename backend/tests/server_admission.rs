@@ -686,6 +686,52 @@ fn admission_ownership_malformed_and_reuse() {
 }
 
 #[test]
+fn stop_suppresses_serialized_unsent_success() {
+    let mut service = Service::controlled();
+    let mut owner = service.client();
+    let mut observer = service.client();
+    fake_control(&mut observer, json!({"fake_pause_delivery":true}));
+    assert_eq!(begin(&mut owner)["type"], "accepted");
+    send(
+        &mut owner,
+        json!({"version":1,"type":"end_audio","request_id":"same"}),
+    );
+    let pending = wait_status(&mut observer, "pending_results");
+    assert_eq!(pending["pending_completions"], 0);
+    assert_eq!(pending["state"], "idle");
+    let pid = pending["worker_pid"].as_u64().unwrap();
+    assert!(
+        Command::new("/bin/kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    // Pipeline release behind Stop: if suppression is missing, the queued
+    // result keeps shutdown open and becomes writable on the following tick.
+    let mut controls = Vec::new();
+    for control in [
+        json!({"version":1,"type":"stop"}),
+        json!({"version":1,"type":"fake_test","fake_pause_delivery":false}),
+    ] {
+        let payload = serde_json::to_vec(&control).unwrap();
+        controls.push(1);
+        controls.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        controls.extend(payload);
+    }
+    observer.write_all(&controls).unwrap();
+    assert_eq!(receive(&mut observer)["type"], "stopped");
+    let mut byte = [0];
+    assert_eq!(
+        owner.read(&mut byte).unwrap(),
+        0,
+        "stop must close without starting delivery of serialized unsent success"
+    );
+    service.stopped();
+    assert_dead(pid);
+}
+
+#[test]
 fn stop_suppresses_success_already_waiting_for_completion() {
     let mut service = Service::controlled();
     let mut owner = service.client();
