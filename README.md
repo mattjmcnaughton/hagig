@@ -14,30 +14,37 @@ The shell and native screenshot harness share SwiftUI views. The first
 [native CI evidence](https://github.com/mattjmcnaughton/hagig/actions/runs/40509803030)
 passed build and three presentation tests on macOS 15.7.9 arm64 / Xcode 16.4;
 both Ready images and 26 state images were inspected. This establishes static
-view rendering, not application interactions or dictation. There are no installation
-packages or implemented transcription features. Draft [MVP product requirements](docs/product/prds/01-mvp.md) and
-[technical design](docs/technical/tdds/01-mvp.md) describe the private alpha, acceptance
-criteria, and spike-first implementation sequence. They distinguish agreed
-requirements from proposed defaults and unverified capabilities. The behavior
-below describes the intended product.
+view rendering, not application interactions or dictation. The merged #7
+[controlled backend lifecycle](backend/AGENTS.md) supports a separate fake worker,
+single-request admission, cancellation and server stop; it is not transcription.
+There are no installation packages or implemented transcription features. The
+#6 candidate in [PR #18](https://github.com/mattjmcnaughton/hagig/pull/18) remains
+partial and blocked; inference has not passed its adoption gate.
+[MVP product requirements](docs/product/prds/01-mvp.md) own copy-only scope and
+acceptance; the [technical design](docs/technical/tdds/01-mvp.md) owns configuration,
+the bounded Vim key table and implementation contracts. The behavior below is
+intended, not a claim that the alpha works today.
 
 The [product prototype](docs/product/prototypes/README.md) preserves the reviewed
 UI concept as an editable, standalone browser simulation, not native app code.
 
 ## Intended experience
 
-1. Hold a configurable global shortcut and speak.
-2. Release the shortcut to transcribe locally.
-3. Paste into the verified, still-focused destination, including a coding-agent
-   terminal. Never automatically press Enter or submit text.
+1. Choose Record in the menu-bar app and speak; choose Stop to transcribe locally.
+2. Review and edit the in-memory transcript: Standard editing is the default;
+   optional bounded Vim editing is selected through TOML.
+3. Explicitly Copy, then manually switch to Ghostty or Chrome/Amp and paste and
+   submit yourself. Dismiss discards the pending text.
 
-If the destination changed or cannot be verified, show the transcript with Copy
-and Dismiss instead. Both automatic paste and explicit Copy use the general
-clipboard with cross-device Universal Clipboard sharing disabled for that write.
+No global shortcut, automatic paste, destination inspection, focus restoration or
+automatic submission is part of this milestone. Copy and any native clipboard
+cut/copy route must disable cross-device Universal Clipboard sharing for that
+write. Vim's internal register stays in memory, not the system clipboard.
 
 Escape cancels recording or transcription and prevents later delivery of that
-request's result. Recording is capped at five minutes, with a warning before the
-limit; reaching the limit stops capture and transcribes the audio already recorded.
+request's result. Recording is capped at five minutes, with a warning at 4:45;
+reaching the limit stops capture and transcribes the audio already recorded once.
+In Vim review, Escape returns to Normal mode rather than dismissing the transcript.
 
 The focus is spoken instructions, not literal source-code dictation. Recognition
 of project names and technical vocabulary matters, so vocabulary boosting is an
@@ -45,8 +52,8 @@ MVP requirement. Initial transcription is English-only.
 
 ## Intended architecture
 
-- **Swift macOS app:** shortcut handling, microphone capture, permissions, focus
-  checks, and text delivery. Its home is `clients/macos/`; only synthetic
+- **Swift macOS app:** menu-bar Record/Stop, microphone capture, permissions,
+  in-memory editing and explicit Copy. Its home is `clients/macos/`; only synthetic
   presentation and explicit Copy are implemented in the initial shell.
 - **Rust server:** session state and inference-worker supervision.
 - **Rust worker:** a separate process calling an existing speech-recognition
@@ -63,8 +70,9 @@ cancels active work and shuts down the worker and server.
 
 The first inference configuration to evaluate is **sherpa-onnx with NVIDIA
 Parakeet TDT 0.6B v2**, using modified beam search for vocabulary boosting. Native
-packaging, Rust binding coverage, accuracy, latency, and privacy remain validation
-gates—not established capabilities of this repository.
+packaging, Rust binding coverage and privacy remain validation gates; accuracy
+and latency require measurements, not first-working-app numeric gates. None is
+an established capability of this repository.
 
 Configuration will be human-editable text at
 `$XDG_CONFIG_HOME/hagig/config.toml`, defaulting to
@@ -91,12 +99,20 @@ privacy guarantees.
 ## Scope and development
 
 The MVP excludes a Linux desktop app, MCP integrations, coding-agent plugins, and
-a general inference-engine plugin framework. Self-contained macOS distribution is
-the target; packaging and signing are not implemented.
+a general inference-engine plugin framework. A clone-buildable, relocatable local
+`.app` launched from a terminal is planned in #23, not implemented. No Homebrew,
+public release, notarization or `/Applications` placement is a prerequisite;
+distribution is separately tracked in #24. Existing runnable scaffold commands
+live in [backend guidance](backend/AGENTS.md) and native guidance below; they do
+not build or launch the planned complete app.
 
 Linux can validate portable Rust behavior and inference experiments. macOS builds
-and physical-Mac acceptance remain necessary for microphone permissions, global
-shortcuts, focus checks, paste behavior, clipboard locality, and performance.
+and physical-Mac acceptance remain necessary for microphone permissions, native
+editing/copy behavior, clipboard locality, packaging and human usefulness. Hosted
+macOS CI supports development; final owner physical-Mac, human-corpus and
+second-device checks are deferred, not replaced by synthetic or hosted results.
+Numeric performance/usefulness/vocabulary targets are measurements for the first
+working app, not blockers; mandatory safety/privacy gates remain unchanged.
 
 Read [AGENTS.md](AGENTS.md) and the [constitution](docs/CONSTITUTION.md) before
 contributing. [Native developer guidance](clients/macos/AGENTS.md) describes the
