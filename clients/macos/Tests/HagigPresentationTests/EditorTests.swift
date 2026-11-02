@@ -219,7 +219,7 @@ final class EditorTests: XCTestCase {
                 XCTAssertEqual(view.string, input == "a\nb\nc" ? "ab\nc" : "ab")
                 // Match native LF behavior, but retain the whole-grapheme CRLF
                 // contract: AppKit's native Ctrl-K can no-op before CRLF.
-                if !input.contains("\r") { XCTAssertEqual(view.string, control.string) }
+                if !input.unicodeScalars.contains("\r") { XCTAssertEqual(view.string, control.string) }
                 receiver.string = ""
                 receiver.yank(nil)
                 XCTAssertEqual(receiver.string, nativeKill)
