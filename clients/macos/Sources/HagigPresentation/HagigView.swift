@@ -70,7 +70,9 @@ public struct HagigView: View {
             Color(red: 251 / 255, green: 252 / 255, blue: 254 / 255))
         .clipShape(RoundedRectangle(cornerRadius: 13))
         .tint(blue)
-        .onExitCommand { presentation.cancel() }
+        .onExitCommand {
+            if presentation.stage == .recording || presentation.stage == .transcribing { presentation.cancel() }
+        }
     }
 
     private var isWarning: Bool {
@@ -85,7 +87,7 @@ public struct HagigView: View {
         case .ready: return "Ready when you are"
         case .recording: return "Listening…"
         case .transcribing: return "Transcribing…"
-        case .fallback: return "Destination unverified"
+        case .fallback: return "Review transcript"
         case .cancelled: return "Cancelled"
         case .noSpeech: return "No speech recognized"
         case .issue(let issue): return issue.title
@@ -138,31 +140,28 @@ public struct HagigView: View {
             .padding(.vertical, 11)
             cancelButton
         case .fallback:
-            description("Nothing pasted. Copy the text, then choose where to paste it.", color: warning)
-            Text(presentation.transcript ?? "")
-                .font(.system(size: 14)).lineSpacing(5)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.leading, 14).padding(.trailing, 52).padding(.vertical, 14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(inset, in: RoundedRectangle(cornerRadius: 7))
-                .overlay(alignment: .topTrailing) {
-                    Button {
-                        presentation.copy(using: copy)
-                    } label: {
-                        Image(systemName: presentation.copied ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 16))
-                            .frame(width: 32, height: 32)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel(presentation.copied ? "Copied. Copy transcript again" : "Copy transcript")
-                    .help(presentation.copied ? "Copied" : "Copy transcript")
-                    .padding(8)
+            description("Edit, then Copy all. Choose where to paste it.")
+            HStack {
+                Text(presentation.editorLabel).font(.system(size: 11, weight: .medium))
+                    .accessibilityLabel("Editor mode: \(presentation.editorLabel)")
+                Spacer()
+                Button {
+                    presentation.copy(using: copy)
+                } label: {
+                    Label(presentation.copied ? "Copied" : "Copy all", systemImage: presentation.copied ? "checkmark" : "doc.on.doc")
                 }
-                .padding(.vertical, 4)
+                .keyboardShortcut("c", modifiers: [.command, .shift])
+                .disabled(presentation.transcript?.isEmpty != false)
+                .help("Copy entire edited transcript (Command-Shift-C)")
+            }
+            ReviewEditor(presentation: presentation, write: copy)
+                .id(presentation.editorID)
+                .frame(height: 180)
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(blue.opacity(0.5)))
             if presentation.copied { Text("Copied").font(.system(size: 11)).foregroundStyle(secondary) }
             Button("Dismiss") { presentation.reset() }
-                .keyboardShortcut(.cancelAction).frame(maxWidth: .infinity)
+                .keyboardShortcut("d", modifiers: [.command, .shift]).frame(maxWidth: .infinity)
         case .cancelled:
             description("This request was discarded.\nNothing will be delivered from it.")
             backButton

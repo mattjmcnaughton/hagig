@@ -239,3 +239,56 @@ permissions, Ghostty/Chrome input identity/races, clipboard locality on a second
 Apple device, native packaging, privacy and performance. This shell deliberately
 does not solve those spikes. Do not claim the ordinary interactive NSPopover is
 production-safe nonactivating feedback.
+
+## Editable review (#22 candidate)
+
+`ReviewEditor.swift` embeds a real plain NSTextView in the shared HagigView, with
+native selection, accessibility, scrolling and in-memory undo. Standard remains
+default. `Presentation(editorMode:)` / `begin(editorMode:)` accept the eventual
+validated server setting; there is NO Swift TOML parsing or server integration.
+The demo controls' explicitly synthetic mode picker applies to the next request.
+The existing 26-image gallery retains its count: fallback is Standard; copied is
+Vim Normal with a synthetic edited multiline Unicode fixture. No new render or
+interaction evidence has been established merely by adding those fixtures.
+
+The agreed bounded table (TDD §8) implemented for native verification:
+
+| Area | Keys |
+| --- | --- |
+| Modes | Normal initially; i/a Insert before/after cursor; Escape Normal; v character Visual, V line Visual; visible label |
+| Motion | h/j/k/l, w/b/e, 0/$, gg/G, numeric counts |
+| Changes | x, dd, dw, cw (enters Insert) |
+| Register | yy, p; deletes/yanks/paste use only the ephemeral register |
+| History | u, Ctrl-R; native Cmd-Z / Cmd-Shift-Z also available |
+| Native | Cmd-A; Cmd-C selection; Cmd-X selection Cut; Copy all / Cmd-Shift-C entire current edited text; native paste / Cmd-V |
+| Enter / exit | Enter only inserts in Standard/Insert, never submits; Escape in review never dismisses; explicit Dismiss / Cmd-Shift-D |
+
+This is NOT full Vim: no ex, plugins, macros, dot-repeat or external editor.
+Vertical motions follow logical lines, not wrapped display rows. Words group
+Unicode letters/numbers/underscore, punctuation and whitespace. Motions and edits
+use grapheme boundaries, converting to UTF-16 for AppKit. Counts saturate at 9999;
+register paste refuses amplification beyond a 1 MiB buffer. Unsupported keys in
+Normal are inert. Standard/Insert retain native text input and accessibility.
+
+This editor expands the earlier shell Copy-only boundary to explicit Copy/Cut:
+both use the single `LocalClipboard` currentHostOnly writer. No result, edit,
+internal Vim operation, reset or Dismiss writes to the clipboard. Failed Cut
+preserves text; empty Copy is inert. Context menu exposes only Cut/Copy/Copy all/
+Paste/Select all; inherited drag/Services/rich-text selection exporters are
+disabled rather than allowed to bypass the guarded writer. Native paste reads
+only into review. Reset/new request synchronously discards the attached editor,
+register and undo, invalidates its generation and removes the shared view.
+
+AppKit's separate kill buffer is not review-local. Line/paragraph/mark deletion
+therefore selects and replaces through native text editing without invoking the
+inherited kill implementations; native `yank:` and the alternate `yankAndSelect:`
+key binding are inert. This does not disable the bounded Vim in-memory register.
+The regression uses a separate ordinary NSTextView as a receiver so merely
+blocking Hagig's yank cannot hide accidental writes into AppKit's kill buffer.
+
+`swift test` adds actual text-view key/responder-action tests with isolated real
+pasteboards, not simulated backend or mock editor tests. These still do not prove
+pointer/focus/accessibility routing in the running shell. Run them on macOS,
+inspect Ready then every gallery image, and record/inspect native Standard/Vim
+editing, selection, Copy/Cut, undo, Dismiss and keyboard focus. Second-device
+Universal Clipboard and owner physical-Mac checks remain acceptance gates.
