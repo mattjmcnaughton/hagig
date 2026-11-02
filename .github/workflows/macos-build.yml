@@ -2,10 +2,10 @@ name: macOS build and presentation tests
 
 on:
   pull_request:
-    paths: ['clients/macos/**', '.github/workflows/macos-*.yml']
+    paths: ['clients/macos/**', 'backend/**', '.github/workflows/macos-*.yml']
   push:
     branches: [main]
-    paths: ['clients/macos/**', '.github/workflows/macos-*.yml']
+    paths: ['clients/macos/**', 'backend/**', '.github/workflows/macos-*.yml']
 
 permissions:
   contents: read
@@ -55,3 +55,31 @@ jobs:
           path: clients/macos/state-captures/*.png
           if-no-files-found: error
           retention-days: 3
+
+  bundle-smoke:
+    runs-on: macos-15
+    timeout-minutes: 10
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Record native bundle toolchain and tested revision
+        working-directory: backend
+        run: |
+          sw_vers
+          uname -m
+          xcodebuild -version
+          swift --version
+          rustup show
+          rustc --version --verbose
+          cargo --version
+          git rev-parse HEAD
+          rustc --version --verbose | grep -Fx 'host: aarch64-apple-darwin'
+      - name: Script contracts (tool stand-ins, not native proof)
+        run: python3 clients/macos/test_bundle.py
+      - name: Build and ad-hoc sign early synthetic bundle
+        run: bash clients/macos/bundle.sh build
+      - name: Relocate and smoke actual shell and controlled helpers
+        run: bash clients/macos/smoke-bundle.sh

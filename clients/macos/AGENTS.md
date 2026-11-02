@@ -46,7 +46,98 @@ swift run HagigScreenshots states captures
 Click the menu-bar microphone to open the demo; use Simulate recording → Simulate
 release → Simulate result → explicit Copy or Dismiss. Escape cancels active work.
 Preview error and Quit live below the shared surface. No global shortcut exists.
-This is a SwiftPM executable, not a signed, relocatable `.app` distribution.
+`swift run HagigShell` is the unbundled SwiftPM demo, not the bundle launch path.
+
+## Early local bundle layout (#23 checkpoint, not dictation)
+
+From the clone root on an Apple Silicon Mac, native arm64 shell, Xcode 16.4 and
+the repository's Rust 1.90.0 toolchain installed via rustup and on PATH:
+
+```sh
+bash clients/macos/bundle.sh run    # build a NEW bundle, then terminal-launch via open
+# Or build only, for iteration/CI:
+bash clients/macos/bundle.sh build
+# Launch an already built bundle without rebuilding:
+open clients/macos/.build/Hagig.app
+```
+
+These are alternative build commands, not consecutive commands: an existing
+output is always refused (including symlinks). No Homebrew, release download,
+`/Applications` copy, certificates or notarization credentials are required.
+The default Xcode path is `/Applications/Xcode_16.4.app/Contents/Developer`;
+`DEVELOPER_DIR` may select another installation of exactly Xcode 16.4. Cargo uses
+`+1.90.0`, `--locked` and an explicit native target; building may fetch locked
+crate sources/toolchains through ordinary Cargo/rustup, not model/native assets.
+Swift builds only the existing HagigShell product. Build output is ignored under
+`clients/macos/.build/` and `backend/target/`.
+
+Layout (all paths relative to the bundle):
+
+```text
+Hagig.app/Contents/Info.plist
+Hagig.app/Contents/MacOS/HagigShell
+Hagig.app/Contents/Helpers/hagig
+Hagig.app/Contents/Helpers/hagig-fake-worker
+```
+
+Bundle identity is `com.mattjmcnaughton.hagig`. The existing CLI reexecutes itself
+as the controlled server and finds `hagig-fake-worker` beside its own executable,
+not on PATH. There is no separate real worker, inference library or model to
+bundle yet. The shell does **not** start/connect to this server. To exercise the
+controlled backend explicitly, use (from clone root):
+
+```sh
+clients/macos/.build/Hagig.app/Contents/Helpers/hagig status
+clients/macos/.build/Hagig.app/Contents/Helpers/hagig fake-request --fake-worker
+clients/macos/.build/Hagig.app/Contents/Helpers/hagig stop
+```
+
+Default Required isolation is retained; failure never retries Disabled. This is
+empty-result fake lifecycle work, not WAV transcription. `hagig transcribe`,
+model installation, real Record/Stop/edit/Copy and shared app/server busy policy
+are NOT implemented by packaging. No assets are downloaded or repaired on launch.
+
+Before rebuilding/replacing any paired bundle: Quit its synthetic shell, coordinate
+with other clients using the per-user server, then **intentionally** run that
+bundle's `Contents/Helpers/hagig stop` and require success. Stop affects shared
+work; the builder never does it for you. Move the **whole** stopped bundle to a
+new unused backup path (for example `mv clients/macos/.build/Hagig.app
+clients/macos/.build/Hagig.previous.app` only if the latter does not exist), then
+build again. Never replace individual live helper files. Keep the old bundle
+for rollback; quit/stop the new pair before restoring the old one. A preexisting
+`bundle.lock` is refused; after interruption, confirm no bundle builder remains
+before removing that empty lock directory with `rmdir`. Failed build staging is
+disposable and cleaned; any incomplete published output must be inspected and
+moved aside, not blindly deleted. No automatic upgrade or service killing exists.
+
+Nested helpers and the outer app are ad-hoc signed inside-out, then verified.
+Ad-hoc signing is not Developer ID, notarization, Gatekeeper approval, TCC grant,
+permission stability across rebuilds, or worker-isolation proof. Diagnose launch
+or signing failures; do not disable Gatekeeper. Info.plist contains a microphone
+usage description for future intentional recording, **not a request**. This
+shell requests no Microphone, Accessibility or Input Monitoring permission.
+Stable identity alone does not establish TCC continuity; denial/grant/rebuild
+testing waits for real capture integration. Signing identity/loader paths for
+future adopted native assets must be integrated and verified separately.
+
+Checks (from clone root):
+
+```sh
+python3 clients/macos/test_bundle.py   # stdlib disposable PATH stand-ins, NOT native evidence
+bash clients/macos/smoke-bundle.sh    # macOS only, after build-only above
+```
+
+The native smoke copies the bundle away from the checkout into a disposable path
+with spaces, checks arm64/system-only loader paths and signatures, runs the actual
+controlled CLI/worker with Required default using a private temporary runtime,
+then launches the relocated shell executable briefly and terminates only that
+owned PID. Its cleanup stops only its isolated service and preserves scratch on
+stop failure. It does not touch the user's live runtime. It is not a terminal
+LaunchServices interaction test or runtime-free physical-Mac installation proof.
+Normal `macos-build.yml` includes this smoke; exact-head success and inspection
+remain required. No native bundle check has been executed in the Linux orb.
+Full #23 acceptance remains blocked on real integration (#9/#21/#22, adopted
+inference), macOS launch/relocation/signing/TCC and owner physical-Mac checks.
 
 Native evidence: [run 40509803030](https://github.com/mattjmcnaughton/hagig/actions/runs/40509803030)
 executed build, three passing presentation tests, two Ready renders and 26 state
