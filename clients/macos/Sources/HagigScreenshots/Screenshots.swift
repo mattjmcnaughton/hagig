@@ -19,7 +19,9 @@ struct Screenshots {
         let names = arguments[1] == "proof" ? ["ready"] :
             ["ready", "recording", "transcribing", "fallback", "copied", "cancelled", "noSpeech"] + DemoIssue.allCases.map(\.rawValue)
         for name in names {
-            let presentation = Presentation()
+            // Same bounded gallery/count: review exercises Standard and Vim,
+            // multiline Unicode and the current edited buffer through shared UI.
+            let presentation = Presentation(editorMode: name == "copied" ? .vim : .standard)
             if let issue = DemoIssue(rawValue: name) {
                 presentation.show(issue: issue)
             } else if name != "ready" {
@@ -28,7 +30,11 @@ struct Screenshots {
                 if ["fallback", "copied", "noSpeech"].contains(name), let id = presentation.requestID {
                     presentation.complete(requestID: id, text: name == "noSpeech" ? " \n" : Presentation.fixture)
                 }
-                if name == "copied" { presentation.copy { _ in true } }
+                if name == "copied" {
+                    presentation.edit("Synthetic edited review 😀\nCover cancellation and e\u{301} / 日本語 bounds.",
+                                      session: presentation.editorID)
+                    presentation.copy { _ in true }
+                }
                 if name == "cancelled" { presentation.cancel() }
             }
             for dark in [false, true] {
