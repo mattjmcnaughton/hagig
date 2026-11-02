@@ -31,11 +31,11 @@ struct ReviewEditor: NSViewRepresentable {
         text.isVerticallyResizable = true
         text.isHorizontallyResizable = false
         text.minSize = .zero
-        text.maxSize = NSSize(width: .greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         text.autoresizingMask = [.width]
         text.textContainer?.widthTracksTextView = true
         text.textContainer?.containerSize = NSSize(width: scroll.contentSize.width,
-                                                 height: .greatestFiniteMagnitude)
+                                                 height: CGFloat.greatestFiniteMagnitude)
         let session = presentation.editorID
         text.configure(text: presentation.transcript ?? "", mode: presentation.editorMode,
             write: { presentation.copySelection($0, session: session, using: write) },
