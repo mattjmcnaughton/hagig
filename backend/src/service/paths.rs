@@ -97,11 +97,11 @@ pub(super) fn connect(path: &Path) -> SafeResult<Option<UnixStream>> {
         .map_err(|_| "connection_timeout")?
     {
         Ok(stream) => {
+            // Do not mutate socket timeouts between a terminal reply's header
+            // and body: macOS can refuse setsockopt after the peer closes.
+            // Client exchanges enforce one absolute deadline with nonblocking I/O.
             stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .map_err(|_| "connection_failed")?;
-            stream
-                .set_write_timeout(Some(Duration::from_secs(5)))
+                .set_nonblocking(true)
                 .map_err(|_| "connection_failed")?;
             Ok(Some(stream))
         }

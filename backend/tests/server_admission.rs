@@ -946,6 +946,39 @@ fn owner_disconnect_reaps_actual_stalled_process_and_recovers() {
 }
 
 #[test]
+fn cli_accepts_complete_terminal_reply_after_peer_close() {
+    let mut service = Service::new("disabled");
+    assert!(service.cli(&["stop"]).status.success());
+    service.stopped();
+    let socket = service.root.join("hagig/server.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let peer = std::thread::spawn(move || {
+        for _ in 0..8 {
+            let (mut c, _) = listener.accept().unwrap();
+            c.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            assert_eq!(receive(&mut c)["type"], "hello");
+            send(&mut c, json!({"version":1,"type":"hello_ok"}));
+            assert_eq!(receive(&mut c)["type"], "status");
+            send(&mut c, json!({"version":1,"type":"status","state":"idle"}));
+            // Final bytes remain readable even after the peer closes. Do not
+            // depend on setting a socket option before consuming those bytes.
+            c.shutdown(std::net::Shutdown::Both).unwrap();
+        }
+    });
+    for _ in 0..8 {
+        let output = service.cli(&["status"]);
+        assert!(output.status.success());
+        let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(reply["type"], "status");
+        assert_eq!(reply["state"], "idle");
+    }
+    peer.join().unwrap();
+    std::fs::remove_file(socket).unwrap();
+}
+
+#[test]
 fn cli_response_frame_deadline_does_not_reset_on_each_byte() {
     let mut service = Service::new("disabled");
     assert!(service.cli(&["stop"]).status.success());
