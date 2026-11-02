@@ -91,8 +91,10 @@ def main():
         native_stderr = sum("write(2</dev/null" in line for line in trace)
         discarded_stdout = sum("write(1</dev/null" in line for line in trace)
         private_replies = sum(bool(re.search(r"\bwrite\(([3-9]|\d{2,})<pipe:", line)) for line in trace)
-        if label in ["corrupt-canary", "native-vocabulary-warning", "crash-after-real-result"]:
+        if label == "corrupt-canary":
             assert native_stderr > 0, "native diagnostics must really reach the discard sink"
+        if label == "malformed-vocabulary-rejected":
+            assert native_stderr == 0, "invalid syntax must not reach native diagnostics"
         if label == "crash-after-real-result":
             assert discarded_stdout > 0
         if label in ["crash-after-real-result", "cancel-buffered-real-result", "timeout-buffered-real-result"]:
@@ -121,22 +123,25 @@ def main():
         assert path_canary.encode() in raw.stderr
         assert reply == {"error": "model_invalid"} and raw.returncode == 1
         del raw, reply
-        raw, reply = direct(model, bad_vocab, "crash-after-result")
-        assert vocabulary_canary.encode() in raw.stderr
-        assert b"Encode hotwords failed" in raw.stderr
+        raw, reply = direct(model, bad_vocab, "normal")
+        assert raw.stdout == b"" and raw.stderr == b""
+        assert raw.returncode == 1 and reply == {"error": "vocabulary_invalid"}
+        del raw, reply
+        raw, reply = direct(model, vocabulary, "crash-after-result")
         assert raw.stdout == b"SYNTHETIC_STDOUT_DIAGNOSTIC\n"
         assert raw.returncode == -signal.SIGABRT
         assert reply == {"text": EXPECTED}
         del raw, reply
         print(json.dumps({"native_positive_controls": "passed",
-                          "path_and_vocabulary_actually_emitted": True,
+                          "corrupt_path_actually_emitted": True,
+                          "malformed_vocabulary_rejected_without_native_warning": True,
                           "real_reply_preceded_sigabrt": True,
                           "raw_diagnostics_persisted": False}))
 
         client("missing", root / "absent", error="model_missing")
         client("corrupt-canary", corrupt, error="model_invalid")
-        client("native-vocabulary-warning", vocab_path=bad_vocab)
-        client("crash-after-real-result", vocab_path=bad_vocab,
+        client("malformed-vocabulary-rejected", vocab_path=bad_vocab, error="vocabulary_invalid")
+        client("crash-after-real-result",
                flags=("--mode", "crash-after-result"), error="worker_failed")
         client("cancel-buffered-real-result", flags=("--mode", "hold-after-result", "--cancel-after-result"),
                error="cancelled")

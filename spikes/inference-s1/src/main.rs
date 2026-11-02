@@ -1,5 +1,5 @@
 //! Synthetic/public fixtures only: deliberately emits transcripts as experiment evidence.
-use hagig_inference_s1::candidate_config;
+use hagig_inference_s1::{candidate_config, vocabulary::parse_vocabulary};
 use sherpa_onnx::{OfflineRecognizer, Wave};
 use std::{env, fs, path::Path, time::Instant};
 
@@ -10,7 +10,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let model = Path::new(&args[1]);
     let fixtures = Path::new(&args[2]);
-    let hotwords = fs::read_to_string(&args[3])?.trim().replace('\n', "/");
+    let vocabulary = fs::read(&args[3]).map_err(|_| "vocabulary_unreadable")?;
+    let hotwords = parse_vocabulary(&vocabulary)?;
     let config = candidate_config(model)?;
 
     let start = Instant::now();
@@ -37,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 [true, false]
             } {
                 let start = Instant::now();
-                let stream = if boosted {
+                let stream = if boosted && !hotwords.is_empty() {
                     recognizer.create_stream_with_hotwords(&hotwords)
                 } else {
                     recognizer.create_stream()

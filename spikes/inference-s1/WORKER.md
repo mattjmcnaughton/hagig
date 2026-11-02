@@ -5,6 +5,13 @@ production server, security sandbox, or macOS acceptance**. The original
 [S1 findings](FINDINGS.md), assets, dependency pins, and historical evidence remain
 in place. No downloads or model/decoder changes were needed for this follow-up.
 
+The measurements and warning outcomes below are **historical**. Issue #6's
+[current follow-up](BLOCKERS.md) adds structural vocabulary rejection and changes
+the verifier's malformed-vocabulary expectation to `vocabulary_invalid`; it does
+not certify tokenizer representability or fix silence. The historical canary leak
+was reproduced with the base worker, not removed from evidence. The current full
+traced verifier has not been rerun here (strace and speech fixtures unavailable).
+
 ## Boundary chosen after reading the constitution
 
 `worker_probe.py` is a small Python-standard-library supervisor with no native
@@ -19,9 +26,11 @@ interface, not the proposed server's canonical-PCM transport contract.
 does not establish or require a network namespace. Only the explicit
 `unshare -Urn` invocations below exercise enforced external-network isolation.
 Default/network-available runs are synthetic observation controls, not a compliant
-production launch path. Under the current constitution, production must enforce
-isolation before native loading and fail closed if unavailable. This preservation
-does not implement that launcher or certify macOS `sandbox-exec`.
+production launch path. Under the current constitution, required isolation is the
+default and must be established before native loading, failing closed if
+unavailable. Explicit disabled mode is supported, never automatic fallback; both
+modes retain process separation and offline/no-upload/no-telemetry behavior. This
+probe implements neither product launch contract nor macOS `sandbox-exec`.
 
 - Child stdout and stderr are directed to `/dev/null` at spawn, before library
   loading. Native diagnostics are not captured, persisted, redacted, or forwarded
