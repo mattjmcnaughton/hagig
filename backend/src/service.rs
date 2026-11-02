@@ -75,12 +75,12 @@ fn read_before(stream: &mut UnixStream, bytes: &mut [u8], deadline: Instant) -> 
             .ok_or("connection_timeout")?;
         stream
             .set_read_timeout(Some(remaining))
-            .map_err(|_| "connection_failed")?;
+            .map_err(|_| "connection_read_timeout_setup_failed")?;
         match stream.read(&mut bytes[offset..]) {
-            Ok(0) => return Err("connection_failed"),
+            Ok(0) => return Err("connection_read_eof"),
             Ok(n) => offset += n,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => (),
-            Err(_) => return Err("connection_failed"),
+            Err(_) => return Err("connection_read_failed"),
         }
     }
     Ok(())
@@ -101,12 +101,12 @@ fn exchange(stream: &mut UnixStream, kind: &str) -> SafeResult<serde_json::Value
             .ok_or("connection_timeout")?;
         stream
             .set_write_timeout(Some(remaining))
-            .map_err(|_| "connection_failed")?;
+            .map_err(|_| "connection_write_timeout_setup_failed")?;
         match stream.write(&outgoing[offset..]) {
-            Ok(0) => return Err("connection_failed"),
+            Ok(0) => return Err("connection_write_zero"),
             Ok(n) => offset += n,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => (),
-            Err(_) => return Err("connection_failed"),
+            Err(_) => return Err("connection_write_failed"),
         }
     }
     let mut header = [0; 5];
