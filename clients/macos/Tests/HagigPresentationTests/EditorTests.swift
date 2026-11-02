@@ -217,7 +217,8 @@ final class EditorTests: XCTestCase {
                 let nativeKill = receiver.string
                 view.deleteToEndOfParagraph(nil)
                 XCTAssertEqual(view.string, input == "a\nb\nc" ? "ab\nc" : "ab")
-                XCTAssertEqual(view.string, control.string)
+                XCTAssertEqual(view.string, control.string,
+                               "Input: \(input.debugDescription); native: \(control.string.debugDescription)")
                 receiver.string = ""
                 receiver.yank(nil)
                 XCTAssertEqual(receiver.string, nativeKill)

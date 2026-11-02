@@ -313,7 +313,12 @@ final class ReviewTextView: NSTextView, NSTextViewDelegate {
         scrollRangeToVisible(selectedRange())
     }
     private func normalCursor() {
-        if editingMode == .vim && mode == .normal { select(position) }
+        if editingMode == .vim && mode == .normal {
+            // Native undo may update text before its delegate notification.
+            // Cursor normalization must use the current buffer, not that cache.
+            indexText()
+            select(position)
+        }
     }
     private func replace(_ range: NSRange, with text: String) {
         breakUndoCoalescing()
