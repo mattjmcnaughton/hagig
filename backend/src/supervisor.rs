@@ -63,6 +63,11 @@ impl<L: SandboxedWorkerLauncher> Supervisor<L> {
 }
 
 impl<L> Supervisor<L> {
+    /// Identity of the child currently owned, including an exited but unreaped child.
+    pub fn child_id(&self) -> Option<u32> {
+        self.child.as_ref().map(Child::id)
+    }
+
     /// Immediate termination and reap; graceful protocol shutdown is future work.
     /// Retain ownership on error so a caller can retry, never launch a successor
     /// before the previous child is reaped. Idempotent once successfully stopped.

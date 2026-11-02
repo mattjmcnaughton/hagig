@@ -1,17 +1,17 @@
 # Rust backend guidance
 
 Read the root guidance, [constitution](../docs/CONSTITUTION.md) and
-[technical design](../docs/technical/tdds/01-mvp.md) first. This contains the issue
-#2 scaffold and issue #4 Linux launch adapter, not a transcription app or server.
+[technical design](../docs/technical/tdds/01-mvp.md) first. This contains the launch
+foundation and a controlled fake-worker lifecycle service, not real transcription.
 
 ## Boundaries and scope
 
-- One package, shared library and scaffold executable. Do not split crates by
+- One package, shared library, lifecycle CLI and controlled worker executable. Do not split crates by
   process. Swift owns native macOS interaction; Rust owns portable backend work.
 - `launcher` is the constructor-injected platform effect boundary; `supervisor`
-  owns the child and reap. The future request layer owns protocol/state and the
+  owns the child and reap. The service request layer owns protocol/state and the
   returned private pipes. Keep request admission, generations, cancellation and
-  result delivery out of the launcher. They are not implemented in this ticket.
+  result delivery out of the launcher. They live in `service`, not the adapters.
 - Inference-only external-network isolation defaults to Required; an explicit
   Disabled startup mode is a supported product opt-out, not an automatic fallback
   or development-only exception. Required enforces before native/model loading
@@ -24,9 +24,9 @@ Read the root guidance, [constitution](../docs/CONSTITUTION.md) and
   `.with_network_isolation(NetworkIsolation::Disabled)` before startup to opt out.
   `.network_isolation()` plus Display reports only the content-free selection,
   not enforcement evidence. Only the trusted target and typed mode are configurable,
-  not arguments, shell commands, environment or arbitrary policy. TOML/server
-  parsing/status integration remains future work. `unconfigured()` and platforms without
-  an integrated adapter fail closed. The scaffold executable stays unconfigured.
+  not arguments, shell commands, environment or arbitrary policy. TOML configuration
+  remains future work. `unconfigured()` and platforms without
+  an integrated adapter fail closed. The CLI requires explicit controlled-worker selection.
   Test-only unrestricted launchers live in `tests/`, never production options.
 - The target must be a trusted small Rust bootstrap, not linked inference code.
   It flushes `HAGIG-WORKER-READY-v1\n` within five seconds, then begins the future
@@ -104,6 +104,97 @@ supervision APIs. Keep tests observable: private round-trip bytes, safe launch
 failure, refusal without isolation, and child termination/reaping. No model assets
 are required. Future cancellation tests must reject late/stale results, not merely
 assert mock call order.
+
+## Controlled lifecycle service (#7)
+
+Build both binaries with `cargo build --locked --bins`. Public commands:
+
+```
+hagig start --fake-worker [--network-isolation required|disabled]
+hagig fake-request --fake-worker [--network-isolation required|disabled]
+hagig status
+hagig stop
+```
+
+`fake-request` reserves the shared slot and runs the separate sibling
+`hagig-fake-worker`; success writes only a newline (explicit empty result), busy
+writes `busy` to stderr and exits 3. This is a controlled lifecycle exerciser,
+never an inference fallback. There is no WAV transcription or model installation.
+`start`/`fake-request` start/connect on demand; status/stop never start an absent
+server. `__serve --fake-worker` is the internal foreground server entry point.
+Selected mode is frozen by the winning server and reported on hello/status;
+connecting clients cannot change it. Required is default, not evidence that
+enforcement succeeded; worker launch may refuse on a restricted host.
+
+Use validated owner-only XDG_RUNTIME_DIR/hagig, or the TDD's per-user temporary
+fallback. The socket is 0600 from bind, directory 0700, and persistent empty lock
+file 0600. A std advisory lock is held for the server lifetime; only its holder
+removes a validated stale socket. Keep the lock file after stop (unlinking it
+would split future contenders across different lock inodes). Unsafe existing
+objects are refused, not repaired. Same-user malicious processes remain outside
+the TDD threat boundary. No TCP listener or PID-file-based killing.
+
+Protocol: v1 kind byte + u32 big-endian length; kind 1 strict JSON, maximum
+65,536 bytes; kind 2 canonical aligned PCM, maximum 262,144 bytes per chunk and
+19,200,000 bytes total. Controls require version/type, and opaque nonempty
+ASCII alphanumeric/hyphen/underscore request_id (maximum 128 bytes) on request
+operations. Send hello before begin/end_audio/cancel/status/stop. No queue or
+preemption. A request belongs to its connection; nonowner cancel is a harmless
+acknowledgment. Malformation closes only its connection and invalidates its work.
+For this controlled slice PCM bytes are validated/counted then discarded, not
+transcribed or persisted. End_audio optionally selects fake_action complete,
+crash or stall; no other executable, command, environment or model is accepted.
+The private controlled-worker wire is a one-byte action/result after the ACK,
+not the future real-worker inference protocol. Status identity comes from the
+Supervisor-owned Child, not self-reported worker bytes. Generations bind each
+private worker task to one server reservation. Empty controlled results are explicit.
+
+Admission and I/O run on one nonblocking loop with 32 live connections, bounded
+per-tick accept/read/frame/write work and capped input/output buffers. Startup and
+CLI I/O have finite deadlines. Hello, partial frame assembly and each CLI response
+use absolute five-second budgets, not timeouts reset by each received byte;
+reservation is 330 seconds, computation 120 seconds.
+Invalidation precedes worker cancellation; no successor is admitted before reap.
+Stop waits for the lifetime lock/socket cleanup before reporting CLI success.
+The existing supervisor uses immediate kill/reap, not graceful escalation or a
+bounded kernel wait; cleanup failure retains ownership and blocks successors.
+Real/warm inference supervision belongs to #8. Cancellation cannot undo result
+bytes whose delivery has already begun; clients must also invalidate locally.
+
+`cargo test --locked --test server_admission -- --nocapture` exercises actual CLI,
+server and controlled-worker processes with public framed socket clients. Add
+this target to every CI branch that selects test binaries explicitly, including
+ubuntu24; all-target build alone does not execute it. Linux results do not prove
+macOS builds, Seatbelt behavior or physical-Mac acceptance.
+
+Deterministic lifecycle tests explicitly start the internal foreground service
+with `__serve --fake-worker --network-isolation disabled --fake-test-controls`.
+Only that explicit fake-slice opt-in accepts `fake_test` controls with optional
+`fake_pause_delivery`, `fake_pause_completion`, and `fake_advance_seconds` fields.
+These pause serialized success delivery or consumption of the single real worker
+completion event and advance a frozen request/idle monotonic clock (at most 3600s
+per control, 86400s total). Status adds content-free pending counters. They do not
+change the default 330s reservation/120s computation/330s idle durations, real
+frame timeouts, worker wall-clock safety budget, isolation, executable or launch hygiene.
+Ordinary start/fake-request reject this flag; ordinary servers reject the controls.
+Stop bypasses completion pause to clean up. No production inference uses these
+controls. Tests distinguish success pending before cancel, result-first delivery,
+reused IDs, both deadline boundaries, already completed late success suppression,
+actual child reap and public CLI recovery; they do not measure 330/120s wall time.
+
+Dependencies: serde (derive/std) and serde_json (std) from the agreed set, pinned
+by Cargo.lock; no async runtime, CLI framework, native inference, downloader or new
+dev tool. New transitives are serde_core/derive, proc-macro2, quote, syn,
+unicode-ident, itoa, memchr and zmij at locked versions. Reviewed build scripts:
+serde/core generate versioned private modules in OUT_DIR and query rustc;
+serde_json selects target arithmetic; quote/zmij query compiler versions;
+proc-macro2 builds compiler metadata probes under OUT_DIR then removes them.
+No native compiler/library download or network path was found in these scripts.
+Scoped source-effects inspection found parsing/formatting/token generation and
+documentation-only file/network examples, not runtime network or file-open sinks.
+This is source/build review, not exhaustive runtime networking/write observation
+or a real-inference adoption/privacy certification. Existing rustix now uses its
+fs feature on macOS too for socket-bind umask; no second syscall library added.
 
 ## Evidence and authorization
 

@@ -65,6 +65,7 @@ jobs:
           if test "$TEST_SUITE" = disabled-and-refusal; then
             # These are explicit product-mode checks, NOT enforcement proof.
             cargo test --locked --test worker_boundary
+            cargo test --locked --test server_admission -- --nocapture
             cargo test --locked --test linux_isolation disabled_worker_hygiene_and_failure_contract -- --exact --nocapture
             cargo test --locked --test linux_isolation required_mode_reports_enforcement_or_refusal -- --exact --nocapture
             cargo test --locked --test linux_isolation unmapped_user_namespace_fails_closed -- --exact --nocapture
