@@ -217,8 +217,9 @@ final class EditorTests: XCTestCase {
                 let nativeKill = receiver.string
                 view.deleteToEndOfParagraph(nil)
                 XCTAssertEqual(view.string, input == "a\nb\nc" ? "ab\nc" : "ab")
-                XCTAssertEqual(view.string, control.string,
-                               "Input: \(input.debugDescription); native: \(control.string.debugDescription)")
+                // Match native LF behavior, but retain the whole-grapheme CRLF
+                // contract: AppKit's native Ctrl-K can no-op before CRLF.
+                if !input.contains("\r") { XCTAssertEqual(view.string, control.string) }
                 receiver.string = ""
                 receiver.yank(nil)
                 XCTAssertEqual(receiver.string, nativeKill)
