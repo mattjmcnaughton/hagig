@@ -81,11 +81,20 @@ impl Service {
         c
     }
     fn cli(&self, args: &[&str]) -> std::process::Output {
-        Command::new(env!("CARGO_BIN_EXE_hagig"))
+        let output = Command::new(env!("CARGO_BIN_EXE_hagig"))
             .env("XDG_RUNTIME_DIR", &self.root)
             .args(args)
             .output()
-            .unwrap()
+            .unwrap();
+        if !output.status.success() {
+            // Controlled fixtures only; CLI stderr contains stable content-free codes.
+            eprintln!(
+                "controlled CLI {args:?}: status={} stderr={}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        output
     }
     fn stopped(&mut self) {
         let deadline = Instant::now() + Duration::from_secs(5);
