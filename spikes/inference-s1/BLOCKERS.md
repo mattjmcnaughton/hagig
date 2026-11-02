@@ -150,3 +150,67 @@ startup-interruption cleanup defect remains unresolved; see `WORKER.md` and
 - Independent six-lens review completed with no executable defect finding; it does
   not clear the blocked full traced verifier or adoption gates. Exact commit-
   message approval remains required before delivery.
+
+## Resumed checkpoint, 2026-11-02 (supersedes tool-availability notes only)
+
+Reused published PR18 `095ed8102ebef43b1a0e56a2af45829b8c85c5a5`; no executable,
+harness, model pin, manifest, lockfile or historical evidence changed. Current
+finite investigation details and exact asset/license inventory are appended in
+[PROVENANCE.md](PROVENANCE.md#resumed-local-inventory-2026-11-02). Decision remains
+**patch/evaluate, not adopt**. Issue #6 remains open.
+
+- Recovered nine of ten non-fixture asset-manifest entries match hashes; original
+  NVIDIA .nemo, all original spoken WAV fixtures, model license/card documents,
+  native notice bundle/build correspondence and macOS assets remain absent.
+- Exact table comparison: 1,024 BPE spellings match token prefix; token row 1,025
+  is `<blk>`. Shared `<unk>` and warning-free emoji acceptance still do not yield
+  tokenizer-aware rejection. Structural validation is not a speech detector.
+- strace is now installed. Eighteen bounded exploratory traced worker cases
+  (nine each without namespace wrapper and with namespace before tracer) observed
+  no network calls or writable opens beyond /dev/null in worker/supervisor scope.
+  Corrupt-load diagnostic emission had a real positive control. This is finite
+  runtime observation, not complete privacy clearance or product launcher proof.
+  Namespace-setup writes found in an earlier broader trace are explicitly retained.
+- Digital silence with empty and emoji vocabularies still returns nonempty text
+  in all four new normal decodes. No noise/quiet/short-command evidence can be
+  inferred from these synthetic zeros, and no gate/threshold was tuned to them.
+- Isolated offline native build, five parser tests, fmt/Clippy and 42 unchanged
+  vocabulary CLI checks pass after documented recovery/loader setup repairs.
+  Full verify_worker.py remains blocked on the original speech fixtures. Its
+  expected transcript/assertions were not edited to accept synthetic silence.
+- Prior approved structural counterfactual (32/32 candidate vs 0/32 base; 10/10
+  accepted-syntax preflight controls per side) remains bounded to that claim.
+  No new /prove capture or approval was inferred from exploratory permission.
+
+Concrete next proposals for owner/parent, **not approvals to execute**:
+
+1. Approve a frozen local synthetic failure/privacy capture matrix: existing
+   Rust/Python/strace only, missing/corrupt/invalid cases, silence-negative results
+   retained, bounded fault seams, memory-only raw diagnostics, sanitized counters.
+   Include observer positive control, exact candidate identity and input hashes;
+   distinguish observed calls from independent blocked-connectivity controls and
+   product-launcher integration. Do not label it the full speech verifier.
+2. Preserve separate tokenizer contract design/adoption decision: use exact pinned
+   normalization/encoding and detect `<unk>` without arbitrary character bans.
+   Native-source/binary correspondence is prerequisite to trusting that result.
+3. Owner final Mac session needs consented paired human term/non-term, silence/
+   noise and quiet/short-command controls, with independent references and retained
+   mistakes. Any new speech gate or audio tooling still requires specific approval.
+4. Collect actual model attribution/license documents and conversion/native build
+   provenance/notices before redistribution; reconcile #25's independently owned
+   security audit without treating it as license clearance. No reacquisition,
+   commit, publication, issue closure or inference adoption delegated here.
+
+### Security reconciliation with #25
+
+The independently reviewed [#25 audit](https://github.com/mattjmcnaughton/hagig/issues/25)
+identifies two WAV buffer-bounds defects in pinned sherpa source
+`af2d8d81dbfa61c4cea4c568da78f3982edca005` (`wave-reader.cc`): non-four-byte-aligned
+PCM32/float32 reads and partial multi-channel frame deinterleaving. It also finds
+a latent shared-Rust-API native race and unverified native-build input selection.
+Source findings are not proof of their presence or exploitability in the recovered
+prebuilt libraries. No malformed-WAV native reproduction ran in this checkpoint.
+Keep adoption blocked pending source/binary correspondence, parser remediation or
+reviewed avoidance, single-thread native ownership and verified build inputs.
+Process separation/network isolation alone does not repair native memory safety;
+the bounded privacy observations above do not clear these security findings.
