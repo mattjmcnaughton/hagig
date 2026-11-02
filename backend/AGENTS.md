@@ -144,10 +144,33 @@ acknowledgment. Malformation closes only its connection and invalidates its work
 For this controlled slice PCM bytes are validated/counted then discarded, not
 transcribed or persisted. End_audio optionally selects fake_action complete,
 crash or stall; no other executable, command, environment or model is accepted.
-The private controlled-worker wire is a one-byte action/result after the ACK,
-not the future real-worker inference protocol. Status identity comes from the
-Supervisor-owned Child, not self-reported worker bytes. Generations bind each
-private worker task to one server reservation. Empty controlled results are explicit.
+The private controlled-worker wire after the unchanged bootstrap ACK is a bounded
+v1 envelope: version u8 (1), server generation u64 big-endian, ID length u8
+(1..128), opaque ASCII token ID, and action/result u8. Maximum size is 139 bytes.
+The server accepts only the exact expected version/generation/ID/success envelope;
+malformed, oversized, stale and mismatched replies fail the request, never echo
+child bytes, and retire the worker. Pipe reads/writes are nonblocking; partial
+replies cannot bypass cancellation or the absolute computation safety budget.
+This controlled protocol is not audio/model inference; #9 must introduce bounded
+PCM/result framing when integrating real inference rather than reusing a one-byte
+result as transcript data. Status identity comes from the Supervisor-owned Child,
+not self-reported worker bytes. Empty controlled results are explicit.
+The private envelope is incompatible with #7's one-byte controlled helper. Stop
+the running service before replacing helpers, build/ship server and fake-worker
+together (`cargo build --locked --bins`), and use the same paired replacement
+after stopping for rollback. Do not mix a live old server with a new helper.
+
+On first end_audio the server lazily launches the controlled worker. Successful
+requests transfer its Supervisor and private pipes back to the service through
+the generation-tagged completion event; the next request takes that ownership.
+There is no shared child mutex, retry, queue, or idle eviction. Status reports
+the owned worker PID even while idle (including an exited but unreaped child).
+Stop reaps idle and active children. Crash/stall/protocol failure fails one request,
+reaps before slot release, and starts a fresh worker only on a later request.
+Cancellation/disconnect/deadline invalidate before cleanup; even a success waiting
+for service consumption retires its child before releasing an invalid reservation.
+Cancellation of an already serialized but not yet delivered result discards that
+result; completed computation may remain warm. Both orderings remain explicit.
 
 Admission and I/O run on one nonblocking loop with 32 live connections, bounded
 per-tick accept/read/frame/write work and capped input/output buffers. Startup and
@@ -158,7 +181,7 @@ Invalidation precedes worker cancellation; no successor is admitted before reap.
 Stop waits for the lifetime lock/socket cleanup before reporting CLI success.
 The existing supervisor uses immediate kill/reap, not graceful escalation or a
 bounded kernel wait; cleanup failure retains ownership and blocks successors.
-Real/warm inference supervision belongs to #8. Cancellation cannot undo result
+Real inference integration belongs to #9. Cancellation cannot undo result
 bytes whose delivery has already begun; clients must also invalidate locally.
 
 `cargo test --locked --test server_admission -- --nocapture` exercises actual CLI,
@@ -181,6 +204,34 @@ Stop bypasses completion pause to clean up. No production inference uses these
 controls. Tests distinguish success pending before cancel, result-first delivery,
 reused IDs, both deadline boundaries, already completed late success suppression,
 actual child reap and public CLI recovery; they do not measure 330/120s wall time.
+
+Warm-worker public regression tests in `server_admission`:
+- `successful_requests_keep_worker_warm_until_explicit_stop`: same live child
+  across distinct/reused IDs, disconnected successful owners and simulated idle
+  periods exceeding the connection idle limit; stop reaps it.
+- `private_worker_identity_and_framing_faults_fail_once_and_recover`: stale
+  generation, same-length wrong ID, excessive advertised ID length, a true extra
+  wire byte after a valid envelope, partial reply, wrong version, and
+  synthetic stdout/stderr canary; one safe error/deadline, old child absent before
+  next admission, new child success, no worker bytes in server stdout/stderr.
+  A valid `fragmented` action flushes a one-byte prefix, waits 500ms, then sends
+  the remainder. Explicit fake-test status exposes `worker_reply_bytes` for valid
+  short prefixes only (maximum 138 progress events per envelope); the test observes
+  exactly one consumed byte while busy, then successful completion and same-PID
+  reuse. Ordinary status does not expose this test counter. These asymmetric
+  cases distinguish a valid short prefix, same-size wrong identity, and a correct
+  complete prefix with real excess data rather than only malformed length bytes.
+- `pending_warm_success_is_reaped_after_cancel_or_disconnect_before_reuse`:
+  already completed success invalidated before consumption, busy until cleanup,
+  actual reap then fresh reused-ID request.
+- `externally_killed_idle_worker_fails_one_request_without_automatic_retry`:
+  externally killed disposable child, one failure then lazy fresh-worker recovery.
+Existing deadline/stop pending-success tests now positively observe the warm
+child before invalidation and require its absence after cleanup. Existing
+reply-before-cancel, cancel-before-reply, active disconnect, crash/stall and
+Required-default tests remain in the same target. Fault actions `stale`, `wrong_id`,
+`oversized`, `excess_bytes`, `partial`, `wrong_version`, `diagnostic`, `fragmented` are controlled fake-worker
+actions only; no production inference or client-supplied executable is involved.
 
 Dependencies: serde (derive/std) and serde_json (std) from the agreed set, pinned
 by Cargo.lock; no async runtime, CLI framework, native inference, downloader or new
