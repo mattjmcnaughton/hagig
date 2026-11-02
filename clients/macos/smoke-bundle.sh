@@ -47,7 +47,7 @@ for binary in "$app/Contents/MacOS/HagigShell" "$app/Contents/Helpers/"*; do
         while read -r rpath; do
             case "$rpath" in
                 /usr/lib/swift) ;;
-                *) echo 'Non-system loader search path needs explicit bundle integration.' >&2; exit 1 ;;
+                *) echo "Non-system loader search path needs explicit bundle integration: $rpath" >&2; exit 1 ;;
             esac
         done
 done
