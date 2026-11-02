@@ -50,6 +50,9 @@ impl Service {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
         let mut command = Command::new(env!("CARGO_BIN_EXE_hagig"));
+        command
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
         command.env("XDG_RUNTIME_DIR", &root).args([
             "__serve",
             "--fake-worker",
@@ -207,6 +210,211 @@ fn assert_dead(pid: u64) {
             .success(),
         "owned child {pid} must be reaped"
     );
+}
+
+#[test]
+fn successful_requests_keep_worker_warm_until_explicit_stop() {
+    let mut service = Service::controlled();
+    let mut observer = service.client();
+    let mut first = None;
+    let maximum_id = "x".repeat(128);
+    for id in ["first", "second", "second", maximum_id.as_str()] {
+        let mut owner = service.client();
+        send(
+            &mut owner,
+            json!({"version":1,"type":"begin","request_id":id}),
+        );
+        assert_eq!(receive(&mut owner)["type"], "accepted");
+        send(
+            &mut owner,
+            json!({"version":1,"type":"end_audio","request_id":id}),
+        );
+        assert_eq!(receive(&mut owner)["type"], "result");
+        let pid = status(&mut observer)["worker_pid"]
+            .as_u64()
+            .expect("idle worker remains owned");
+        assert_eq!(
+            *first.get_or_insert(pid),
+            pid,
+            "successful requests reuse child"
+        );
+        assert!(
+            Command::new("/bin/kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .unwrap()
+                .success()
+        );
+        drop(owner);
+        fake_control(&mut observer, json!({"fake_advance_seconds":3600}));
+    }
+    assert!(service.cli(&["stop"]).status.success());
+    service.stopped();
+    assert_dead(first.unwrap());
+}
+
+#[test]
+fn private_worker_identity_and_framing_faults_fail_once_and_recover() {
+    let mut service = Service::controlled();
+    let mut owner = service.client();
+    let mut observer = service.client();
+    assert_eq!(begin(&mut owner)["type"], "accepted");
+    send(
+        &mut owner,
+        json!({"version":1,"type":"end_audio","request_id":"same","fake_action":"fragmented"}),
+    );
+    let prefix = wait_status(&mut observer, "worker_reply_bytes");
+    assert_eq!(
+        prefix["worker_reply_bytes"], 1,
+        "observe a short valid prefix before the remainder"
+    );
+    assert_eq!(prefix["state"], "busy");
+    let pid = prefix["worker_pid"].as_u64().unwrap();
+    assert_eq!(receive(&mut owner)["type"], "result");
+    assert_eq!(status(&mut observer)["worker_pid"], pid);
+    assert_eq!(begin(&mut owner)["type"], "accepted");
+    send(
+        &mut owner,
+        json!({"version":1,"type":"end_audio","request_id":"same"}),
+    );
+    assert_eq!(receive(&mut owner)["type"], "result");
+    assert_eq!(
+        status(&mut observer)["worker_pid"],
+        pid,
+        "valid fragmented worker is reused"
+    );
+    for action in [
+        "stale",
+        "wrong_id",
+        "oversized",
+        "excess_bytes",
+        "partial",
+        "wrong_version",
+        "diagnostic",
+    ] {
+        assert_eq!(begin(&mut owner)["type"], "accepted");
+        send(
+            &mut owner,
+            json!({"version":1,"type":"end_audio","request_id":"same"}),
+        );
+        assert_eq!(receive(&mut owner)["type"], "result");
+        let pid = status(&mut observer)["worker_pid"].as_u64().unwrap();
+        assert_eq!(begin(&mut owner)["type"], "accepted");
+        send(
+            &mut owner,
+            json!({"version":1,"type":"end_audio","request_id":"same","fake_action":action}),
+        );
+        if action == "partial" {
+            fake_control(&mut observer, json!({"fake_advance_seconds":121}));
+            assert_eq!(receive(&mut owner)["code"], "deadline_exceeded");
+        } else {
+            assert_eq!(receive(&mut owner)["code"], "worker_failed");
+        }
+        wait_idle(&mut observer);
+        assert_dead(pid);
+        assert_eq!(begin(&mut owner)["type"], "accepted");
+        send(
+            &mut owner,
+            json!({"version":1,"type":"end_audio","request_id":"same"}),
+        );
+        assert_eq!(receive(&mut owner)["type"], "result");
+        assert_ne!(status(&mut observer)["worker_pid"].as_u64().unwrap(), pid);
+    }
+    assert!(service.cli(&["stop"]).status.success());
+    service.stopped();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    service
+        .child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_end(&mut stdout)
+        .unwrap();
+    service
+        .child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_end(&mut stderr)
+        .unwrap();
+    assert!(stdout.is_empty(), "worker stdout must remain private");
+    assert!(
+        stderr.is_empty(),
+        "native diagnostic canary must not escape"
+    );
+}
+
+#[test]
+fn pending_warm_success_is_reaped_after_cancel_or_disconnect_before_reuse() {
+    let service = Service::controlled();
+    let mut observer = service.client();
+    for disconnect in [false, true] {
+        let mut owner = service.client();
+        fake_control(&mut observer, json!({"fake_pause_completion":true}));
+        assert_eq!(begin(&mut owner)["type"], "accepted");
+        send(
+            &mut owner,
+            json!({"version":1,"type":"end_audio","request_id":"same"}),
+        );
+        let pid = wait_status(&mut observer, "pending_completions")["worker_pid"]
+            .as_u64()
+            .unwrap();
+        if disconnect {
+            drop(owner);
+        } else {
+            send(
+                &mut owner,
+                json!({"version":1,"type":"cancel","request_id":"same"}),
+            );
+            assert_eq!(receive(&mut owner)["type"], "cancelled");
+        }
+        assert_eq!(begin(&mut observer)["code"], "busy");
+        fake_control(&mut observer, json!({"fake_pause_completion":false}));
+        wait_idle(&mut observer);
+        assert_dead(pid);
+        assert_eq!(begin(&mut observer)["type"], "accepted");
+        send(
+            &mut observer,
+            json!({"version":1,"type":"end_audio","request_id":"same"}),
+        );
+        assert_eq!(receive(&mut observer)["type"], "result");
+        assert_ne!(status(&mut observer)["worker_pid"].as_u64().unwrap(), pid);
+    }
+}
+
+#[test]
+fn externally_killed_idle_worker_fails_one_request_without_automatic_retry() {
+    let service = Service::controlled();
+    let mut owner = service.client();
+    assert_eq!(begin(&mut owner)["type"], "accepted");
+    send(
+        &mut owner,
+        json!({"version":1,"type":"end_audio","request_id":"same"}),
+    );
+    assert_eq!(receive(&mut owner)["type"], "result");
+    let pid = status(&mut owner)["worker_pid"].as_u64().unwrap();
+    assert!(
+        Command::new("/bin/kill")
+            .args(["-KILL", &pid.to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert_eq!(begin(&mut owner)["type"], "accepted");
+    send(
+        &mut owner,
+        json!({"version":1,"type":"end_audio","request_id":"same"}),
+    );
+    assert_eq!(receive(&mut owner)["code"], "worker_failed");
+    assert_dead(pid);
+    assert_eq!(begin(&mut owner)["type"], "accepted");
+    send(
+        &mut owner,
+        json!({"version":1,"type":"end_audio","request_id":"same"}),
+    );
+    assert_eq!(receive(&mut owner)["type"], "result");
+    assert_ne!(status(&mut owner)["worker_pid"].as_u64().unwrap(), pid);
 }
 
 #[test]
@@ -378,7 +586,14 @@ fn computation_expiry_suppresses_already_completed_success() {
         json!({"version":1,"type":"end_audio","request_id":"same"}),
     );
     let pending = wait_status(&mut observer, "pending_completions");
-    assert_dead(pending["worker_pid"].as_u64().unwrap());
+    let pid = pending["worker_pid"].as_u64().unwrap();
+    assert!(
+        Command::new("/bin/kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
     fake_control(&mut observer, json!({"fake_advance_seconds":121}));
     assert_eq!(receive(&mut owner)["code"], "deadline_exceeded");
     assert_eq!(
@@ -388,6 +603,7 @@ fn computation_expiry_suppresses_already_completed_success() {
     );
     fake_control(&mut observer, json!({"fake_pause_completion":false}));
     wait_idle(&mut observer);
+    assert_dead(pid);
     assert_eq!(
         begin(&mut owner)["type"],
         "accepted",
@@ -481,7 +697,14 @@ fn stop_suppresses_success_already_waiting_for_completion() {
         json!({"version":1,"type":"end_audio","request_id":"same"}),
     );
     let pending = wait_status(&mut observer, "pending_completions");
-    assert_dead(pending["worker_pid"].as_u64().unwrap());
+    let pid = pending["worker_pid"].as_u64().unwrap();
+    assert!(
+        Command::new("/bin/kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
     send(&mut observer, json!({"version":1,"type":"stop"}));
     assert_eq!(receive(&mut observer)["type"], "stopped");
     let mut byte = [0];
@@ -491,6 +714,7 @@ fn stop_suppresses_success_already_waiting_for_completion() {
         "stop must close without starting delivery of pending success"
     );
     service.stopped();
+    assert_dead(pid);
 }
 
 #[test]

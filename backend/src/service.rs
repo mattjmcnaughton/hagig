@@ -1,7 +1,7 @@
 //! Controlled lifecycle slice. No inference engine, user audio files or downloads.
 
 use crate::launcher::{NetworkIsolation, PlatformLauncher, WorkerExecutable};
-use crate::supervisor::Supervisor;
+use crate::supervisor::{Supervisor, WorkerPipes};
 use serde::Deserialize;
 use serde_json::json;
 use std::fs::{self, OpenOptions};
@@ -281,12 +281,30 @@ struct Active {
     deadline: Instant,
     cancel: Option<SyncSender<()>>,
     worker_pid: Option<u32>,
+    worker_reply_bytes: usize,
     valid: bool,
 }
 
 enum WorkerEvent {
     Started(u64, u32),
-    Finished(u64, bool),
+    Progress(u64, usize),
+    Finished(u64, bool, Option<LiveWorker>),
+}
+
+struct LiveWorker {
+    supervisor: Supervisor<PlatformLauncher>,
+    pipes: WorkerPipes,
+}
+// Ownership transfers through completion events, never shared between threads.
+// A failed reap deliberately blocks replacement rather than losing child ownership.
+fn retire(warm: &mut Option<LiveWorker>) -> bool {
+    if let Some(worker) = warm.as_mut()
+        && worker.supervisor.stop().is_err()
+    {
+        return false;
+    }
+    *warm = None;
+    true
 }
 
 fn invalidate(active: &mut Option<Active>) {
@@ -304,12 +322,19 @@ fn run_worker(
     mode: NetworkIsolation,
     action: u8,
     generation: u64,
+    id: String,
+    mut warm: Option<LiveWorker>,
     done: Sender<WorkerEvent>,
 ) -> SyncSender<()> {
     let (cancel, cancelled) = mpsc::sync_channel(1);
     std::thread::spawn(move || {
-        let success = worker(mode, action, cancelled, generation, &done);
-        let _ = done.send(WorkerEvent::Finished(generation, success));
+        let success = worker(mode, action, cancelled, generation, &id, &mut warm, &done);
+        if !success {
+            while !retire(&mut warm) {
+                std::thread::sleep(TICK);
+            }
+        }
+        let _ = done.send(WorkerEvent::Finished(generation, success, warm));
     });
     cancel
 }
@@ -319,49 +344,90 @@ fn worker(
     action: u8,
     cancelled: Receiver<()>,
     generation: u64,
+    id: &str,
+    warm: &mut Option<LiveWorker>,
     done: &Sender<WorkerEvent>,
 ) -> bool {
-    let Ok(exe) = std::env::current_exe() else {
+    if !matches!(cancelled.try_recv(), Err(mpsc::TryRecvError::Empty)) {
         return false;
-    };
-    let Ok(exe) = WorkerExecutable::new(exe.with_file_name("hagig-fake-worker")) else {
+    }
+    if warm.is_none() {
+        let Ok(exe) = std::env::current_exe() else {
+            return false;
+        };
+        let Ok(exe) = WorkerExecutable::new(exe.with_file_name("hagig-fake-worker")) else {
+            return false;
+        };
+        let mut supervisor =
+            Supervisor::new(PlatformLauncher::new(exe).with_network_isolation(mode));
+        let Ok(pipes) = supervisor.start() else {
+            return false;
+        };
+        *warm = Some(LiveWorker { supervisor, pipes });
+    }
+    let worker = warm.as_mut().unwrap();
+    use rustix::fs::{OFlags, fcntl_setfl};
+    if fcntl_setfl(&worker.pipes.output, OFlags::NONBLOCK).is_err()
+        || fcntl_setfl(&worker.pipes.input, OFlags::NONBLOCK).is_err()
+    {
         return false;
-    };
-    let mut supervisor = Supervisor::new(PlatformLauncher::new(exe).with_network_isolation(mode));
-    let Ok(mut pipes) = supervisor.start() else {
-        return false;
-    };
-    if pipes.input.write_all(&[action]).is_err() {
+    }
+    let expected = private_frame(generation, id, 1);
+    let request = private_frame(generation, id, action);
+    if worker.pipes.input.write_all(&request).is_err() {
         return false;
     }
     let deadline = Instant::now() + Duration::from_secs(120);
-    let mut success = false;
     let _ = done.send(WorkerEvent::Started(
         generation,
-        supervisor.child_id().expect("successful start owns child"),
+        worker
+            .supervisor
+            .child_id()
+            .expect("successful start owns child"),
     ));
-    while Instant::now() < deadline && cancelled.try_recv().is_err() {
-        use rustix::event::{PollFd, PollFlags, Timespec, poll};
-        let mut fds = [PollFd::new(&pipes.output, PollFlags::IN)];
-        if poll(
-            &mut fds,
-            Some(&Timespec::try_from(Duration::from_millis(10)).unwrap()),
-        )
-        .is_ok_and(|n| n > 0)
-        {
-            let mut byte = [0];
-            if pipes.output.read_exact(&mut byte).is_err() {
-                break;
+    let mut reply = Vec::with_capacity(expected.len());
+    while Instant::now() < deadline
+        && matches!(cancelled.try_recv(), Err(mpsc::TryRecvError::Empty))
+    {
+        // Read no more than the fixed maximum envelope; never trust a child length.
+        let mut bytes = [0; 140];
+        match worker.pipes.output.read(&mut bytes) {
+            Ok(0) => return false,
+            Ok(n) => {
+                if reply.len() + n > expected.len() {
+                    return false;
+                }
+                reply.extend_from_slice(&bytes[..n]);
+                if !expected.starts_with(&reply) {
+                    return false;
+                }
+                if reply.len() == expected.len() {
+                    return true;
+                }
+                // At most 138 valid short prefixes per bounded envelope.
+                let _ = done.send(WorkerEvent::Progress(generation, reply.len()));
             }
-            success = byte[0] == 1;
-            break;
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                ) => {}
+            Err(_) => return false,
         }
+        std::thread::sleep(TICK);
     }
-    // Report completion only after kill/reap; never admit a successor before this.
-    while supervisor.stop().is_err() {
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    success
+    false
+}
+
+// Private v1 envelope: version:u8, generation:u64 BE, id length:u8, opaque ID,
+// action/result:u8. IDs are 1..128 ASCII token bytes; maximum wire size 139.
+fn private_frame(generation: u64, id: &str, value: u8) -> Vec<u8> {
+    let mut bytes = vec![1];
+    bytes.extend_from_slice(&generation.to_be_bytes());
+    bytes.push(id.len() as u8);
+    bytes.extend_from_slice(id.as_bytes());
+    bytes.push(value);
+    bytes
 }
 
 fn serve(mode: NetworkIsolation, fake_tests: bool) -> SafeResult<()> {
@@ -418,6 +484,7 @@ fn event_loop(listener: &UnixListener, mode: NetworkIsolation, fake_tests: bool)
     let mut next = 0u64;
     let mut generation = 0u64;
     let mut active: Option<Active> = None;
+    let mut warm = None;
     let (done, completed) = mpsc::channel();
     let mut tests = FakeTests {
         clock: fake_tests.then(Instant::now),
@@ -536,6 +603,7 @@ fn event_loop(listener: &UnixListener, mode: NetworkIsolation, fake_tests: bool)
                                     &mut generation,
                                     mode,
                                     &done,
+                                    &mut warm,
                                     &mut stopping,
                                     &mut tests,
                                 )
@@ -580,24 +648,36 @@ fn event_loop(listener: &UnixListener, mode: NetworkIsolation, fake_tests: bool)
                             a.worker_pid = Some(pid);
                         }
                     }
-                    WorkerEvent::Finished(g, success)
+                    WorkerEvent::Progress(g, bytes) => {
+                        if let Some(a) = active.as_mut().filter(|a| a.generation == g) {
+                            a.worker_reply_bytes = bytes;
+                        }
+                    }
+                    WorkerEvent::Finished(g, success, mut returned)
                         if active.as_ref().is_some_and(|a| a.generation == g) =>
                     {
-                        let a = active.take().unwrap();
-                        if a.valid
-                            && let Some(c) = clients.get_mut(&a.owner)
-                        {
-                            if success {
-                                // Do not place content behind unconsumed earlier replies.
-                                // A slow owner fails safely rather than retaining a result.
-                                if c.output.is_empty() {
-                                    c.output.extend(packet(&json!({"version":1,"type":"result","request_id":a.id,"text":""})));
-                                    c.unsent_result = Some(a.id);
+                        if !active.as_ref().unwrap().valid && !retire(&mut returned) {
+                            // Preserve ownership/admission while retrying cleanup next
+                            // tick; a failed stop must not spin on the service loop.
+                            pending_completion = Some(WorkerEvent::Finished(g, success, returned));
+                        } else {
+                            warm = returned;
+                            let a = active.take().unwrap();
+                            if a.valid
+                                && let Some(c) = clients.get_mut(&a.owner)
+                            {
+                                if success {
+                                    // Do not place content behind unconsumed earlier replies.
+                                    // A slow owner fails safely rather than retaining a result.
+                                    if c.output.is_empty() {
+                                        c.output.extend(packet(&json!({"version":1,"type":"result","request_id":a.id,"text":""})));
+                                        c.unsent_result = Some(a.id);
+                                    } else {
+                                        c.closing = true;
+                                    }
                                 } else {
-                                    c.closing = true;
+                                    c.reply("error", Some(&a.id), Some("worker_failed"));
                                 }
-                            } else {
-                                c.reply("error", Some(&a.id), Some("worker_failed"));
                             }
                         }
                     }
@@ -637,7 +717,11 @@ fn event_loop(listener: &UnixListener, mode: NetworkIsolation, fake_tests: bool)
             // An unresponsive nonowner must not hold shutdown hostage.
             clients.clear();
         }
-        if stopping && active.is_none() && clients.values().all(|c| c.output.is_empty()) {
+        if stopping
+            && active.is_none()
+            && clients.values().all(|c| c.output.is_empty())
+            && retire(&mut warm)
+        {
             return Ok(());
         }
         std::thread::sleep(TICK);
@@ -653,6 +737,7 @@ fn handle(
     generation: &mut u64,
     mode: NetworkIsolation,
     done: &Sender<WorkerEvent>,
+    warm: &mut Option<LiveWorker>,
     stopping: &mut bool,
     tests: &mut FakeTests,
 ) -> bool {
@@ -710,10 +795,16 @@ fn handle(
             c.reply("fake_test_ok", None, None);
         }
         "status" if id.is_none() => {
-            let mut response = json!({"version":1,"type":"status","state":if active.is_some() {"busy"} else {"idle"},"worker":"controlled_fake","network_isolation":mode.to_string(),"server_pid":std::process::id(),"worker_pid":active.as_ref().and_then(|a| a.worker_pid)});
+            let pid = warm
+                .as_ref()
+                .and_then(|w| w.supervisor.child_id())
+                .or_else(|| active.as_ref().and_then(|a| a.worker_pid));
+            let mut response = json!({"version":1,"type":"status","state":if active.is_some() {"busy"} else {"idle"},"worker":"controlled_fake","network_isolation":mode.to_string(),"server_pid":std::process::id(),"worker_pid":pid});
             if tests.clock.is_some() {
                 response["pending_results"] = json!(tests.pending_results);
                 response["pending_completions"] = json!(tests.pending_completions);
+                response["worker_reply_bytes"] =
+                    json!(active.as_ref().map_or(0, |a| a.worker_reply_bytes));
             }
             c.output.extend(packet(&response));
         }
@@ -735,6 +826,7 @@ fn handle(
                     deadline: tests.now() + Duration::from_secs(330),
                     cancel: None,
                     worker_pid: None,
+                    worker_reply_bytes: 0,
                     valid: true,
                 });
                 c.reply("accepted", id, None);
@@ -763,9 +855,24 @@ fn handle(
                 None | Some("complete") => 0,
                 Some("crash") => 1,
                 Some("stall") => 2,
+                Some("stale") => 3,
+                Some("wrong_id") => 4,
+                Some("oversized") => 5,
+                Some("partial") => 6,
+                Some("wrong_version") => 7,
+                Some("diagnostic") => 8,
+                Some("fragmented") => 9,
+                Some("excess_bytes") => 10,
                 _ => return false,
             };
-            a.cancel = Some(run_worker(mode, action, a.generation, done.clone()));
+            a.cancel = Some(run_worker(
+                mode,
+                action,
+                a.generation,
+                a.id.clone(),
+                warm.take(),
+                done.clone(),
+            ));
             a.deadline = tests.now() + Duration::from_secs(120);
         }
         _ => return false,
