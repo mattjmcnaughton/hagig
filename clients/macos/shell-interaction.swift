@@ -153,6 +153,7 @@ private final class ShellProof {
                     Float(target.x), Float(target.y), &hit) == .success)
         guard let hit else { throw ProofFailure.gate }
         try require(owned(hit))
+        print("pointer.hit-editor-name=\(named(hit, "Transcript editor")) hit-text-area=\((attribute(hit, kAXRoleAttribute) as? String) == "AXTextArea")")
         for type in [CGEventType.leftMouseDown, .leftMouseUp] {
             guard let event = CGEvent(mouseEventSource: nil, mouseType: type,
                                       mouseCursorPosition: target, mouseButton: .left) else { throw ProofFailure.gate }
@@ -172,7 +173,16 @@ private final class ShellProof {
 
     func editorFocused() throws {
         let element = try focused()
-        try require(named(element, "Transcript editor") && (attribute(element, kAXRoleAttribute) as? String) == "AXTextArea")
+        let role = attribute(element, kAXRoleAttribute) as? String ?? ""
+        let isEditor = named(element, "Transcript editor") && role == "AXTextArea"
+        if !isEditor {
+            let roles = ["AXButton", "AXTextArea", "AXWindow", "AXStaticText", "AXPopUpButton", "AXGroup", "AXScrollArea"]
+            let names = ["Transcript editor", "Copy all", "Copied", "Dismiss", "Simulate recording",
+                         "Simulate release", "Simulate result", "Show menu-bar surface"]
+            let name = names.first { named(element, $0) } ?? "unrecognized"
+            print("focus.expected-editor=false known-name=\(name) known-role=\(roles.contains(role) ? role : "unrecognized")")
+        }
+        try require(isEditor)
     }
 
     func key(_ code: CGKeyCode, flags: CGEventFlags = [], text: String? = nil) throws {
