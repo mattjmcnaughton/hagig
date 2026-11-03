@@ -28,8 +28,11 @@ private final class ShellProof {
         self.output = output
     }
 
-    func require(_ condition: Bool) throws {
-        if !condition { throw ProofFailure.gate }
+    func require(_ condition: Bool, line: UInt = #line) throws {
+        if !condition {
+            print("gate_failed source_line=\(line)")
+            throw ProofFailure.gate
+        }
     }
 
     func check() throws {
@@ -318,10 +321,19 @@ private final class ShellProof {
         try beginReview()
         try clipboard(canary)
         try startRecording()
-        stage = "standard.focus-edit-selection"
-        try click(awaitName("Transcript editor")); try editorFocused()
-        try key(0, flags: .maskCommand); try type(standard)
-        try expectText(standard); try clipboard(canary)
+        stage = "standard.pointer-editor"
+        try click(awaitName("Transcript editor"))
+        stage = "standard.editor-focus"
+        try editorFocused()
+        stage = "standard.replace-select-all"
+        try key(0, flags: .maskCommand)
+        stage = "standard.type-unicode-multiline"
+        try type(standard)
+        stage = "standard.verify-edited-text"
+        try expectText(standard)
+        stage = "standard.verify-no-copy"
+        try clipboard(canary)
+        stage = "standard.verify-select-all"
         try key(0, flags: .maskCommand)
         try require(selectedLength() == standard.utf16.count)
         print("PASS standard.focused-AXTextArea unicode-multiline-edit selection")
