@@ -106,6 +106,43 @@ final class EditorTests: XCTestCase {
             let boundary = editor("one two")
             keys("2lcw", in: boundary)
             XCTAssertEqual(boundary.string, "on two")
+            // Only the final dw step stops before its line terminator. Earlier
+            // counted steps and ordinary w still cross logical lines.
+            let deletions: [(String, String, String)] = [
+                ("one\ntwo", "dw", "\ntwo"),
+                ("one  \n  two", "dw", "\n  two"),
+                ("one\r\ntwo", "dw", "\r\ntwo"),
+                ("e\u{301}日本語\r\nnext", "dw", "\r\nnext"),
+                ("👩🏽‍💻!\nnext", "dw", "\nnext"),
+                ("one\n\ntwo", "dw", "\n\ntwo"),
+                ("one\n", "dw", "\n"),
+                ("one", "dw", ""),
+                ("one\ntwo three", "2dw", "three"),
+                ("one\ntwo\nthree", "2dw", "\nthree"),
+                ("one\r\ntwo\r\nthree", "d2w", "\r\nthree"),
+                ("one\n\ntwo\nthree", "2dw", "\nthree"),
+                ("one two\nthree", "2dw", "\nthree"),
+                ("one\ntwo\nthree\nfour\nfive", "2d2w", "\nfive"),
+                ("one\ntwo", "9dw", ""),
+                ("one\n  two", "w", "one\n  two")
+            ]
+            for (input, command, expected) in deletions {
+                let view = editor(input)
+                keys(command, in: view)
+                XCTAssertEqual(view.string, expected, "\(input.debugDescription): \(command)")
+            }
+            let whitespace = editor("one \t\n  two")
+            keys("3ldw", in: whitespace)
+            XCTAssertEqual(whitespace.string, "one\n  two")
+            let emptyLine = editor("\nnext")
+            keys("dw", in: emptyLine)
+            XCTAssertEqual(emptyLine.string, "next")
+            let crossLine = editor("one\r\n  日本語")
+            keys("w", in: crossLine)
+            XCTAssertEqual(crossLine.selectedRange().location, "one\r\n  ".utf16.count)
+            let retainedRegister = editor("one\ntwo")
+            keys("dwjp", in: retainedRegister)
+            XCTAssertEqual(retainedRegister.string, "\ntonewo")
         }
     }
 
@@ -146,6 +183,21 @@ final class EditorTests: XCTestCase {
                 XCTAssertEqual(view.selectedRange().location, 0, input)
                 keys("r", in: view, modifiers: .control)
                 XCTAssertEqual(view.selectedRange().location, 0, input)
+            }
+            let lineDeletions: [(String, String, String, Int, String)] = [
+                ("abcdef\nx\ny", "5ldd", "x\ny", 0, "\ny"),
+                ("keep\nabcdef\nx\ny", "j5ldd", "keep\nx\ny", 5, "keep\n\ny"),
+                ("abcdef\nmiddle\nx\ny", "5l2dd", "x\ny", 0, "\ny"),
+                ("a😀bcde\r\nx\r\ny", "5ldd", "x\r\ny", 0, "\r\ny"),
+                ("keep\nabcdef", "j5ldd", "keep\n", 5, "keep\n")
+            ]
+            for (input, command, expected, offset, afterX) in lineDeletions {
+                let view = editor(input)
+                keys(command, in: view)
+                XCTAssertEqual(view.string, expected, command)
+                XCTAssertEqual(view.selectedRange(), NSRange(location: offset, length: 0), command)
+                keys("x", in: view) // Detect deletion on the wrong surviving line.
+                XCTAssertEqual(view.string, afterX, command)
             }
             let change = editor("ab\nnext")
             keys("lcw", in: change)

@@ -61,19 +61,20 @@ run_test() {
     if [ "$phase" = mutant ]; then
         [ "$result" -eq 1 ] # Swift test failure, not a signal/crash exit.
         grep -F "Test Case '-[HagigPresentationTests.EditorTests $test]' failed" "$directory/$phase.log"
-        grep 'XCTAssertEqual failed' "$directory/$phase.log" | grep -F "$assertion" | grep -F 'edited'
+        grep 'XCTAssertEqual failed' "$directory/$phase.log" | grep -F "$assertion" | grep -F "$detail"
     else
         [ "$result" -eq 0 ]
         grep -F 'Executed 1 test, with 0 failures' "$directory/$phase.log"
     fi
 }
 
-for experiment in editor-copy presentation-copy immediate-discard; do
+for experiment in editor-copy presentation-copy immediate-discard dd-cursor dw-newline; do
     directory="$output/$experiment"
     mkdir "$directory"
     echo 'UNPROVEN: experiment has not completed candidate/mutant/restoration' > "$directory/verdict.txt"
     test=testSharedSurfaceEditedCopyAndImmediateDismissDiscard
     assertion='mutation synthetic stale'
+    detail='edited'
     case "$experiment" in
         editor-copy)
             source=$editor
@@ -88,6 +89,20 @@ for experiment in editor-copy presentation-copy immediate-discard; do
             source=$presentation
             replacement='/^        discardEditor?()$/d'
             assertion='edited 😀'
+            ;;
+        dd-cursor)
+            source=$editor
+            test=testNormalCursorAtDeletionAndEmptyLineBoundaries
+            replacement='s/select(min(start, characters.count))/select(min(lineStart(p), characters.count))/'
+            assertion='5ldd'
+            detail='XCTAssertEqual failed'
+            ;;
+        dw-newline)
+            source=$editor
+            test=testDeletesRegisterPasteAndUndoRedo
+            replacement='s/end = min(end, lineEnd(start))/end = max(end, lineEnd(start))/'
+            assertion='"one\ntwo": dw'
+            detail='XCTAssertEqual failed'
             ;;
     esac
     verify_restored > "$directory/before.sha256.log"
