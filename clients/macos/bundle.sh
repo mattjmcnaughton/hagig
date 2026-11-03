@@ -46,6 +46,9 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Helpers"
 )
 bin=$(cd -- "$mac" && swift build -c release --arch arm64 --show-bin-path)
 cp "$bin/HagigShell" "$app/Contents/MacOS/HagigShell"
+# SwiftPM adds a sibling-library search path; this bundle uses system libraries
+# only. Edit the staged copy before signing, leaving the SwiftPM output untouched.
+install_name_tool -delete_rpath '@loader_path' "$app/Contents/MacOS/HagigShell"
 for name in hagig hagig-fake-worker; do
     cp "$backend/target/aarch64-apple-darwin/release/$name" "$app/Contents/Helpers/$name"
 done
