@@ -149,7 +149,7 @@ jobs:
         timeout-minutes: 2
         run: |
           mkdir "$RUNNER_TEMP/shell-interaction"
-          { sw_vers; uname -m; xcodebuild -version; swift --version; git rev-parse HEAD; shasum -a 256 shell-interaction.swift; } > "$RUNNER_TEMP/shell-interaction/environment.txt"
+          { sw_vers; uname -m; xcodebuild -version; swift --version; xcrun --find lldb; xcrun lldb --version; git rev-parse HEAD; shasum -a 256 shell-interaction.swift native_responder_diagnostic.py; } > "$RUNNER_TEMP/shell-interaction/environment.txt"
           swift build --product HagigShell
           swiftc -swift-version 5 -parse-as-library shell-interaction.swift -o "$RUNNER_TEMP/hagig-shell-interaction-driver"
       - name: Drive owned shell via desktop pointer and keyboard (synthetic only)
