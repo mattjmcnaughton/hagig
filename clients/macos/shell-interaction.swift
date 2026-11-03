@@ -274,6 +274,25 @@ private final class ShellProof {
         for element in try nodes() where (attribute(element, kAXRoleAttribute) as? String) == "AXWindow" {
             bounds = bounds.union(try frame(element))
         }
+        // Popovers need not appear as AXWindow nodes. Include every visible
+        // window belonging to this exact shell, never a foreign window's bounds.
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                                       kCGNullWindowID) as? [[String: Any]] else {
+            throw ProofFailure.gate
+        }
+        var ownedWindows = 0
+        for window in windows {
+            guard (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == shell.processIdentifier,
+                  ((window[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1) > 0 else { continue }
+            guard let value = window[kCGWindowBounds as String] as? [String: Any],
+                  let rect = CGRect(dictionaryRepresentation: value as CFDictionary) else { throw ProofFailure.gate }
+            try require(!rect.isEmpty && rect.minX.isFinite && rect.minY.isFinite &&
+                        rect.width.isFinite && rect.height.isFinite)
+            bounds = bounds.union(rect)
+            ownedWindows += 1
+        }
+        try require(ownedWindows > 0)
+        print("recorder.owned-visible-windows=\(ownedWindows)")
         try require(!bounds.isNull)
         let screen = CGDisplayBounds(CGMainDisplayID())
         // Include neighboring controls and the extra Copied feedback row.
