@@ -203,6 +203,21 @@ private final class ShellProof {
                     (attribute(globalElement, kAXRoleAttribute) as? String) == "AXTextArea"
             }
             print("focus.app-role-status=\(roleStatus.rawValue) system-status=\(globalStatus.rawValue) system-owned=\(globalOwned) system-editor=\(globalEditor)")
+            if let editor = try find("Transcript editor") {
+                let editorFocus = attribute(editor, kAXFocusedAttribute) as? Bool
+                var settable = DarwinBoolean(false)
+                let status = AXUIElementIsAttributeSettable(editor, kAXValueAttribute as CFString, &settable)
+                print("focus.editor-focused=\(editorFocus.map { String($0) } ?? "unavailable") value-settable-status=\(status.rawValue) value-settable=\(settable.boolValue)")
+            }
+            var childValue: CFTypeRef?
+            let childStatus = AXUIElementCopyAttributeValue(element, kAXFocusedUIElementAttribute as CFString, &childValue)
+            var childEditor = false
+            if childStatus == .success, let childValue, CFGetTypeID(childValue) == AXUIElementGetTypeID() {
+                let child = childValue as! AXUIElement
+                childEditor = owned(child) && named(child, "Transcript editor") &&
+                    (attribute(child, kAXRoleAttribute) as? String) == "AXTextArea"
+            }
+            print("focus.container-child-status=\(childStatus.rawValue) child-editor=\(childEditor)")
         }
         try require(isEditor)
     }
