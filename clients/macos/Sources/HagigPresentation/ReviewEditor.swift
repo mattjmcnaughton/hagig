@@ -417,11 +417,12 @@ final class ReviewTextView: NSTextView, NSTextViewDelegate {
             if operation == .go {
                 if key == "g", let target = motion("gg", from: p, count: repetitions, explicit: true) { select(target) }
             } else if (operation == .delete && key == "d") || (operation == .yank && key == "y") {
-                var end = lineStart(p)
+                let start = lineStart(p)
+                var end = start
                 for _ in 0..<repetitions { end = lineAfter(end) }
-                let selection = range(lineStart(p), end)
+                let selection = range(start, end)
                 guard capture(selection, linewise: true) else { return }
-                if operation == .delete { replace(selection, with: ""); select(min(lineStart(p), characters.count)) }
+                if operation == .delete { replace(selection, with: ""); select(min(start, characters.count)) }
             } else if key == "w", operation == .delete || operation == .change {
                 var end = p
                 for iteration in 0..<repetitions {
@@ -430,7 +431,16 @@ final class ReviewTextView: NSTextView, NSTextViewDelegate {
                         while end < characters.count && kind(characters[end]) == current { end += 1 }
                     } else if operation == .change, iteration > 0 {
                         end = min(characters.count, word(max(p, end - 1), direction: "e") + 1)
-                    } else { end = word(end, direction: "w") }
+                    } else {
+                        let start = end
+                        end = word(end, direction: "w")
+                        // Final dw preserves its word's terminator; intermediate
+                        // counted steps and a start on an empty line still cross.
+                        if operation == .delete, iteration == repetitions - 1,
+                           start < characters.count, !characters[start].isNewline {
+                            end = min(end, lineEnd(start))
+                        }
+                    }
                 }
                 if operation == .change { mode = .insert }
                 delete(range(p, end))
