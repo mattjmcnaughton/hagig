@@ -17,6 +17,7 @@ ERRORS = {
     "model_missing": "Install the candidate assets explicitly before retrying.",
     "model_invalid": "Verify or explicitly reinstall the candidate assets.",
     "vocabulary_unreadable": "Check vocabulary file permissions and retry.",
+    "vocabulary_invalid": "Check vocabulary syntax and limits before retrying.",
     "audio_invalid": "Supply a supported readable WAV file.",
     "worker_failed": "Inference worker failed; retry as a new request.",
     "cancelled": "Request cancelled; no result delivered.",

@@ -1,6 +1,10 @@
 //! Synthetic/public fixtures only: deliberately emits transcripts as experiment evidence.
-use hagig_inference_s1::candidate_config;
-use sherpa_onnx::{OfflineRecognizer, Wave};
+use hagig_inference_s1::{
+    audio::read_wav,
+    candidate_config,
+    vocabulary::{parse_vocabulary, validate_model_vocabulary},
+};
+use sherpa_onnx::OfflineRecognizer;
 use std::{env, fs, path::Path, time::Instant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -10,8 +14,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let model = Path::new(&args[1]);
     let fixtures = Path::new(&args[2]);
-    let hotwords = fs::read_to_string(&args[3])?.trim().replace('\n', "/");
+    let vocabulary = fs::read(&args[3]).map_err(|_| "vocabulary_unreadable")?;
+    let hotwords = parse_vocabulary(&vocabulary)?;
     let config = candidate_config(model)?;
+    validate_model_vocabulary(model, &hotwords)?;
 
     let start = Instant::now();
     let recognizer = OfflineRecognizer::create(&config).ok_or("recognizer creation failed")?;
@@ -29,20 +35,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let [id, kind, reference, _spoken] = fields.as_slice() else {
                 return Err("invalid experiment corpus".into());
             };
-            let wave = Wave::read(fixtures.join(format!("{id}.wav")).to_str().unwrap())
-                .ok_or("fixture read failed")?;
+            let wave = read_wav(&fixtures.join(format!("{id}.wav")))?;
             for boosted in if pass == 0 {
                 [false, true]
             } else {
                 [true, false]
             } {
                 let start = Instant::now();
-                let stream = if boosted {
+                let stream = if boosted && !hotwords.is_empty() {
                     recognizer.create_stream_with_hotwords(&hotwords)
                 } else {
                     recognizer.create_stream()
                 };
-                stream.accept_waveform(wave.sample_rate(), wave.samples());
+                stream.accept_waveform(wave.sample_rate, &wave.samples);
                 recognizer.decode(&stream);
                 let result = stream.get_result().ok_or("missing recognition result")?;
                 println!(
@@ -51,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "event":"decode", "id":id, "kind":kind, "reference":reference,
                         "pass":pass, "boosted":boosted, "decode_index":decode_index,
                         "seconds":start.elapsed().as_secs_f64(),
-                        "audio_seconds":wave.samples().len() as f64 / wave.sample_rate() as f64,
+                        "audio_seconds":wave.samples.len() as f64 / wave.sample_rate as f64,
                         "text":result.text
                     })
                 );

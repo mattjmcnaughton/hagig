@@ -8,6 +8,32 @@ configuration to test diagnostic containment, failure, cancellation, and recover
 Started from merged remote `origin/main` commit
 `141824784d69fff0efb203dadb1e90145247b61a`, not a parent thread's local branch.
 
+## Issue #6 structural vocabulary follow-up
+
+Current candidate changes and remaining gates: [BLOCKERS.md](BLOCKERS.md), with
+[pinned-source/provenance investigation](PROVENANCE.md). The original evidence
+files below are historical and unchanged. The current worker rejects structurally
+malformed vocabulary rather than silently letting native code skip it; complete
+tokenizer-aware rejection and speech gating remain unresolved. No adoption.
+
+The spike grammar is documented in BLOCKERS.md. Run native-free parser tests with
+the existing Rust compiler, or all Cargo tests using already acquired libraries:
+
+```bash
+mkdir -p .agentic/inference
+rustc +1.90.0 --edition=2021 --test spikes/inference-s1/src/vocabulary.rs -o .agentic/inference/vocabulary-tests
+.agentic/inference/vocabulary-tests
+# After the explicit acquisition/build environment below is prepared:
+cargo +1.90.0 test --offline --locked --manifest-path spikes/inference-s1/Cargo.toml
+python3 spikes/inference-s1/verify_vocabulary.py \
+  "$CARGO_TARGET_DIR/release/isolated-worker" \
+  "$CARGO_TARGET_DIR/release/hagig-inference-s1"
+```
+
+The CLI regression harness creates disposable synthetic vocabulary files and uses
+deliberately absent model/audio paths. It checks validation order and content-free
+errors, not native decoding, network isolation, speech usefulness or privacy.
+
 ## Reproduce
 
 Run from the repository root on Linux x86-64. Requirements: Rust 1.90.0,

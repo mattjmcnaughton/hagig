@@ -5,6 +5,13 @@ production server, security sandbox, or macOS acceptance**. The original
 [S1 findings](FINDINGS.md), assets, dependency pins, and historical evidence remain
 in place. No downloads or model/decoder changes were needed for this follow-up.
 
+The measurements and warning outcomes below are **historical**. Issue #6's
+[current follow-up](BLOCKERS.md) adds structural vocabulary rejection and changes
+the verifier's malformed-vocabulary expectation to `vocabulary_invalid`; it does
+not certify tokenizer representability or fix silence. The historical canary leak
+was reproduced with the base worker, not removed from evidence. The current full
+traced verifier has not been rerun here (strace and speech fixtures unavailable).
+
 ## Boundary chosen after reading the constitution
 
 `worker_probe.py` is a small Python-standard-library supervisor with no native
@@ -12,16 +19,29 @@ inference library loaded. It launches one `isolated-worker` Rust executable per
 request. The worker uses the same pinned sherpa-onnx/NeMo TDT configuration as the
 original benchmark, now shared through `src/lib.rs`; this is not a new backend.
 Python is experiment tooling, **not a proposed replacement for the Rust server**.
-Native WAV decoding also stays in the worker. Passing file paths here is a probe
-interface, not the proposed server's canonical-PCM transport contract.
+WAV decoding stays in the worker but now uses bounded safe Rust, not sherpa's
+native WAV reader. The benchmark uses the same decoder. It accepts RIFF/WAVE
+PCM16 or normalized finite float32, mono/stereo, 16/44.1/48 kHz, at most five
+minutes. It validates lengths, complete frames, fmt16/fmt18-with-zero-extension,
+and odd chunk padding; unknown bounded metadata is skipped. It reads one bounded
+snapshot (at most 115,265,536 bytes including metadata) and never reopens validated
+bytes through a native WAV API. Stereo retains only the first channel, matching
+the original spike; native inference still converts the original supported rate.
+This is not the final CLI's canonical conversion/resampling implementation.
+Malformed audio returns content-free `audio_invalid`; the one-shot worker checks
+audio after vocabulary/model-file preflight but before recognizer construction.
+The benchmark retains its historical model-load timing/order. Passing file paths
+here is a probe interface, not the proposed server's canonical-PCM transport contract.
 
 **Network-isolation limit:** `worker_probe.py` launches the worker directly; it
 does not establish or require a network namespace. Only the explicit
 `unshare -Urn` invocations below exercise enforced external-network isolation.
 Default/network-available runs are synthetic observation controls, not a compliant
-production launch path. Under the current constitution, production must enforce
-isolation before native loading and fail closed if unavailable. This preservation
-does not implement that launcher or certify macOS `sandbox-exec`.
+production launch path. Under the current constitution, required isolation is the
+default and must be established before native loading, failing closed if
+unavailable. Explicit disabled mode is supported, never automatic fallback; both
+modes retain process separation and offline/no-upload/no-telemetry behavior. This
+probe implements neither product launch contract nor macOS `sandbox-exec`.
 
 - Child stdout and stderr are directed to `/dev/null` at spawn, before library
   loading. Native diagnostics are not captured, persisted, redacted, or forwarded
