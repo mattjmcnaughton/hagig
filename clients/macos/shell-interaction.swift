@@ -137,9 +137,7 @@ private final class ShellProof {
         try safeCrop()
         let rect = try frame(element)
         if let crop { try require(crop.contains(rect)) }
-        let textArea = (attribute(element, kAXRoleAttribute) as? String) == "AXTextArea"
-        let target = CGPoint(x: rect.midX, y: textArea ? rect.minY + min(20, rect.height / 2) : rect.midY)
-        if textArea { print("pointer.editor-target=first-text-line; blank-area-focus-unproven") }
+        let target = CGPoint(x: rect.midX, y: rect.midY)
         let origin = CGEvent(source: nil)?.location ?? target
         for step in 1...8 {
             let t = CGFloat(step) / 8
