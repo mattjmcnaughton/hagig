@@ -190,3 +190,22 @@ the failed broader-scope assertion is retained here, not called a native leak or
 silently whitelisted in verify_worker.py. That verifier is unchanged and still
 blocked on its original speech fixture/exact reference; none of these runs passes
 its full speech, SIGINT, same-supervisor recovery or input-hash matrix.
+
+### Checked tokenizer correspondence, 2026-11-03
+
+The spike now checks the singleton-closure invariant of the pinned table format
+before native initialization; see [the continuation](BLOCKERS.md#tokenizer-aware-preflight-continuation-2026-11-03).
+It verifies bounded parsing, ordered prefix/IDs/blank/unknown, integer rank bounds,
+no fallback, boundary singleton and ordinary-piece closure. The source-derived
+predicate rejects unknown-containing whole terms without reimplementing scored
+BPE or normalizing user input. Empty vocabulary remains unboosted but still
+requires valid tables. Structural-only status above describes historical code.
+
+Synthetic malformed/paired supported controls and read-only recovered-table
+checks passed without native recognizer construction. Two frozen-test semantic
+mutations failed their intended assertions and exact restorations passed. These
+are Linux contract and mutation-necessity results, not independent confirmation
+that the prebuilt native libraries implement that source. Table correspondence
+does not prove model dimensions, cryptographic identity or resistance to concurrent
+path replacement. No model/native/library pin, lockfile or acquisition behavior
+changed; native provenance, licensing, privacy and human/platform gates stay open.

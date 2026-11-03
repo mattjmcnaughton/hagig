@@ -1,5 +1,9 @@
 //! Synthetic/public fixtures only: deliberately emits transcripts as experiment evidence.
-use hagig_inference_s1::{audio::read_wav, candidate_config, vocabulary::parse_vocabulary};
+use hagig_inference_s1::{
+    audio::read_wav,
+    candidate_config,
+    vocabulary::{parse_vocabulary, validate_model_vocabulary},
+};
 use sherpa_onnx::OfflineRecognizer;
 use std::{env, fs, path::Path, time::Instant};
 
@@ -13,6 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vocabulary = fs::read(&args[3]).map_err(|_| "vocabulary_unreadable")?;
     let hotwords = parse_vocabulary(&vocabulary)?;
     let config = candidate_config(model)?;
+    validate_model_vocabulary(model, &hotwords)?;
 
     let start = Instant::now();
     let recognizer = OfflineRecognizer::create(&config).ok_or("recognizer creation failed")?;

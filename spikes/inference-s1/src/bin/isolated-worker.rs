@@ -1,5 +1,9 @@
 //! One request per process. Invoke through worker_probe.py, not as a client CLI.
-use hagig_inference_s1::{audio::read_wav, candidate_config, vocabulary::parse_vocabulary};
+use hagig_inference_s1::{
+    audio::read_wav,
+    candidate_config,
+    vocabulary::{parse_vocabulary, validate_model_vocabulary},
+};
 use sherpa_onnx::OfflineRecognizer;
 use std::{env, fs, fs::File, io::Write, os::fd::FromRawFd, path::Path};
 
@@ -7,6 +11,7 @@ fn transcribe(args: &[String]) -> Result<String, &'static str> {
     let vocabulary = fs::read(&args[3]).map_err(|_| "vocabulary_unreadable")?;
     let hotwords = parse_vocabulary(&vocabulary)?;
     let config = candidate_config(Path::new(&args[1]))?;
+    validate_model_vocabulary(Path::new(&args[1]), &hotwords)?;
     let wave = read_wav(Path::new(&args[2]))?;
     let recognizer = OfflineRecognizer::create(&config).ok_or("model_invalid")?;
     let stream = if hotwords.is_empty() {

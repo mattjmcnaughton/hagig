@@ -2,9 +2,11 @@
 
 2026-10-28; inspected base `fbc7a5f036d5d9a92ae6b30e83d18701086b0c10`.
 **Decision: patch/evaluate, not proceed to adoption.** This checkpoint adds bounded
-structural vocabulary rejection, not a speech gate or complete tokenizer-aware
-validation. No dependency/pin changed. Historical evidence is untouched. Issue #6
-is not complete. Source provenance follow-up is in [PROVENANCE.md](PROVENANCE.md).
+structural and checked singleton-closure vocabulary rejection, not a speech gate
+or native-source/binary attestation. The dated continuations below supersede the
+historical structural-only status. No dependency/pin changed. Historical evidence
+is untouched. Issue #6 is not complete. Source provenance follow-up is in
+[PROVENANCE.md](PROVENANCE.md).
 
 ## Evidence rechecked locally
 
@@ -243,3 +245,39 @@ original-base attribution or native-reader repair. A three-second synthetic
 silence input still decodes to nonempty text with the actual pinned model inside
 a Linux network namespace; only the nonempty boolean was retained. Historical
 failures and remaining human speech/privacy/license/platform gates stand.
+
+### Tokenizer-aware preflight continuation, 2026-11-03
+
+Both entry points now validate `bpe.vocab` and `tokens.txt` after structural
+vocabulary/model-file checks and before native recognizer creation, including
+empty/unboosted vocabulary. Each table is limited to 128 KiB before parsing.
+The accepted pinned format requires unique UTF-8 pieces, integer i32 rank scores,
+canonical positional token IDs, identical ordered BPE/token prefix, unknown at
+zero, sole extra blank token, no byte fallback, a boundary singleton and ordinary
+piece singleton closure. Broken assumptions return content-free `model_invalid`.
+
+Under those checked assumptions, simple-sentencepiece 0.7's word-prefix/scored
+segmentation has a known singleton at every supported scalar boundary. No ordinary
+piece covers unsupported scalars; the unknown spelling is not composable from
+those singletons. Thus unsupported whole terms return `vocabulary_invalid`
+without duplicating dynamic programming or banning all non-ASCII text. Spelling,
+case, duplicates and normalization remain unchanged; precomposed and combining
+forms can differ. This is this pinned format's contract, not generic BPE support
+or evidence that a representable term improves transcription.
+
+Thirteen Rust tests and 42 structural plus 54 public tokenizer-preflight checks
+pass offline on Linux. Supported worker controls stop at deliberately missing
+audio; fake ONNX files never reach native parsing. Twelve read-only actual-table
+controls also reach the expected vocabulary/audio errors without decoding.
+Frozen tests pass on the candidate, fail claim-specific assertions under separate
+scalar-rejection and closure bypasses, and pass after exact restoration. Those
+captures establish mutation necessity, not attribution against the original base.
+All six independent complete-original-base review lenses completed without a
+code-defect finding; intentional synthetic I/O and verification limits retained.
+
+Native code subsequently reopens paths: concurrent replacement remains a TOCTOU
+limit. Ordered correspondence is not cryptographic table identity, ONNX dimension
+attestation or native-source/binary equivalence. Unresolved #25 F3/F4, original
+speech verifier, human/noise/quiet/short-command, privacy/license/provenance and
+physical-Mac gates remain blockers. Historical silence hallucinations are not
+fixed or discarded. No new dependency, asset acquisition or speech heuristic.
