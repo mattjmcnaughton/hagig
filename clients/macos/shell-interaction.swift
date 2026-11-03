@@ -172,11 +172,18 @@ private final class ShellProof {
     }
 
     func editorFocused() throws {
-        let element = try focused()
-        let role = attribute(element, kAXRoleAttribute) as? String ?? ""
+        let end = Date().addingTimeInterval(2)
+        var element = try focused()
+        var role = attribute(element, kAXRoleAttribute) as? String ?? ""
+        while !(named(element, "Transcript editor") && role == "AXTextArea") && Date() < end {
+            try pause(0.1)
+            element = try focused()
+            role = attribute(element, kAXRoleAttribute) as? String ?? ""
+        }
         let isEditor = named(element, "Transcript editor") && role == "AXTextArea"
         if !isEditor {
-            let roles = ["AXButton", "AXTextArea", "AXWindow", "AXStaticText", "AXPopUpButton", "AXGroup", "AXScrollArea"]
+            let roles = ["AXButton", "AXTextArea", "AXWindow", "AXStaticText", "AXPopUpButton", "AXGroup", "AXScrollArea",
+                         "AXApplication", "AXUnknown", "AXMenuBar", "AXMenuBarItem", "AXMenu", "AXMenuItem", "AXTextField"]
             let names = ["Transcript editor", "Copy all", "Copied", "Dismiss", "Simulate recording",
                          "Simulate release", "Simulate result", "Show menu-bar surface"]
             let name = names.first { named(element, $0) } ?? "unrecognized"
