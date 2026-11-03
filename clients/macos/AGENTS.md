@@ -110,6 +110,11 @@ before removing that empty lock directory with `rmdir`. Failed build staging is
 disposable and cleaned; any incomplete published output must be inspected and
 moved aside, not blindly deleted. No automatic upgrade or service killing exists.
 
+Before signing, Xcode's `install_name_tool` removes SwiftPM's `@loader_path`
+search entry from the staged shell only. This checkpoint uses system libraries,
+not bundled sibling dylibs; `/usr/lib/swift` is retained. The native smoke still
+rejects unexpected dependencies/search paths and verifies actual relocated launch.
+Removal failure aborts assembly; the SwiftPM build output is left unchanged.
 Nested helpers and the outer app are ad-hoc signed inside-out, then verified.
 Ad-hoc signing is not Developer ID, notarization, Gatekeeper approval, TCC grant,
 permission stability across rebuilds, or worker-isolation proof. Diagnose launch

@@ -39,6 +39,7 @@ printf cli > target/aarch64-apple-darwin/release/hagig
 printf fake > target/aarch64-apple-darwin/release/hagig-fake-worker''')
         self.stub("plutil", ':')
         self.stub("codesign", ':')
+        self.stub("install_name_tool", ':')
         self.stub("open", ':')
 
     def stub(self, name, body):
@@ -101,8 +102,31 @@ printf fake > target/aarch64-apple-darwin/release/hagig-fake-worker''')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f"open {self.mac}/.build/Hagig.app\n", self.calls())
 
+    def test_packaged_shell_removes_only_loader_rpath_before_signing(self):
+        # Text stand-ins model load commands, not Mach-O editing on Linux.
+        self.stub("swift", '''
+case "$*" in
+  *--show-bin-path*) printf '%s\\n' "$PWD/.build/release" ;;
+  *) mkdir -p .build/release
+     printf 'shell\\n@loader_path\\n/usr/lib/swift\\n' > .build/release/HagigShell ;;
+esac''')
+        self.stub("install_name_tool", '''
+[ "$1" = -delete_rpath ] && [ "$2" = '@loader_path' ] || exit 65
+sed '/^@loader_path$/d' "$3" > "$3.edited"
+mv "$3.edited" "$3"''')
+        self.stub("codesign", '''
+case "${!#}" in
+  *.app) ! grep -Fx '@loader_path' "${!#}/Contents/MacOS/HagigShell" ;;
+esac''')
+        result = self.run_bundle("build")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.mac / ".build/Hagig.app/Contents/MacOS/HagigShell").read_text(),
+                         "shell\n/usr/lib/swift\n")
+        self.assertEqual((self.mac / ".build/release/HagigShell").read_text(),
+                         "shell\n@loader_path\n/usr/lib/swift\n")
+
     def test_failure_cleans_staging_and_does_not_publish_or_launch(self):
-        for tool in ("cargo", "swift", "codesign"):
+        for tool in ("cargo", "swift", "install_name_tool", "codesign"):
             with self.subTest(tool=tool):
                 original = (self.tools / tool).read_text()
                 self.stub(tool, 'exit 19')
