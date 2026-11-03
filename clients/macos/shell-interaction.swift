@@ -157,9 +157,6 @@ private final class ShellProof {
         for type in [CGEventType.leftMouseDown, .leftMouseUp] {
             guard let event = CGEvent(mouseEventSource: nil, mouseType: type,
                                       mouseCursorPosition: target, mouseButton: .left) else { throw ProofFailure.gate }
-            let originalClickCount = event.getIntegerValueField(.mouseEventClickState)
-            event.setIntegerValueField(.mouseEventClickState, value: 1)
-            print("pointer.click-count-default=\(originalClickCount) posted-click-count=1")
             event.post(tap: .cghidEventTap)
         }
         try pause()
@@ -221,6 +218,23 @@ private final class ShellProof {
                     (attribute(child, kAXRoleAttribute) as? String) == "AXTextArea"
             }
             print("focus.container-child-status=\(childStatus.rawValue) child-editor=\(childEditor)")
+            // A guarded diagnostic still is not a passing interaction recording.
+            if let crop {
+                try safeCrop()
+                let still = temporaryMovie.appendingPathExtension("png")
+                let capture = Process()
+                defer { _ = stop(capture) }
+                capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                let region = "\(Int(crop.minX)),\(Int(crop.minY)),\(Int(crop.width)),\(Int(crop.height))"
+                capture.arguments = ["-x", "-R" + region, still.path]
+                capture.standardOutput = FileHandle.nullDevice; capture.standardError = FileHandle.nullDevice
+                try capture.run()
+                while capture.isRunning { try pause(0.05) }
+                try require(capture.terminationStatus == 0)
+                try safeCrop()
+                try FileManager.default.moveItem(at: still, to: output.appendingPathComponent("editor-focus-diagnostic.png"))
+                print("UNPROVEN focus-diagnostic-still; no-interaction-acceptance")
+            }
         }
         try require(isEditor)
     }
@@ -470,9 +484,11 @@ private final class ShellProof {
         let recordingStopped = stop(recorder, interrupt: true)
         let shellStopped = stop(shell)
         var temporaryRemoved = true
-        if FileManager.default.fileExists(atPath: temporaryMovie.path) {
-            do { try FileManager.default.removeItem(at: temporaryMovie) }
-            catch { temporaryRemoved = false }
+        for file in [temporaryMovie, temporaryMovie.appendingPathExtension("png")] {
+            if FileManager.default.fileExists(atPath: file.path) {
+                do { try FileManager.default.removeItem(at: file) }
+                catch { temporaryRemoved = false }
+            }
         }
         if seededClipboard {
             if let value = board.string(forType: .string), syntheticCopies.contains(value) {
