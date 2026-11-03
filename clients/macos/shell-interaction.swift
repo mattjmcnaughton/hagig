@@ -181,6 +181,19 @@ private final class ShellProof {
                          "Simulate release", "Simulate result", "Show menu-bar surface"]
             let name = names.first { named(element, $0) } ?? "unrecognized"
             print("focus.expected-editor=false known-name=\(name) known-role=\(roles.contains(role) ? role : "unrecognized")")
+            var roleValue: CFTypeRef?
+            let roleStatus = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleValue)
+            var globalValue: CFTypeRef?
+            let globalStatus = AXUIElementCopyAttributeValue(AXUIElementCreateSystemWide(),
+                kAXFocusedUIElementAttribute as CFString, &globalValue)
+            var globalOwned = false, globalEditor = false
+            if globalStatus == .success, let globalValue, CFGetTypeID(globalValue) == AXUIElementGetTypeID() {
+                let globalElement = globalValue as! AXUIElement
+                globalOwned = owned(globalElement)
+                globalEditor = globalOwned && named(globalElement, "Transcript editor") &&
+                    (attribute(globalElement, kAXRoleAttribute) as? String) == "AXTextArea"
+            }
+            print("focus.app-role-status=\(roleStatus.rawValue) system-status=\(globalStatus.rawValue) system-owned=\(globalOwned) system-editor=\(globalEditor)")
         }
         try require(isEditor)
     }
