@@ -158,7 +158,7 @@ public struct HagigView: View {
                 .id(presentation.editorID)
                 .frame(height: 180)
                 .clipShape(RoundedRectangle(cornerRadius: 7))
-                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(blue.opacity(0.5)).allowsHitTesting(false))
+                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(blue.opacity(0.5)))
             if presentation.copied { Text("Copied").font(.system(size: 11)).foregroundStyle(secondary) }
             Button("Dismiss") { presentation.reset() }
                 .keyboardShortcut("d", modifiers: [.command, .shift]).frame(maxWidth: .infinity)
