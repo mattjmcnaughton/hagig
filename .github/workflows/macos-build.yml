@@ -132,3 +132,37 @@ jobs:
           path: ${{ runner.temp }}/editor-semantic-proof/
           if-no-files-found: warn
           retention-days: 3
+
+  shell-interaction:
+    runs-on: macos-15
+    timeout-minutes: 5
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    defaults:
+      run:
+        working-directory: clients/macos
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build fresh synthetic shell and proof-only desktop driver
+        timeout-minutes: 2
+        run: |
+          mkdir "$RUNNER_TEMP/shell-interaction"
+          { sw_vers; uname -m; xcodebuild -version; swift --version; git rev-parse HEAD; shasum -a 256 shell-interaction.swift; } > "$RUNNER_TEMP/shell-interaction/environment.txt"
+          swift build --product HagigShell
+          swiftc -swift-version 5 -parse-as-library shell-interaction.swift -o "$RUNNER_TEMP/hagig-shell-interaction-driver"
+      - name: Drive owned shell via desktop pointer and keyboard (synthetic only)
+        timeout-minutes: 2
+        run: |
+          shell="$(swift build --show-bin-path)/HagigShell"
+          printf 'driver=%s\nshell=%s\n' "$RUNNER_TEMP/hagig-shell-interaction-driver" "$shell" > "$RUNNER_TEMP/shell-interaction/command.txt"
+          "$RUNNER_TEMP/hagig-shell-interaction-driver" "$shell" "$RUNNER_TEMP/shell-interaction" > "$RUNNER_TEMP/shell-interaction/interaction.log" 2>&1
+      - name: Upload bounded synthetic shell interaction evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-shell-interaction-${{ github.sha }}
+          path: ${{ runner.temp }}/shell-interaction/
+          if-no-files-found: warn
+          retention-days: 3
