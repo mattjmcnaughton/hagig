@@ -214,3 +214,32 @@ Keep adoption blocked pending source/binary correspondence, parser remediation o
 reviewed avoidance, single-thread native ownership and verified build inputs.
 Process separation/network isolation alone does not repair native memory safety;
 the bounded privacy observations above do not clear these security findings.
+
+### WAV-reader avoidance continuation, 2026-11-03
+
+Both spike entry points now decode supported RIFF/WAVE inputs using bounded safe
+Rust and submit normalized PCM through existing `accept_waveform`. Neither calls
+`Wave::read` or another native WAV reader. Supported formats match the proposed
+CLI set (PCM16/float32, mono/stereo,16/44.1/48kHz, five minutes), not arbitrary
+native-reader formats. The spike preserves native first-channel stereo selection
+and native inference sample-rate conversion; final canonical CLI conversion is
+not established. File and frame limits precede allocation/FFI sample-count use.
+Malformed audio is rejected before worker recognizer construction; vocabulary/
+model-file-preflight error order remains. See WORKER.md for exact boundaries.
+
+This avoids F1/F2's native WAV entry path in the spike; it does not repair the
+prebuilt reader, establish source/binary correspondence, clear other native
+parsers/FFI or complete adoption. Silence is still valid audio, not accepted speech.
+Initial decoder TDD: three behavioral red tests before implementation, then four
+decoder and five existing vocabulary tests pass; offline locked release build,
+Clippy and42 CLI vocabulary checks pass. Six independent complete-diff review
+lenses completed; the missing original speech verifier remains blocked. Frozen
+decoder tests fail under five semantic mutations (frame alignment, normalization,
+float range, duration, file cap), and pass after each restoration. A frozen worker
+harness rejects four malformed synthetic inputs as `audio_invalid`; moving
+recognizer creation before decoding changes the first error to `model_invalid`
+and fails its assertion. Restoration passes. These prove mutation necessity, not
+original-base attribution or native-reader repair. A three-second synthetic
+silence input still decodes to nonempty text with the actual pinned model inside
+a Linux network namespace; only the nonempty boolean was retained. Historical
+failures and remaining human speech/privacy/license/platform gates stand.

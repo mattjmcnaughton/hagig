@@ -19,8 +19,19 @@ inference library loaded. It launches one `isolated-worker` Rust executable per
 request. The worker uses the same pinned sherpa-onnx/NeMo TDT configuration as the
 original benchmark, now shared through `src/lib.rs`; this is not a new backend.
 Python is experiment tooling, **not a proposed replacement for the Rust server**.
-Native WAV decoding also stays in the worker. Passing file paths here is a probe
-interface, not the proposed server's canonical-PCM transport contract.
+WAV decoding stays in the worker but now uses bounded safe Rust, not sherpa's
+native WAV reader. The benchmark uses the same decoder. It accepts RIFF/WAVE
+PCM16 or normalized finite float32, mono/stereo, 16/44.1/48 kHz, at most five
+minutes. It validates lengths, complete frames, fmt16/fmt18-with-zero-extension,
+and odd chunk padding; unknown bounded metadata is skipped. It reads one bounded
+snapshot (at most 115,265,536 bytes including metadata) and never reopens validated
+bytes through a native WAV API. Stereo retains only the first channel, matching
+the original spike; native inference still converts the original supported rate.
+This is not the final CLI's canonical conversion/resampling implementation.
+Malformed audio returns content-free `audio_invalid`; the one-shot worker checks
+audio after vocabulary/model-file preflight but before recognizer construction.
+The benchmark retains its historical model-load timing/order. Passing file paths
+here is a probe interface, not the proposed server's canonical-PCM transport contract.
 
 **Network-isolation limit:** `worker_probe.py` launches the worker directly; it
 does not establish or require a network namespace. Only the explicit

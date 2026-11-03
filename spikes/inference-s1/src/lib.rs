@@ -2,6 +2,7 @@
 use sherpa_onnx::{OfflineRecognizerConfig, OfflineTransducerModelConfig};
 use std::path::Path;
 
+pub mod audio;
 pub mod vocabulary;
 
 pub fn candidate_config(model: &Path) -> Result<OfflineRecognizerConfig, &'static str> {

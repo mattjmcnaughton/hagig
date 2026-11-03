@@ -1,6 +1,6 @@
 //! Synthetic/public fixtures only: deliberately emits transcripts as experiment evidence.
-use hagig_inference_s1::{candidate_config, vocabulary::parse_vocabulary};
-use sherpa_onnx::{OfflineRecognizer, Wave};
+use hagig_inference_s1::{audio::read_wav, candidate_config, vocabulary::parse_vocabulary};
+use sherpa_onnx::OfflineRecognizer;
 use std::{env, fs, path::Path, time::Instant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -30,8 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let [id, kind, reference, _spoken] = fields.as_slice() else {
                 return Err("invalid experiment corpus".into());
             };
-            let wave = Wave::read(fixtures.join(format!("{id}.wav")).to_str().unwrap())
-                .ok_or("fixture read failed")?;
+            let wave = read_wav(&fixtures.join(format!("{id}.wav")))?;
             for boosted in if pass == 0 {
                 [false, true]
             } else {
@@ -43,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     recognizer.create_stream()
                 };
-                stream.accept_waveform(wave.sample_rate(), wave.samples());
+                stream.accept_waveform(wave.sample_rate, &wave.samples);
                 recognizer.decode(&stream);
                 let result = stream.get_result().ok_or("missing recognition result")?;
                 println!(
@@ -52,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         "event":"decode", "id":id, "kind":kind, "reference":reference,
                         "pass":pass, "boosted":boosted, "decode_index":decode_index,
                         "seconds":start.elapsed().as_secs_f64(),
-                        "audio_seconds":wave.samples().len() as f64 / wave.sample_rate() as f64,
+                        "audio_seconds":wave.samples.len() as f64 / wave.sample_rate as f64,
                         "text":result.text
                     })
                 );
