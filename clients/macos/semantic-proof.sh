@@ -61,7 +61,12 @@ run_test() {
     if [ "$phase" = mutant ]; then
         [ "$result" -eq 1 ] # Swift test failure, not a signal/crash exit.
         grep -F "Test Case '-[HagigPresentationTests.EditorTests $test]' failed" "$directory/$phase.log"
-        grep 'XCTAssertEqual failed' "$directory/$phase.log" | grep -F "$assertion" | grep -F "$detail"
+        if [ "$experiment" = dw-newline ]; then
+            # This fixed LF fixture puts the assertion message on the next line.
+            grep -A 1 'XCTAssertEqual failed:' "$directory/$phase.log" | grep -F "$assertion"
+        else
+            grep 'XCTAssertEqual failed' "$directory/$phase.log" | grep -F "$assertion" | grep -F "$detail"
+        fi
     else
         [ "$result" -eq 0 ]
         grep -F 'Executed 1 test, with 0 failures' "$directory/$phase.log"
@@ -100,7 +105,7 @@ for experiment in editor-copy presentation-copy immediate-discard dd-cursor dw-n
         dw-newline)
             source=$editor
             test=testDeletesRegisterPasteAndUndoRedo
-            replacement='s/end = min(end, lineEnd(start))/end = max(end, lineEnd(start))/'
+            replacement='s/end = min(end, lineEnd(start))/end = min(end, characters.count)/'
             assertion='"one\ntwo": dw'
             detail='XCTAssertEqual failed'
             ;;
