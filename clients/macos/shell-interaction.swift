@@ -11,6 +11,7 @@ private enum ProofFailure: Error { case gate }
 private final class ShellProof {
     let shell = Process()
     let recorder = Process()
+    let debugger = Process()
     let deadline = Date().addingTimeInterval(90)
     let executable: URL
     let output: URL
@@ -296,6 +297,39 @@ private final class ShellProof {
         _ = try awaitName("Dismiss")
     }
 
+    func startResponderDiagnostic() throws {
+        stage = "diagnostic.attach"
+        debugger.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        debugger.arguments = ["lldb", "--batch", "--no-lldbinit", "--one-line",
+                              "command script import native_responder_diagnostic.py"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["HAGIG_DIAGNOSTIC_PID"] = String(shell.processIdentifier)
+        environment["HAGIG_DIAGNOSTIC_EXECUTABLE"] = executable.path
+        environment["HAGIG_DIAGNOSTIC_DIRECTORY"] = output.path
+        debugger.environment = environment
+        // Only the observer's numeric allowlisted file is uploaded, not LLDB output.
+        debugger.standardOutput = FileHandle.nullDevice; debugger.standardError = FileHandle.nullDevice
+        try debugger.run()
+        let end = Date().addingTimeInterval(20)
+        while !FileManager.default.fileExists(atPath: output.appendingPathComponent("responder.ready").path) {
+            try require(debugger.isRunning && Date() < end)
+            try pause(0.05)
+        }
+        try require(debugger.isRunning)
+        print("diagnostic.attached-read-only-observer; instrumented-not-acceptance")
+    }
+
+    func finishResponderDiagnostic() throws {
+        try Data().write(to: output.appendingPathComponent("responder.stop"))
+        let end = Date().addingTimeInterval(10)
+        while debugger.isRunning && Date() < end { try pause(0.05) }
+        try require(!debugger.isRunning && debugger.terminationStatus == 0)
+        let log = try String(contentsOf: output.appendingPathComponent("responder.log"), encoding: .utf8)
+        try require(log.contains("observation-complete-not-acceptance=1\n") &&
+                    log.contains("detached=1\n") && !log.contains("UNPROVEN"))
+        print("diagnostic.completed-detached; no-acceptance-waiver")
+    }
+
     func stop(_ process: Process, interrupt: Bool = false) -> Bool {
         guard process.isRunning else { return true }
         if interrupt { process.interrupt() } else { process.terminate() }
@@ -404,10 +438,17 @@ private final class ShellProof {
         try beginReview()
         try clipboard(canary)
         try startRecording()
-        stage = "standard.pointer-editor"
-        try click(awaitName("Transcript editor"))
-        stage = "standard.editor-focus"
-        try editorFocused()
+        try startResponderDiagnostic()
+        do {
+            stage = "standard.pointer-editor"
+            try click(awaitName("Transcript editor"))
+            stage = "standard.editor-focus"
+            try editorFocused()
+        } catch {
+            try finishResponderDiagnostic()
+            throw error
+        }
+        try finishResponderDiagnostic()
         stage = "standard.replace-select-all"
         try key(0, flags: .maskCommand)
         stage = "standard.type-unicode-multiline"
@@ -481,6 +522,11 @@ private final class ShellProof {
     }
 
     func cleanup() -> Bool {
+        // Ask the observer to detach before stopping only these owned processes.
+        try? Data().write(to: output.appendingPathComponent("responder.stop"))
+        let debuggerEnd = Date().addingTimeInterval(3)
+        while debugger.isRunning && Date() < debuggerEnd { Thread.sleep(forTimeInterval: 0.05) }
+        let debuggerStopped = stop(debugger)
         let recordingStopped = stop(recorder, interrupt: true)
         let shellStopped = stop(shell)
         var temporaryRemoved = true
@@ -497,7 +543,8 @@ private final class ShellProof {
             } else { print("cleanup unknown-or-empty-clipboard-preserved") }
         }
         print("cleanup owned-shell-stopped=\(shellStopped) owned-recorder-stopped=\(recordingStopped) temporary-recording-removed=\(temporaryRemoved)")
-        return recordingStopped && shellStopped && temporaryRemoved
+        print("cleanup owned-debugger-stopped=\(debuggerStopped)")
+        return debuggerStopped && recordingStopped && shellStopped && temporaryRemoved
     }
 }
 
