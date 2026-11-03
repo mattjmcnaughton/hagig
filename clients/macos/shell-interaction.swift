@@ -157,6 +157,9 @@ private final class ShellProof {
         for type in [CGEventType.leftMouseDown, .leftMouseUp] {
             guard let event = CGEvent(mouseEventSource: nil, mouseType: type,
                                       mouseCursorPosition: target, mouseButton: .left) else { throw ProofFailure.gate }
+            let originalClickCount = event.getIntegerValueField(.mouseEventClickState)
+            event.setIntegerValueField(.mouseEventClickState, value: 1)
+            print("pointer.click-count-default=\(originalClickCount) posted-click-count=1")
             event.post(tap: .cghidEventTap)
         }
         try pause()
