@@ -99,6 +99,31 @@ jobs:
       - name: Falsify native editor semantics in disposable worktree
         timeout-minutes: 5
         run: bash semantic-proof.sh "$RUNNER_TEMP/editor-semantic-proof"
+      - name: Read native capability preflight (not interaction acceptance)
+        timeout-minutes: 1
+        run: |
+          set -euo pipefail
+          metadata="$RUNNER_TEMP/editor-semantic-proof/capabilities.txt"
+          printf 'preflight_status=unavailable\n' > "$metadata"
+          values=$(mktemp "$RUNNER_TEMP/editor-capability-values.XXXXXX")
+          trap 'rm -f "$values"' EXIT
+          # Read-only APIs: never request access, post events or record.
+          # A Swift compile/runtime failure leaves unavailable, not false.
+          # Permissions describe this Swift probe, not HagigShell's identity.
+          swift - > "$values" <<'SWIFT'
+          import ApplicationServices
+          import CoreGraphics
+          print("ax_trusted=\(AXIsProcessTrusted())")
+          print("event_posting_allowed=\(CGPreflightPostEventAccess())")
+          print("screen_capture_allowed=\(CGPreflightScreenCaptureAccess())")
+          SWIFT
+          if command -v screencapture > /dev/null 2>&1; then
+            printf 'screencapture_available=true\n' >> "$values"
+          else
+            printf 'screencapture_available=false\n' >> "$values"
+          fi
+          printf 'preflight_status=available\n' >> "$values"
+          mv "$values" "$metadata"
       - name: Upload native semantic proof transcripts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
