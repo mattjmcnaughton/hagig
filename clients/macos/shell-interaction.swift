@@ -183,7 +183,9 @@ private final class ShellProof {
         let isEditor = named(element, "Transcript editor") && role == "AXTextArea"
         if !isEditor {
             let roles = ["AXButton", "AXTextArea", "AXWindow", "AXStaticText", "AXPopUpButton", "AXGroup", "AXScrollArea",
-                         "AXApplication", "AXUnknown", "AXMenuBar", "AXMenuBarItem", "AXMenu", "AXMenuItem", "AXTextField"]
+                         "AXApplication", "AXUnknown", "AXMenuBar", "AXMenuBarItem", "AXMenu", "AXMenuItem", "AXTextField",
+                         "AXLayoutArea", "AXLayoutItem", "AXSplitGroup", "AXToolbar", "AXStatusItem", "AXMenuButton",
+                         "AXRadioButton", "AXPopover", "AXTabGroup", "AXComboBox", "AXScrollBar", "AXImage"]
             let names = ["Transcript editor", "Copy all", "Copied", "Dismiss", "Simulate recording",
                          "Simulate release", "Simulate result", "Show menu-bar surface"]
             let name = names.first { named(element, $0) } ?? "unrecognized"
