@@ -99,6 +99,25 @@ private final class ShellProof {
         throw ProofFailure.gate
     }
 
+    func awaitMode(_ label: String) throws {
+        let end = Date().addingTimeInterval(4)
+        repeat {
+            let matches = try nodes().filter { (attribute($0, kAXIdentifierAttribute) as? String) == "review-editor-mode" }
+            try require(matches.count <= 1)
+            if let mode = matches.first {
+                try require((attribute(mode, kAXRoleAttribute) as? String) == "AXStaticText")
+                let value = attribute(mode, kAXValueAttribute) as? String
+                if value == label || value == "Editor mode: " + label {
+                    print("PASS identified-mode-value=\(label)")
+                    return
+                }
+            }
+            try pause(0.1)
+        } while Date() < end
+        print("AX missing-mode=\(label)")
+        throw ProofFailure.gate
+    }
+
     func frame(_ element: AXUIElement) throws -> CGRect {
         guard let position = attribute(element, kAXPositionAttribute),
               let size = attribute(element, kAXSizeAttribute),
@@ -510,19 +529,19 @@ private final class ShellProof {
             let labelled = "Editor mode: " + label
             print("mode.\(mode).named=\(modeLabels.contains { named($0, labelled) }) value=\(modeLabels.contains { let value = attribute($0, kAXValueAttribute) as? String; return value == label || value == labelled })")
         }
-        _ = try awaitName("Editor mode: Vim · Normal")
+        try awaitMode("Vim · Normal")
         stage = "vim.focus-insert-escape"
         try click(awaitName("Transcript editor")); try editorFocused()
         try key(34); try key(0, flags: .maskCommand); try type(vim); try key(53)
         try expectText(vim)
-        _ = try awaitName("Editor mode: Vim · Normal")
+        try awaitMode("Vim · Normal")
         try clipboard(standard)
         print("PASS vim.focus insert-unicode-multiline escape-normal no-copy")
         stage = "vim.visual-delete-undo-register"
         // gg, v, l, x, u use real key events, not editor methods/AX setters.
         try key(5); try key(5); try key(9); try key(37)
         try require(selectedLength() == 2)
-        _ = try awaitName("Editor mode: Vim · Visual")
+        try awaitMode("Vim · Visual")
         try key(7); try expectText(String(vim.dropFirst(2)))
         try key(32); try expectText(vim)
         try key(16); try key(16); try clipboard(standard)
