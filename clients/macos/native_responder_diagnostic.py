@@ -7,6 +7,7 @@ import lldb
 
 editor = 0
 hits = {"mouse": 0, "responder": 0}
+selector_hits = {"mouse": 0, "responder": 0}
 returns = {}
 log = None
 failed = False
@@ -22,6 +23,9 @@ extern "C" Class NSClassFromString(NSString *);
 extern "C" int getpid(void);
 @interface HGObserved
 - (id)contentView;
+- (id)superview;
+- (id)hitTest:(HGPoint)point;
+- (unsigned long)type;
 - (bool)isKindOfClass:(Class)type;
 - (id)window;
 - (bool)isKeyWindow;
@@ -73,6 +77,8 @@ def snapshot(frame, phase):
 def entry(frame, breakpoint_id):
     global editor, failed
     try:
+        name = "mouse" if breakpoint_id == mouse_id else "responder"
+        selector_hits[name] += 1
         receiver = frame.FindRegister("x0").GetValueAsUnsigned()
         if editor:
             if receiver != editor:
@@ -82,7 +88,6 @@ def entry(frame, breakpoint_id):
                 return False
             editor = receiver
             emit("editor-observed", 1)
-        name = "mouse" if breakpoint_id == mouse_id else "responder"
         hits[name] += 1
         emit(name + ".entry", hits[name])
         snapshot(frame, name)
@@ -106,6 +111,26 @@ def entry(frame, breakpoint_id):
         failed = True
         emit("UNPROVEN.callback", 1)
     return False  # Observe only: no stepping, setters or alternate input.
+
+
+def window_event(frame):
+    global failed
+    try:
+        event = frame.FindRegister("x2").GetValueAsUnsigned()
+        if number(frame, f"(unsigned long)[(HGObserved *){event} type]").GetValueAsUnsigned() != 1:
+            return
+        emit("window.left-mouse-down", 1)
+        window = frame.FindRegister("x0").GetValueAsUnsigned()
+        emit("window.event-key", number(frame, f"(bool)[(HGObserved *){window} isKeyWindow]").GetValueAsUnsigned())
+        emit("window.hit-editor", number(frame, f'''(bool)({{
+            HGObserved *content = [(HGObserved *){window} contentView];
+            HGObserved *parent = [content superview];
+            HGPoint p = [parent convertPoint:[(HGObserved *){event} locationInWindow] fromView:(id)0];
+            parent && [[content hitTest:p] isKindOfClass:NSClassFromString(@"HagigPresentation.ReviewTextView")];
+        }})''').GetValueAsUnsigned())
+    except Exception:
+        failed = True
+        emit("UNPROVEN.window-event", 1)
 
 
 def returned(frame, breakpoint_id):
@@ -182,6 +207,10 @@ def observe(debugger):
                 if name == "mouseDown:":
                     mouse_id = bp.GetID()
                 emit("breakpoint.locations." + name.rstrip(":"), bp.GetNumLocations())
+            window_bp = target.BreakpointCreateByName("-[NSWindow sendEvent:]")
+            emit("breakpoint.locations.window-send-event", window_bp.GetNumLocations())
+            if window_bp.GetNumLocations() == 0:
+                raise RuntimeError("window-symbols")
             if process.Continue().Fail():
                 raise RuntimeError("continue")
             emit("phase.ready", 1)
@@ -201,6 +230,8 @@ def observe(debugger):
                         breakpoint_id = thread.GetStopReasonDataAtIndex(0)
                         if breakpoint_id in entries:
                             entry(thread.GetFrameAtIndex(0), breakpoint_id)
+                        elif breakpoint_id == window_bp.GetID():
+                            window_event(thread.GetFrameAtIndex(0))
                         elif breakpoint_id in returns:
                             returned(thread.GetFrameAtIndex(0), breakpoint_id)
                         else:
@@ -218,6 +249,8 @@ def observe(debugger):
             emit("editor-observed-at-end", int(editor != 0))
             if editor:
                 snapshot(process.GetThreadAtIndex(0).GetFrameAtIndex(0), "after")
+            emit("selector.mouse.total", selector_hits["mouse"])
+            emit("selector.responder.total", selector_hits["responder"])
             emit("mouse.total", hits["mouse"])
             emit("responder.total", hits["responder"])
             if failed or returns:
