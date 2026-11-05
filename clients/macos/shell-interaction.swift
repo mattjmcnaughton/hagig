@@ -133,7 +133,7 @@ private final class ShellProof {
         }
     }
 
-    func click(_ element: AXUIElement) throws {
+    func click(_ element: AXUIElement, diagnostic: Bool = false) throws {
         try require(owned(element))
         try safeCrop()
         let rect = try frame(element)
@@ -155,6 +155,8 @@ private final class ShellProof {
         guard let hit else { throw ProofFailure.gate }
         try require(owned(hit))
         print("pointer.hit-editor-name=\(named(hit, "Transcript editor")) hit-text-area=\((attribute(hit, kAXRoleAttribute) as? String) == "AXTextArea")")
+        // Validate the pointer before debugger stops can delay AX replies.
+        if diagnostic { try startResponderDiagnostic() }
         for type in [CGEventType.leftMouseDown, .leftMouseUp] {
             guard let event = CGEvent(mouseEventSource: nil, mouseType: type,
                                       mouseCursorPosition: target, mouseButton: .left) else { throw ProofFailure.gate }
@@ -439,14 +441,13 @@ private final class ShellProof {
         try beginReview()
         try clipboard(canary)
         try startRecording()
-        try startResponderDiagnostic()
         do {
             stage = "standard.pointer-editor"
-            try click(awaitName("Transcript editor"))
+            try click(awaitName("Transcript editor"), diagnostic: true)
             stage = "standard.editor-focus"
             try editorFocused()
         } catch {
-            try finishResponderDiagnostic()
+            if debugger.isRunning { try finishResponderDiagnostic() }
             throw error
         }
         try finishResponderDiagnostic()
