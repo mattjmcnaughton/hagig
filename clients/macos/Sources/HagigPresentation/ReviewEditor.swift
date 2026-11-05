@@ -76,9 +76,6 @@ final class ReviewTextView: NSTextView, NSTextViewDelegate {
     var write: (String) -> Bool = { _ in false }
 
     override var undoManager: UndoManager? { history }
-    // An explicit click should enter review even before the popover is key.
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
     var modeLabel: String {
         guard editingMode == .vim else { return "Standard" }
         switch mode {
