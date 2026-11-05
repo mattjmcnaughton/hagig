@@ -80,6 +80,7 @@ private struct DemoControls: View {
                 Text("Standard").tag(EditorMode.standard)
                 Text("Bounded Vim").tag(EditorMode.vim)
             }
+            .accessibilityIdentifier("synthetic-editor-mode")
             Button("Show menu-bar surface", action: showPopover)
             HStack {
                 Button("Simulate recording") { presentation.begin(editorMode: demoMode); showPopover() }
