@@ -61,12 +61,11 @@ private final class ShellProof {
 
     func nodes(in root: AXUIElement? = nil) throws -> [AXUIElement] {
         var queue = [root ?? app!]
-        var seen = Set<CFHashCode>()
         var result = [AXUIElement]()
         while !queue.isEmpty {
             try check()
             let element = queue.removeLast()
-            if !seen.insert(CFHash(element)).inserted { continue }
+            if result.contains(where: { CFEqual($0, element) }) { continue }
             try require(result.count < 1500 && owned(element))
             result.append(element)
             queue += attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? []
@@ -96,6 +95,7 @@ private final class ShellProof {
             }
             try pause(0.1)
         } while Date() < end
+        print("AX missing-name=\(name)")
         throw ProofFailure.gate
     }
 
@@ -155,6 +155,7 @@ private final class ShellProof {
         guard let hit else { throw ProofFailure.gate }
         try require(owned(hit))
         print("pointer.hit-editor-name=\(named(hit, "Transcript editor")) hit-text-area=\((attribute(hit, kAXRoleAttribute) as? String) == "AXTextArea")")
+        print("pointer.hit-requested=\(CFEqual(hit, element)) hit-menu-item=\((attribute(hit, kAXRoleAttribute) as? String) == "AXMenuItem") target-enabled=\((attribute(element, kAXEnabledAttribute) as? NSNumber)?.intValue ?? -1)")
         // Validate the pointer before debugger stops can delay AX replies.
         if diagnostic { try startResponderDiagnostic() }
         for type in [CGEventType.leftMouseDown, .leftMouseUp] {
@@ -294,6 +295,8 @@ private final class ShellProof {
     func beginReview() throws {
         for name in ["Simulate recording", "Simulate release", "Simulate result"] {
             try click(awaitName(name))
+            let feedback = try nodes()
+            print("simulation.action=\(name) recording=\(feedback.contains { named($0, "Listening…") }) transcribing=\(feedback.contains { named($0, "Transcribing…") }) review=\(feedback.contains { named($0, "Review transcript") })")
         }
         _ = try awaitName("Transcript editor")
         _ = try awaitName("Dismiss")
@@ -496,6 +499,7 @@ private final class ShellProof {
         try require(pickers.count == 1)
         try click(pickers[0]); try click(awaitName("Bounded Vim"))
         print("picker.vim-value=\((attribute(pickers[0], kAXValueAttribute) as? String) == "Bounded Vim") vim-name=\(named(pickers[0], "Bounded Vim"))")
+        stage = "vim.begin-review"
         try beginReview(); try clipboard(standard)
         stage = "vim.mode-label"
         let modeLabels = try nodes().filter { (attribute($0, kAXRoleAttribute) as? String) == "AXStaticText" }
