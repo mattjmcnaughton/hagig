@@ -495,7 +495,14 @@ private final class ShellProof {
         print("picker.popup-count=\(popups.count) mode-match-count=\(pickers.count)")
         try require(pickers.count == 1)
         try click(pickers[0]); try click(awaitName("Bounded Vim"))
+        print("picker.vim-value=\((attribute(pickers[0], kAXValueAttribute) as? String) == "Bounded Vim") vim-name=\(named(pickers[0], "Bounded Vim"))")
         try beginReview(); try clipboard(standard)
+        stage = "vim.mode-label"
+        let modeLabels = try nodes().filter { (attribute($0, kAXRoleAttribute) as? String) == "AXStaticText" }
+        for (mode, label) in [("standard", "Standard"), ("vim-normal", "Vim · Normal")] {
+            let labelled = "Editor mode: " + label
+            print("mode.\(mode).named=\(modeLabels.contains { named($0, labelled) }) value=\(modeLabels.contains { let value = attribute($0, kAXValueAttribute) as? String; return value == label || value == labelled })")
+        }
         _ = try awaitName("Editor mode: Vim · Normal")
         stage = "vim.focus-insert-escape"
         try click(awaitName("Transcript editor")); try editorFocused()
