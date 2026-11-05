@@ -234,6 +234,7 @@ def observe(debugger):
                     dispatched = False
                     for thread in process:
                         if thread.GetStopReason() != lldb.eStopReasonBreakpoint:
+                            emit("observe.non-breakpoint-stop-reason", thread.GetStopReason())
                             continue
                         breakpoint_id = thread.GetStopReasonDataAtIndex(0)
                         if breakpoint_id in entries:
@@ -243,16 +244,25 @@ def observe(debugger):
                         elif breakpoint_id in returns:
                             dispatched = returned(thread.GetFrameAtIndex(0), breakpoint_id) or dispatched
                         else:
+                            emit("UNPROVEN.unexpected-breakpoint", 1)
                             raise RuntimeError("unexpected-breakpoint")
                         observed = True
-                    if not observed or failed or process.Continue().Fail():
+                    if not observed or failed:
+                        emit("observe.matched-stop", int(observed))
+                        emit("observe.callback-failed", int(failed))
                         raise RuntimeError("observation")
+                    continuation = process.Continue()
+                    if continuation.Fail():
+                        emit("continue.error-code", continuation.GetError())
+                        emit("continue.error-type", continuation.GetType())
+                        raise RuntimeError("continue")
                     if dispatched:
                         with open(os.path.join(directory, "responder.dispatched"), "x"):
                             pass
                 time.sleep(0.02)
             else:
                 if not os.path.exists(os.path.join(directory, "responder.stop")):
+                    emit("UNPROVEN.observation-deadline", 1)
                     raise RuntimeError("deadline")
             stage = "after"
             if process.GetState() != lldb.eStateStopped and process.Stop().Fail():
