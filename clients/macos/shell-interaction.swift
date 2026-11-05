@@ -301,7 +301,8 @@ private final class ShellProof {
         stage = "diagnostic.attach"
         debugger.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
         debugger.arguments = ["lldb", "--batch", "--no-lldbinit", "--one-line",
-                              "command script import native_responder_diagnostic.py"]
+                              "command script import native_responder_diagnostic.py", "--one-line",
+                              "script native_responder_diagnostic.observe(lldb.debugger)"]
         var environment = ProcessInfo.processInfo.environment
         environment["HAGIG_DIAGNOSTIC_PID"] = String(shell.processIdentifier)
         environment["HAGIG_DIAGNOSTIC_EXECUTABLE"] = executable.path
