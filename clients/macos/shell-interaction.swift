@@ -490,7 +490,9 @@ private final class ShellProof {
         print("PASS standard.pointer-dismiss ready-after-reopen clipboard-unchanged")
         stage = "vim.demo-picker"
         let demo = try awaitName("Hagig · Demo controls")
-        let pickers = try nodes(in: demo).filter { (attribute($0, kAXRoleAttribute) as? String) == "AXPopUpButton" }
+        let popups = try nodes(in: demo).filter { (attribute($0, kAXRoleAttribute) as? String) == "AXPopUpButton" }
+        let pickers = popups.filter { named($0, "Synthetic editor mode (not TOML)") }
+        print("picker.popup-count=\(popups.count) mode-match-count=\(pickers.count)")
         try require(pickers.count == 1)
         try click(pickers[0]); try click(awaitName("Bounded Vim"))
         try beginReview(); try clipboard(standard)
