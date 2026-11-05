@@ -108,7 +108,7 @@ def entry(frame, breakpoint_id):
             bp = frame.GetThread().GetProcess().GetTarget().BreakpointCreateByAddress(address)
             bp.SetThreadID(frame.GetThread().GetThreadID())
             bp.SetOneShot(True)
-            returns[bp.GetID()] = True
+            returns[bp.GetID()] = "responder"
     except Exception:
         failed = True
         emit("UNPROVEN.callback", 1)
@@ -143,6 +143,13 @@ def window_event(frame):
         if flags & 2:
             emit("editor.accepts-first-responder", int(bool(flags & 4)))
             emit("editor.accepts-first-mouse", int(bool(flags & 8)))
+        address = frame.FindRegister("lr").GetValueAsUnsigned()
+        if not address:
+            raise RuntimeError("window-return-address")
+        bp = frame.GetThread().GetProcess().GetTarget().BreakpointCreateByAddress(address)
+        bp.SetThreadID(frame.GetThread().GetThreadID())
+        bp.SetOneShot(True)
+        returns[bp.GetID()] = "window"
     except Exception:
         failed = True
         emit("UNPROVEN.window-event", 1)
@@ -151,7 +158,10 @@ def window_event(frame):
 def returned(frame, breakpoint_id):
     global failed
     try:
-        returns.pop(breakpoint_id)
+        kind = returns.pop(breakpoint_id)
+        if kind == "window":
+            emit("window.dispatch-return", 1)
+            return True
         emit("responder.return", frame.FindRegister("x0").GetValueAsUnsigned() & 0xff)
         snapshot(frame, "responder-return")
     except Exception:
@@ -221,6 +231,7 @@ def observe(debugger):
                     raise RuntimeError("process")
                 if state == lldb.eStateStopped:
                     observed = False
+                    dispatched = False
                     for thread in process:
                         if thread.GetStopReason() != lldb.eStopReasonBreakpoint:
                             continue
@@ -230,12 +241,15 @@ def observe(debugger):
                         elif breakpoint_id == window_bp.GetID():
                             window_event(thread.GetFrameAtIndex(0))
                         elif breakpoint_id in returns:
-                            returned(thread.GetFrameAtIndex(0), breakpoint_id)
+                            dispatched = returned(thread.GetFrameAtIndex(0), breakpoint_id) or dispatched
                         else:
                             raise RuntimeError("unexpected-breakpoint")
                         observed = True
                     if not observed or failed or process.Continue().Fail():
                         raise RuntimeError("observation")
+                    if dispatched:
+                        with open(os.path.join(directory, "responder.dispatched"), "x"):
+                            pass
                 time.sleep(0.02)
             else:
                 if not os.path.exists(os.path.join(directory, "responder.stop")):
