@@ -27,6 +27,9 @@ extern "C" int getpid(void);
 - (id)hitTest:(HGPoint)point;
 - (unsigned long)type;
 - (bool)isKindOfClass:(Class)type;
+- (bool)acceptsFirstResponder;
+- (bool)acceptsFirstMouse:(id)event;
+- (bool)canBecomeKeyWindow;
 - (id)window;
 - (bool)isKeyWindow;
 - (id)firstResponder;
@@ -122,12 +125,25 @@ def window_event(frame):
         emit("window.left-mouse-down", 1)
         window = frame.FindRegister("x0").GetValueAsUnsigned()
         emit("window.event-key", number(frame, f"(bool)[(HGObserved *){window} isKeyWindow]").GetValueAsUnsigned())
-        emit("window.hit-editor", number(frame, f'''(bool)({{
+        emit("window.can-become-key", number(frame, f"(bool)[(HGObserved *){window} canBecomeKeyWindow]").GetValueAsUnsigned())
+        flags = number(frame, f'''(unsigned long)({{
             HGObserved *content = [(HGObserved *){window} contentView];
             HGObserved *parent = [content superview];
             HGPoint p = [parent convertPoint:[(HGObserved *){event} locationInWindow] fromView:(id)0];
-            parent && [[content hitTest:p] isKindOfClass:NSClassFromString(@"HagigPresentation.ReviewTextView")];
-        }})''').GetValueAsUnsigned())
+            HGObserved *hit = parent ? [content hitTest:p] : (id)0;
+            unsigned long result = parent ? 1 : 0;
+            if ([hit isKindOfClass:NSClassFromString(@"HagigPresentation.ReviewTextView")]) {{
+                result |= 2;
+                if ([hit acceptsFirstResponder]) result |= 4;
+                if ([hit acceptsFirstMouse:(id){event}]) result |= 8;
+            }}
+            result;
+        }})''').GetValueAsUnsigned()
+        emit("window.content-parent", int(bool(flags & 1)))
+        emit("window.hit-editor", int(bool(flags & 2)))
+        if flags & 2:
+            emit("editor.accepts-first-responder", int(bool(flags & 4)))
+            emit("editor.accepts-first-mouse", int(bool(flags & 8)))
     except Exception:
         failed = True
         emit("UNPROVEN.window-event", 1)
