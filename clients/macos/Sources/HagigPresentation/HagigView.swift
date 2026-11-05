@@ -144,6 +144,7 @@ public struct HagigView: View {
             HStack {
                 Text(presentation.editorLabel).font(.system(size: 11, weight: .medium))
                     .accessibilityLabel("Editor mode: \(presentation.editorLabel)")
+                    .accessibilityIdentifier("review-editor-mode")
                 Spacer()
                 Button {
                     presentation.copy(using: copy)
