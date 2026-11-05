@@ -83,3 +83,86 @@ jobs:
         run: bash clients/macos/bundle.sh build
       - name: Relocate and smoke actual shell and controlled helpers
         run: bash clients/macos/smoke-bundle.sh
+
+  editor-semantics:
+    runs-on: macos-15
+    timeout-minutes: 10
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    defaults:
+      run:
+        working-directory: clients/macos
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Falsify native editor semantics in disposable worktree
+        timeout-minutes: 5
+        run: bash semantic-proof.sh "$RUNNER_TEMP/editor-semantic-proof"
+      - name: Read native capability preflight (not interaction acceptance)
+        timeout-minutes: 1
+        run: |
+          set -euo pipefail
+          metadata="$RUNNER_TEMP/editor-semantic-proof/capabilities.txt"
+          printf 'preflight_status=unavailable\n' > "$metadata"
+          values=$(mktemp "$RUNNER_TEMP/editor-capability-values.XXXXXX")
+          trap 'rm -f "$values"' EXIT
+          # Read-only APIs: never request access, post events or record.
+          # A Swift compile/runtime failure leaves unavailable, not false.
+          # Permissions describe this Swift probe, not HagigShell's identity.
+          swift - > "$values" <<'SWIFT'
+          import ApplicationServices
+          import CoreGraphics
+          print("ax_trusted=\(AXIsProcessTrusted())")
+          print("event_posting_allowed=\(CGPreflightPostEventAccess())")
+          print("screen_capture_allowed=\(CGPreflightScreenCaptureAccess())")
+          SWIFT
+          if command -v screencapture > /dev/null 2>&1; then
+            printf 'screencapture_available=true\n' >> "$values"
+          else
+            printf 'screencapture_available=false\n' >> "$values"
+          fi
+          printf 'preflight_status=available\n' >> "$values"
+          mv "$values" "$metadata"
+      - name: Upload native semantic proof transcripts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-editor-semantics-${{ github.sha }}
+          path: ${{ runner.temp }}/editor-semantic-proof/
+          if-no-files-found: warn
+          retention-days: 3
+
+  shell-interaction:
+    runs-on: macos-15
+    timeout-minutes: 5
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    defaults:
+      run:
+        working-directory: clients/macos
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build fresh synthetic shell and proof-only desktop driver
+        timeout-minutes: 2
+        run: |
+          mkdir "$RUNNER_TEMP/shell-interaction"
+          { sw_vers; uname -m; xcodebuild -version; swift --version; xcrun --find lldb; xcrun lldb --version; git rev-parse HEAD; shasum -a 256 shell-interaction.swift native_responder_diagnostic.py; } > "$RUNNER_TEMP/shell-interaction/environment.txt"
+          swift build --product HagigShell
+          swiftc -swift-version 5 -parse-as-library shell-interaction.swift -o "$RUNNER_TEMP/hagig-shell-interaction-driver"
+      - name: Drive owned shell via desktop pointer and keyboard (synthetic only)
+        timeout-minutes: 2
+        run: |
+          shell="$(swift build --show-bin-path)/HagigShell"
+          printf 'driver=%s\nshell=%s\n' "$RUNNER_TEMP/hagig-shell-interaction-driver" "$shell" > "$RUNNER_TEMP/shell-interaction/command.txt"
+          "$RUNNER_TEMP/hagig-shell-interaction-driver" "$shell" "$RUNNER_TEMP/shell-interaction" > "$RUNNER_TEMP/shell-interaction/interaction.log" 2>&1
+      - name: Upload bounded synthetic shell interaction evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-shell-interaction-${{ github.sha }}
+          path: ${{ runner.temp }}/shell-interaction/
+          if-no-files-found: warn
+          retention-days: 3

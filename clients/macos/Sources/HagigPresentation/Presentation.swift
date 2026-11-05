@@ -38,12 +38,22 @@ public final class Presentation: ObservableObject {
     @Published public private(set) var stage: DemoStage = .ready
     @Published public private(set) var transcript: String?
     @Published public private(set) var copied = false
+    @Published public private(set) var editorMode: EditorMode
+    @Published public private(set) var editorLabel: String
+    @Published public private(set) var editorID = UUID()
     public private(set) var requestID: UUID?
+    private var discardEditor: (() -> Void)?
 
-    public init() {}
+    /// The eventual client supplies the validated server setting, not Swift TOML.
+    public init(editorMode: EditorMode = .standard) {
+        self.editorMode = editorMode
+        editorLabel = editorMode == .vim ? "Vim · Normal" : "Standard"
+    }
 
-    public func begin() {
+    public func begin(editorMode: EditorMode? = nil) {
         reset()
+        if let editorMode { self.editorMode = editorMode }
+        editorLabel = self.editorMode == .vim ? "Vim · Normal" : "Standard"
         requestID = UUID()
         stage = .recording
     }
@@ -72,6 +82,9 @@ public final class Presentation: ObservableObject {
 
     public func reset() {
         requestID = nil
+        editorID = UUID()
+        discardEditor?()
+        discardEditor = nil
         transcript = nil
         copied = false
         stage = .ready
@@ -82,9 +95,32 @@ public final class Presentation: ObservableObject {
         stage = .issue(issue)
     }
 
+    public func edit(_ text: String, session: UUID) {
+        guard stage == .fallback, editorID == session else { return }
+        transcript = text
+        copied = false
+    }
+
+    func updateEditorLabel(_ label: String, session: UUID) {
+        guard stage == .fallback, editorID == session, editorLabel != label else { return }
+        editorLabel = label
+    }
+
+    func attachEditor(session: UUID, discard: @escaping () -> Void) {
+        guard stage == .fallback, editorID == session else { discard(); return }
+        discardEditor = discard
+    }
+
+    func copySelection(_ text: String, session: UUID, using write: (String) -> Bool) -> Bool {
+        guard stage == .fallback, editorID == session, !text.isEmpty else { return false }
+        let success = write(text)
+        copied = success && text == transcript
+        return success
+    }
+
     /// Only an explicit Copy action may invoke this effect. Failure leaves Copy available.
     public func copy(using write: (String) -> Bool) {
-        guard stage == .fallback, let transcript else { return }
+        guard stage == .fallback, let transcript, !transcript.isEmpty else { return }
         copied = write(transcript)
     }
 }

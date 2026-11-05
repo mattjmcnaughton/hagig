@@ -56,9 +56,7 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
     }
 
     private static func copy(_ text: String) -> Bool {
-        let pasteboard = NSPasteboard.general
-        pasteboard.prepareForNewContents(with: .currentHostOnly)
-        return pasteboard.setString(text, forType: .string)
+        LocalClipboard().write(text)
     }
 }
 
@@ -68,6 +66,7 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
 private struct DemoControls: View {
     @ObservedObject var presentation: Presentation
     let showPopover: () -> Void
+    @State private var demoMode = EditorMode.standard
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -77,9 +76,14 @@ private struct DemoControls: View {
                 .fixedSize(horizontal: false, vertical: true)
             Text("Right-click the menu-bar microphone to reopen these controls.")
                 .font(.caption).foregroundStyle(.secondary)
+            Picker("Synthetic editor mode (not TOML)", selection: $demoMode) {
+                Text("Standard").tag(EditorMode.standard)
+                Text("Bounded Vim").tag(EditorMode.vim)
+            }
+            .accessibilityIdentifier("synthetic-editor-mode")
             Button("Show menu-bar surface", action: showPopover)
             HStack {
-                Button("Simulate recording") { presentation.begin(); showPopover() }
+                Button("Simulate recording") { presentation.begin(editorMode: demoMode); showPopover() }
                     .disabled(presentation.stage == .recording || presentation.stage == .transcribing)
                 Button("Simulate release") { presentation.release(); showPopover() }
                     .disabled(presentation.stage != .recording)
@@ -104,7 +108,9 @@ private struct DemoControls: View {
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding(20).frame(width: 380)
-        .onExitCommand { presentation.cancel() }
+        .onExitCommand {
+            if presentation.stage == .recording || presentation.stage == .transcribing { presentation.cancel() }
+        }
     }
 }
 
