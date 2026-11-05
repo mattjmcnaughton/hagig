@@ -108,7 +108,7 @@ def entry(frame, breakpoint_id):
             bp = frame.GetThread().GetProcess().GetTarget().BreakpointCreateByAddress(address)
             bp.SetThreadID(frame.GetThread().GetThreadID())
             bp.SetOneShot(True)
-            returns[bp.GetID()] = "responder"
+            returns[bp.GetID()] = ("responder", address, frame.GetThread().GetThreadID())
     except Exception:
         failed = True
         emit("UNPROVEN.callback", 1)
@@ -149,7 +149,7 @@ def window_event(frame):
         bp = frame.GetThread().GetProcess().GetTarget().BreakpointCreateByAddress(address)
         bp.SetThreadID(frame.GetThread().GetThreadID())
         bp.SetOneShot(True)
-        returns[bp.GetID()] = "window"
+        returns[bp.GetID()] = ("window", address, frame.GetThread().GetThreadID())
     except Exception:
         failed = True
         emit("UNPROVEN.window-event", 1)
@@ -158,7 +158,7 @@ def window_event(frame):
 def returned(frame, breakpoint_id):
     global failed
     try:
-        kind = returns.pop(breakpoint_id)
+        kind, _, _ = returns.pop(breakpoint_id)
         if kind == "window":
             emit("window.dispatch-return", 1)
             return True
@@ -244,6 +244,11 @@ def observe(debugger):
                         elif breakpoint_id in returns:
                             dispatched = returned(thread.GetFrameAtIndex(0), breakpoint_id) or dispatched
                         else:
+                            emit("unexpected.breakpoint-id", breakpoint_id)
+                            emit("unexpected.stop-data-count", thread.GetStopReasonDataCount())
+                            emit("unexpected.owned-return-match", int(any(
+                                address == thread.GetFrameAtIndex(0).GetPC() and tid == thread.GetThreadID()
+                                for _, address, tid in returns.values())))
                             emit("UNPROVEN.unexpected-breakpoint", 1)
                             raise RuntimeError("unexpected-breakpoint")
                         observed = True
