@@ -20,6 +20,7 @@ private final class ShellProof {
     var stage = "arguments"
     var crop: CGRect?
     var recordingStarted = false
+    var recordingBeganAt: Date?
     var seededClipboard = false
     var syntheticCopies = Set<String>()
     let board = NSPasteboard.general
@@ -45,7 +46,11 @@ private final class ShellProof {
         Thread.sleep(forTimeInterval: seconds)
         try check()
         try safeCrop()
-        if recordingStarted { try require(recorder.isRunning) }
+        if recordingStarted && !recorder.isRunning {
+            let elapsed = recordingBeganAt.map { Int(Date().timeIntervalSince($0)) } ?? -1
+            print("recorder.exited elapsed-seconds=\(elapsed) reason=\(recorder.terminationReason.rawValue) status=\(recorder.terminationStatus)")
+            try require(false)
+        }
     }
 
     func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
@@ -427,11 +432,12 @@ private final class ShellProof {
         try safeCrop()
         let region = "\(Int(bounds.minX)),\(Int(bounds.minY)),\(Int(bounds.width)),\(Int(bounds.height))"
         recorder.executableURL = help.executableURL
-        recorder.arguments = ["-v", "-V", "45", "-C", "-R" + region, temporaryMovie.path]
+        recorder.arguments = ["-v", "-V", "60", "-C", "-R" + region, temporaryMovie.path]
         recorder.standardOutput = FileHandle.nullDevice; recorder.standardError = FileHandle.nullDevice
         try recorder.run()
+        recordingBeganAt = Date()
         recordingStarted = true
-        print("recorder.region=\(region) max-seconds=45 cursor-requested=true")
+        print("recorder.region=\(region) max-seconds=60 cursor-requested=true")
         try pause(0.5)
         try require(recorder.isRunning)
     }
