@@ -161,6 +161,8 @@ private final class ShellProof {
         for type in [CGEventType.leftMouseDown, .leftMouseUp] {
             guard let event = CGEvent(mouseEventSource: nil, mouseType: type,
                                       mouseCursorPosition: target, mouseButton: .left) else { throw ProofFailure.gate }
+            print("pointer.generated-click-state=\(event.getIntegerValueField(.mouseEventClickState))")
+            event.setIntegerValueField(.mouseEventClickState, value: 1)
             event.post(tap: .cghidEventTap)
         }
         try pause()
@@ -499,6 +501,7 @@ private final class ShellProof {
         try require(pickers.count == 1)
         try click(pickers[0]); try click(awaitName("Bounded Vim"))
         print("picker.vim-value=\((attribute(pickers[0], kAXValueAttribute) as? String) == "Bounded Vim") vim-name=\(named(pickers[0], "Bounded Vim"))")
+        print("picker.menu-item-remains=\(try find("Bounded Vim") != nil)")
         stage = "vim.begin-review"
         try beginReview(); try clipboard(standard)
         stage = "vim.mode-label"
