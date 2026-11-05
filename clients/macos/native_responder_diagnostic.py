@@ -23,6 +23,8 @@ def number(frame, expression, timeout=1000000):
     options.SetIgnoreBreakpoints(True)
     value = frame.EvaluateExpression(expression, options)
     if value.GetError().Fail():
+        emit("expression.error-code", value.GetError().GetError())
+        emit("expression.error-type", value.GetError().GetType())
         raise RuntimeError("expression")  # Never publish raw expression/error output.
     return value
 
@@ -90,24 +92,36 @@ def __lldb_init_module(debugger, _dict):
     with open(os.path.join(directory, "responder.log"), "x") as stream:
         log = stream
         stage = "attach"
+        emit("phase.module-enter", 1)
         try:
             pid = int(os.environ["HAGIG_DIAGNOSTIC_PID"])
             executable = os.environ["HAGIG_DIAGNOSTIC_EXECUTABLE"]
+            emit("phase.async-start", 1)
             debugger.SetAsync(True)
+            emit("phase.settings-start", 1)
             debugger.HandleCommand("settings set target.skip-prologue false")
+            emit("phase.target-start", 1)
             target = debugger.CreateTarget(executable)
+            emit("phase.target-created", int(target.IsValid()))
             error = lldb.SBError()
+            emit("phase.attach-start", 1)
             process = target.AttachToProcessWithID(debugger.GetListener(), pid, error)
+            emit("phase.attach-returned", 1)
+            emit("attach.error-code", error.GetError())
+            emit("attach.error-type", error.GetType())
             if error.Fail() or process.GetProcessID() != pid:
                 raise RuntimeError("attach")
+            emit("phase.identity-start", 1)
             if os.path.realpath(process.GetProcessInfo().GetExecutableFile().fullpath) != executable:
                 raise RuntimeError("identity")
             if not target.GetTriple().startswith("arm64"):
                 raise RuntimeError("architecture")
             stage = "import"
+            emit("phase.import-start", 1)
             frame = process.GetThreadAtIndex(0).GetFrameAtIndex(0)
             number(frame, "@import AppKit; 1", timeout=5000000)
             stage = "editor"
+            emit("phase.editor-start", 1)
             # Bounded read-only traversal, no text, selection or object descriptions.
             editor = number(frame, '''(unsigned long long)({
                 NSView *queue[1500]; unsigned count = 0; NSView *found = nil;
@@ -129,6 +143,7 @@ def __lldb_init_module(debugger, _dict):
                 raise RuntimeError("editor")
             snapshot(frame, "before")
             stage = "breakpoints"
+            emit("phase.breakpoints-start", 1)
             entries = set()
             for name in ["mouseDown:", "becomeFirstResponder"]:
                 bp = target.BreakpointCreateByName(
@@ -142,6 +157,7 @@ def __lldb_init_module(debugger, _dict):
                 emit("breakpoint.locations." + name.rstrip(":"), bp.GetNumLocations())
             if process.Continue().Fail():
                 raise RuntimeError("continue")
+            emit("phase.ready", 1)
             with open(os.path.join(directory, "responder.ready"), "x"):
                 pass
             stage = "observe"
@@ -181,5 +197,6 @@ def __lldb_init_module(debugger, _dict):
         except Exception:
             emit("UNPROVEN." + stage, 1)
         finally:
+            emit("phase.detach-start", 1)
             detached = process is not None and process.IsValid() and process.Detach().Success()
             emit("detached", int(detached))
