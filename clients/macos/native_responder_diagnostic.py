@@ -19,6 +19,7 @@ typedef struct { double width, height; } HGSize;
 typedef struct { HGPoint origin; HGSize size; } HGRect;
 @class NSString;
 extern "C" Class NSClassFromString(NSString *);
+extern "C" int getpid(void);
 @interface HGObserved
 + (id)sharedApplication;
 - (id)windows;
@@ -152,6 +153,20 @@ def observe(debugger):
             emit("phase.constant-start", 1)
             frame = process.GetThreadAtIndex(0).GetFrameAtIndex(0)
             emit("constant.value", number(frame, "1").GetValueAsUnsigned())
+            emit("process.state", process.GetState())
+            emit("thread.stop-reason", frame.GetThread().GetStopReason())
+            stage = "pid-call"
+            emit("phase.pid-call-start", 1)
+            same_pid = number(frame, f"(bool)(getpid() == {pid})").GetValueAsUnsigned()
+            emit("pid-call.owned", same_pid)
+            if same_pid != 1:
+                raise RuntimeError("pid")
+            stage = "class-call"
+            emit("phase.class-call-start", 1)
+            known_class = number(frame, '(bool)(NSClassFromString(@"HagigPresentation.ReviewTextView") != (Class)0)').GetValueAsUnsigned()
+            emit("class-call.editor-present", known_class)
+            if known_class != 1:
+                raise RuntimeError("class")
             stage = "editor"
             emit("phase.editor-start", 1)
             # Bounded read-only traversal, no text, selection or object descriptions.
