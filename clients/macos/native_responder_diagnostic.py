@@ -85,14 +85,14 @@ def returned(frame, breakpoint_id):
     return False
 
 
-def __lldb_init_module(debugger, _dict):
+def observe(debugger):
     global editor, log, mouse_id
     process = None
     directory = os.environ["HAGIG_DIAGNOSTIC_DIRECTORY"]
     with open(os.path.join(directory, "responder.log"), "x") as stream:
         log = stream
         stage = "attach"
-        emit("phase.module-enter", 1)
+        emit("phase.observer-enter", 1)
         try:
             pid = int(os.environ["HAGIG_DIAGNOSTIC_PID"])
             executable = os.environ["HAGIG_DIAGNOSTIC_EXECUTABLE"]
@@ -116,9 +116,12 @@ def __lldb_init_module(debugger, _dict):
                 raise RuntimeError("identity")
             if not target.GetTriple().startswith("arm64"):
                 raise RuntimeError("architecture")
+            stage = "constant"
+            emit("phase.constant-start", 1)
+            frame = process.GetThreadAtIndex(0).GetFrameAtIndex(0)
+            emit("constant.value", number(frame, "1").GetValueAsUnsigned())
             stage = "import"
             emit("phase.import-start", 1)
-            frame = process.GetThreadAtIndex(0).GetFrameAtIndex(0)
             number(frame, "@import AppKit; 1", timeout=5000000)
             stage = "editor"
             emit("phase.editor-start", 1)
