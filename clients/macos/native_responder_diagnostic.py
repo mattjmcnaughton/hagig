@@ -11,6 +11,34 @@ returns = {}
 log = None
 failed = False
 
+# Getter ABI declarations only, for the checked arm64 macOS target. Avoid the
+# AppKit module importer that stalls before observation on the hosted image.
+getter_declarations = '''
+typedef struct { double x, y; } HGPoint;
+typedef struct { double width, height; } HGSize;
+typedef struct { HGPoint origin; HGSize size; } HGRect;
+@class NSString;
+extern "C" Class NSClassFromString(NSString *);
+@interface HGObserved
++ (id)sharedApplication;
+- (id)windows;
+- (id)contentView;
+- (id)subviews;
+- (unsigned long)count;
+- (id)objectAtIndex:(unsigned long)index;
+- (bool)isKindOfClass:(Class)type;
+- (id)window;
+- (bool)isKeyWindow;
+- (id)firstResponder;
+- (HGRect)frame;
+- (HGRect)bounds;
+- (HGRect)visibleRect;
+- (id)enclosingScrollView;
+- (HGPoint)locationInWindow;
+- (HGPoint)convertPoint:(HGPoint)point fromView:(id)view;
+@end
+'''
+
 
 def emit(label, value):
     print(f"{label}={value}", file=log, flush=True)
@@ -19,6 +47,7 @@ def emit(label, value):
 def number(frame, expression, timeout=1000000):
     options = lldb.SBExpressionOptions()
     options.SetLanguage(lldb.eLanguageTypeObjC_plus_plus)
+    options.SetPrefix(getter_declarations)
     options.SetTimeoutInMicroSeconds(timeout)
     options.SetIgnoreBreakpoints(True)
     value = frame.EvaluateExpression(expression, options)
@@ -30,15 +59,15 @@ def number(frame, expression, timeout=1000000):
 
 
 def snapshot(frame, phase):
-    view = f"((NSTextView *){editor})"
+    view = f"((HGObserved *){editor})"
     for label, expression in {
-        "window-key": f"(BOOL)[[{view} window] isKeyWindow]",
-        "first-responder": f"(BOOL)([[{view} window] firstResponder] == {view})",
+        "window-key": f"(bool)[(HGObserved *)[{view} window] isKeyWindow]",
+        "first-responder": f"(bool)([(HGObserved *)[{view} window] firstResponder] == {view})",
         "frame-width": f"(double)[{view} frame].size.width",
         "frame-height": f"(double)[{view} frame].size.height",
         "bounds-height": f"(double)[{view} bounds].size.height",
         "visible-height": f"(double)[{view} visibleRect].size.height",
-        "clip-height": f"(double)[[{view} enclosingScrollView] contentView].bounds.size.height",
+        "clip-height": f"(double)[(HGObserved *)[(HGObserved *)[{view} enclosingScrollView] contentView] bounds].size.height",
     }.items():
         value = number(frame, expression)
         emit(phase + "." + label, float(value.GetValue()) if "height" in label or "width" in label
@@ -56,9 +85,12 @@ def entry(frame, breakpoint_id):
         snapshot(frame, name)
         if name == "mouse":
             event = frame.FindRegister("x2").GetValueAsUnsigned()
-            emit("mouse.inside-visible", number(frame,
-                f"(BOOL)NSPointInRect([(NSView *){editor} convertPoint:[(NSEvent *){event} locationInWindow] "
-                f"fromView:nil], [(NSView *){editor} visibleRect])").GetValueAsUnsigned())
+            emit("mouse.inside-visible", number(frame, f'''(bool)({{
+                HGPoint p = [(HGObserved *){editor} convertPoint:[(HGObserved *){event} locationInWindow] fromView:(id)0];
+                HGRect r = [(HGObserved *){editor} visibleRect];
+                p.x >= r.origin.x && p.x < r.origin.x + r.size.width &&
+                p.y >= r.origin.y && p.y < r.origin.y + r.size.height;
+            }})''').GetValueAsUnsigned())
         else:
             address = frame.FindRegister("lr").GetValueAsUnsigned()
             if not address:
@@ -120,24 +152,26 @@ def observe(debugger):
             emit("phase.constant-start", 1)
             frame = process.GetThreadAtIndex(0).GetFrameAtIndex(0)
             emit("constant.value", number(frame, "1").GetValueAsUnsigned())
-            stage = "import"
-            emit("phase.import-start", 1)
-            number(frame, "@import AppKit; 1", timeout=5000000)
             stage = "editor"
             emit("phase.editor-start", 1)
             # Bounded read-only traversal, no text, selection or object descriptions.
             editor = number(frame, '''(unsigned long long)({
-                NSView *queue[1500]; unsigned count = 0; NSView *found = nil;
-                for (NSWindow *window in [NSApp windows]) {
+                HGObserved *queue[1500]; unsigned count = 0; HGObserved *found = (id)0;
+                HGObserved *app = [(HGObserved *)NSClassFromString(@"NSApplication") sharedApplication];
+                HGObserved *windows = [app windows];
+                for (unsigned long i = 0; i < [windows count] && i < 1500; ++i) {
+                    HGObserved *window = [windows objectAtIndex:i];
                     if (count < 1500 && [window contentView]) queue[count++] = [window contentView];
                 }
                 unsigned visited = 0;
                 while (count && visited++ < 1500) {
-                    NSView *view = queue[--count];
+                    HGObserved *view = queue[--count];
                     if ([view isKindOfClass:NSClassFromString(@"HagigPresentation.ReviewTextView")]) {
                         found = view; break;
                     }
-                    for (NSView *child in [view subviews]) if (count < 1500) queue[count++] = child;
+                    HGObserved *children = [view subviews];
+                    for (unsigned long i = 0; i < [children count] && count < 1500; ++i)
+                        queue[count++] = [children objectAtIndex:i];
                 }
                 found;
             })''').GetValueAsUnsigned()
