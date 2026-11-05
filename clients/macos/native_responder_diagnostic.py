@@ -107,7 +107,6 @@ def entry(frame, breakpoint_id):
                 raise RuntimeError("return-address")
             bp = frame.GetThread().GetProcess().GetTarget().BreakpointCreateByAddress(address)
             bp.SetThreadID(frame.GetThread().GetThreadID())
-            bp.SetOneShot(True)
             returns[bp.GetID()] = ("responder", address, frame.GetThread().GetThreadID())
     except Exception:
         failed = True
@@ -148,7 +147,6 @@ def window_event(frame):
             raise RuntimeError("window-return-address")
         bp = frame.GetThread().GetProcess().GetTarget().BreakpointCreateByAddress(address)
         bp.SetThreadID(frame.GetThread().GetThreadID())
-        bp.SetOneShot(True)
         returns[bp.GetID()] = ("window", address, frame.GetThread().GetThreadID())
     except Exception:
         failed = True
@@ -159,6 +157,8 @@ def returned(frame, breakpoint_id):
     global failed
     try:
         kind, _, _ = returns.pop(breakpoint_id)
+        if not frame.GetThread().GetProcess().GetTarget().BreakpointDelete(breakpoint_id):
+            raise RuntimeError("return-breakpoint-delete")
         if kind == "window":
             emit("window.dispatch-return", 1)
             return True
