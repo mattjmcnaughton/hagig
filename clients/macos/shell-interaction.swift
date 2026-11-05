@@ -561,7 +561,12 @@ private final class ShellProof {
         print("PASS vim.keyboard-copy-all keyboard-dismiss ready-after-reopen clipboard-unchanged")
         stage = "recording.finalize"
         try safeCrop()
-        try require(recorder.isRunning && stop(recorder, interrupt: true) && recorder.terminationStatus == 0)
+        try require(recorder.isRunning)
+        let recorderStopped = stop(recorder, interrupt: true)
+        print("recorder.finalize-stopped=\(recorderStopped)")
+        try require(recorderStopped)
+        print("recorder.finalize-reason=\(recorder.terminationReason.rawValue) status=\(recorder.terminationStatus)")
+        try require(recorder.terminationStatus == 0)
         try safeCrop()
         let bytes = try FileManager.default.attributesOfItem(atPath: temporaryMovie.path)[.size] as? NSNumber
         try require((bytes?.intValue ?? 0) > 1000)
