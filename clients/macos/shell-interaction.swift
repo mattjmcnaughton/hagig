@@ -444,13 +444,19 @@ private final class ShellProof {
         do {
             stage = "standard.pointer-editor"
             try click(awaitName("Transcript editor"), diagnostic: true)
+            stage = "diagnostic.dispatch-return"
+            let dispatchEnd = Date().addingTimeInterval(10)
+            while !FileManager.default.fileExists(atPath: output.appendingPathComponent("responder.dispatched").path) {
+                try require(debugger.isRunning && Date() < dispatchEnd)
+                try pause(0.05)
+            }
+            try finishResponderDiagnostic()
             stage = "standard.editor-focus"
             try editorFocused()
         } catch {
             if debugger.isRunning { try finishResponderDiagnostic() }
             throw error
         }
-        try finishResponderDiagnostic()
         stage = "standard.replace-select-all"
         try key(0, flags: .maskCommand)
         stage = "standard.type-unicode-multiline"
