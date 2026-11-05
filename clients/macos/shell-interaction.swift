@@ -491,7 +491,7 @@ private final class ShellProof {
         stage = "vim.demo-picker"
         let demo = try awaitName("Hagig · Demo controls")
         let popups = try nodes(in: demo).filter { (attribute($0, kAXRoleAttribute) as? String) == "AXPopUpButton" }
-        let pickers = popups.filter { named($0, "Synthetic editor mode (not TOML)") }
+        let pickers = popups.filter { (attribute($0, kAXIdentifierAttribute) as? String) == "synthetic-editor-mode" }
         print("picker.popup-count=\(popups.count) mode-match-count=\(pickers.count)")
         try require(pickers.count == 1)
         try click(pickers[0]); try click(awaitName("Bounded Vim"))
