@@ -21,12 +21,7 @@ typedef struct { HGPoint origin; HGSize size; } HGRect;
 extern "C" Class NSClassFromString(NSString *);
 extern "C" int getpid(void);
 @interface HGObserved
-+ (id)sharedApplication;
-- (id)windows;
 - (id)contentView;
-- (id)subviews;
-- (unsigned long)count;
-- (id)objectAtIndex:(unsigned long)index;
 - (bool)isKindOfClass:(Class)type;
 - (id)window;
 - (bool)isKeyWindow;
@@ -76,10 +71,17 @@ def snapshot(frame, phase):
 
 
 def entry(frame, breakpoint_id):
-    global failed
-    if frame.FindRegister("x0").GetValueAsUnsigned() != editor:
-        return False
+    global editor, failed
     try:
+        receiver = frame.FindRegister("x0").GetValueAsUnsigned()
+        if editor:
+            if receiver != editor:
+                return False
+        else:
+            if not number(frame, f'(bool)[(HGObserved *){receiver} isKindOfClass:NSClassFromString(@"HagigPresentation.ReviewTextView")]').GetValueAsUnsigned():
+                return False
+            editor = receiver
+            emit("editor-observed", 1)
         name = "mouse" if breakpoint_id == mouse_id else "responder"
         hits[name] += 1
         emit(name + ".entry", hits[name])
@@ -167,33 +169,6 @@ def observe(debugger):
             emit("class-call.editor-present", known_class)
             if known_class != 1:
                 raise RuntimeError("class")
-            stage = "editor"
-            emit("phase.editor-start", 1)
-            # Bounded read-only traversal, no text, selection or object descriptions.
-            editor = number(frame, '''(unsigned long long)({
-                HGObserved *queue[1500]; unsigned count = 0; HGObserved *found = (id)0;
-                HGObserved *app = [(HGObserved *)NSClassFromString(@"NSApplication") sharedApplication];
-                HGObserved *windows = [app windows];
-                for (unsigned long i = 0; i < [windows count] && i < 1500; ++i) {
-                    HGObserved *window = [windows objectAtIndex:i];
-                    if (count < 1500 && [window contentView]) queue[count++] = [window contentView];
-                }
-                unsigned visited = 0;
-                while (count && visited++ < 1500) {
-                    HGObserved *view = queue[--count];
-                    if ([view isKindOfClass:NSClassFromString(@"HagigPresentation.ReviewTextView")]) {
-                        found = view; break;
-                    }
-                    HGObserved *children = [view subviews];
-                    for (unsigned long i = 0; i < [children count] && count < 1500; ++i)
-                        queue[count++] = [children objectAtIndex:i];
-                }
-                found;
-            })''').GetValueAsUnsigned()
-            emit("editor-found", int(editor != 0))
-            if not editor:
-                raise RuntimeError("editor")
-            snapshot(frame, "before")
             stage = "breakpoints"
             emit("phase.breakpoints-start", 1)
             entries = set()
@@ -240,7 +215,9 @@ def observe(debugger):
             stage = "after"
             if process.GetState() != lldb.eStateStopped and process.Stop().Fail():
                 raise RuntimeError("stop")
-            snapshot(process.GetThreadAtIndex(0).GetFrameAtIndex(0), "after")
+            emit("editor-observed-at-end", int(editor != 0))
+            if editor:
+                snapshot(process.GetThreadAtIndex(0).GetFrameAtIndex(0), "after")
             emit("mouse.total", hits["mouse"])
             emit("responder.total", hits["responder"])
             if failed or returns:
