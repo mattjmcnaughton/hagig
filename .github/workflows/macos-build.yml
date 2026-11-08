@@ -56,6 +56,8 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  # Preserve the existing check context; outside the finite integration job this
+  # covers script contracts only, not native assembly/loading acceptance.
   bundle-smoke:
     runs-on: macos-15
     timeout-minutes: 10
@@ -79,10 +81,135 @@ jobs:
           rustc --version --verbose | grep -Fx 'host: aarch64-apple-darwin'
       - name: Script contracts (tool stand-ins, not native proof)
         run: python3 clients/macos/test_bundle.py
-      - name: Build and ad-hoc sign early synthetic bundle
-        run: bash clients/macos/bundle.sh build
-      - name: Relocate and smoke actual shell and controlled helpers
-        run: bash clients/macos/smoke-bundle.sh
+
+  # D27 authorizes this finite PR32 experiment, not recurring model downloads
+  # on unrelated PRs or main. Skipped elsewhere; not a main native-smoke claim.
+  real-backend-integration:
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 32 && github.head_ref == 'user/issue-21-native-capture' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          path: client
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          ref: db18603fa2fcdfe8d53a1485cf05c5705c639589
+          path: backend-candidate
+      - name: Prepare exact pinned native backend (experimental, not adoption)
+        working-directory: backend-candidate/backend
+        run: bash tests/prepare_macos_candidate.sh
+      - name: Assemble signed bundle and smoke relocated native layout
+        working-directory: client
+        run: |
+          set -euo pipefail
+          bash clients/macos/bundle.sh build "$RUNNER_TEMP/hagig-issue9-native/Contents"
+          bash clients/macos/smoke-bundle.sh
+          mkdir "$RUNNER_TEMP/hagig-issue21-relocated"
+          cp -R clients/macos/.build/Hagig.app "$RUNNER_TEMP/hagig-issue21-relocated/Hagig integration.app"
+          app="$RUNNER_TEMP/hagig-issue21-relocated/Hagig integration.app"
+          codesign --verify --deep --strict "$app"
+          shasum -a 256 "$app/Contents/Info.plist" "$app/Contents/MacOS/HagigShell" \
+            "$app/Contents/Helpers/"* "$app/Contents/Frameworks/"* \
+            > "$RUNNER_TEMP/hagig-issue9-native/evidence/relocated-native.sha256"
+      - name: Explicit pinned model acquisition and hash validation
+        working-directory: backend-candidate/backend
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/hagig-issue9-native"
+          export XDG_DATA_HOME="$root/data"
+          export XDG_CONFIG_HOME="$root/install-config"
+          "$RUNNER_TEMP/hagig-issue21-relocated/Hagig integration.app/Contents/Helpers/hagig" model install parakeet-tdt-0.6b-v2-int8-v1
+          python3 - "$root" <<'PY'
+          import hashlib, json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          manifest = json.loads(pathlib.Path('model-manifest.json').read_text())
+          models = root / 'data/hagig/models'
+          assert {p.name for p in models.iterdir()} == {manifest['id'], '.install-lock'}
+          model = models / manifest['id']
+          assert {p.name for p in model.iterdir()} == {a['name'] for a in manifest['assets']}
+          with (root / 'evidence/model-digests.txt').open('w') as report:
+              for asset in manifest['assets']:
+                  path = model / asset['name']
+                  assert path.stat().st_size == asset['bytes']
+                  digest = hashlib.sha256()
+                  with path.open('rb') as source:
+                      for chunk in iter(lambda: source.read(1024 * 1024), b''):
+                          digest.update(chunk)
+                  assert digest.hexdigest() == asset['sha256']
+                  report.write(f"{asset['name']} {asset['bytes']} {digest.hexdigest()}\n")
+          print('PINNED MODEL HASHES VERIFIED; no asset bytes published')
+          PY
+      - name: Real client integration, missing-library counterfactual and restoration
+        working-directory: client/clients/macos
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/hagig-issue9-native"
+          app="$RUNNER_TEMP/hagig-issue21-relocated/Hagig integration.app"
+          export HAGIG_INTEGRATION_HELPER="$app/Contents/Helpers/hagig"
+          export HAGIG_INTEGRATION_DATA_HOME="$root/data"
+          export HAGIG_INTEGRATION_WAV="$GITHUB_WORKSPACE/backend-candidate/backend/tests/fixtures/speech.wav"
+          { git rev-parse HEAD; shasum -a 256 Tests/HagigPresentationTests/RealBackendTests.swift "$HAGIG_INTEGRATION_WAV"; } > "$root/evidence/client-integration-artifact.txt"
+          for phase in candidate missing-libraries restored; do
+            if test "$phase" = missing-libraries; then
+              mv "$app/Contents/Frameworks" "$app/Contents/Frameworks.absent"
+              printf 'Move only copied app Contents/Frameworks to Contents/Frameworks.absent; same helper/model/test/command\n' > "$root/evidence/library-mutation.txt"
+            elif test "$phase" = restored; then
+              mv "$app/Contents/Frameworks.absent" "$app/Contents/Frameworks"
+              codesign --verify --deep --strict "$app"
+              shasum -a 256 -c "$root/evidence/relocated-native.sha256" > "$root/evidence/relocated-native-restored.txt"
+            fi
+            log="$root/evidence/client-$phase.txt"
+            status=0
+            printf '%s\n' 'swift test --filter RealBackendTests.testRealAdmissionSpeechReviewExplicitCopyBusyAndCancellation' > "$root/evidence/client-$phase.command"
+            swift test --filter RealBackendTests.testRealAdmissionSpeechReviewExplicitCopyBusyAndCancellation > "$log" 2>&1 || status=$?
+            cat "$log"
+            printf '%s\n' "$status" > "$root/evidence/client-$phase.exit"
+            grep -F 'REAL_BACKEND_CLEANUP_COMPLETE' "$log"
+            grep -Eq 'Executed 1 test, with [0-9]+ failures?' "$log"
+            if test "$phase" = missing-libraries; then
+              test "$status" -eq 1
+              grep -F 'Real backend must reach review' "$log"
+              grep -F workerFailed "$log"
+            else
+              test "$status" -eq 0
+              grep -F 'Executed 1 test, with 0 failures' "$log"
+            fi
+          done
+          shasum -a 256 Tests/HagigPresentationTests/RealBackendTests.swift "$HAGIG_INTEGRATION_WAV" > "$root/evidence/client-integration-artifact-restored.txt"
+          tail -n +2 "$root/evidence/client-integration-artifact.txt" | cmp - "$root/evidence/client-integration-artifact-restored.txt"
+          printf 'REAL CLIENT INTEGRATION TRIPLET PASS\n' > "$root/evidence/client-verdict.txt"
+      - name: Dispose only dedicated integration assets and bundle
+        if: always()
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/hagig-issue9-native"
+          rm -f "$root/native.tar.bz2"
+          # Never remove a paired app/model beneath a service whose cleanup was
+          # not proven. Retain only on this disposable runner; never upload assets.
+          for phase in candidate missing-libraries restored; do
+            if test -f "$root/evidence/client-$phase.command"; then
+              grep -F 'REAL_BACKEND_CLEANUP_COMPLETE' "$root/evidence/client-$phase.txt" || {
+                printf 'Cleanup unproven; preserving owned app/model until runner disposal\n' >&2
+                exit 1
+              }
+            fi
+          done
+          rm -rf "$root/data" "$root/Contents" "$root/libraries" "$root/target" "$root/install-config" "$RUNNER_TEMP/hagig-issue21-relocated"
+          test ! -e "$root/data"
+          test ! -e "$root/native.tar.bz2"
+      - name: Upload sanitized integration text evidence only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-real-client-${{ github.sha }}
+          path: ${{ runner.temp }}/hagig-issue9-native/evidence/
+          if-no-files-found: warn
+          retention-days: 3
 
   editor-semantics:
     runs-on: macos-15
