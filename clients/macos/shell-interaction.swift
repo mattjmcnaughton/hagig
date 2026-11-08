@@ -435,10 +435,17 @@ private final class ShellProof {
     func mouse(_ type: NSEvent.EventType, at point: CGPoint, window: (number: Int, frame: CGRect)) throws -> CGEvent {
         let local = CGPoint(x: point.x - window.frame.minX, y: window.frame.maxY - point.y)
         try require(window.frame.contains(point))
-        guard let event = NSEvent.mouseEvent(with: type, location: local, modifierFlags: [],
+        guard let factory = NSEvent.mouseEvent(with: type, location: local, modifierFlags: [],
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.number,
-            context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)?.cgEvent else {
+            context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0),
+              let event = factory.cgEvent else {
             throw ProofFailure.gate
+        }
+        if type == .leftMouseDown {
+            let bridged = NSEvent(cgEvent: event)
+            let quartzMatches = abs(event.location.x - point.x) <= 1 && abs(event.location.y - point.y) <= 1
+            let localMatches = bridged.map { abs($0.locationInWindow.x - local.x) <= 1 && abs($0.locationInWindow.y - local.y) <= 1 } ?? false
+            print("mouse.factory own-window=\(factory.window != nil) quartz-target=\(quartzMatches) bridged-window-number=\(bridged?.windowNumber == window.number) bridged-local=\(localMatches)")
         }
         // Preserve the factory's window association/base coordinates. Overwriting
         // its CG location with a global point would undo that coordinate contract.
