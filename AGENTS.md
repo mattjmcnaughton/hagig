@@ -6,6 +6,19 @@ functionality. Keep proposals and unverified behavior distinct from working
 features, and identify any conflict with the constitution rather than silently
 changing its meaning.
 
+## Dependency boundaries
+
+Inject external effects at meaningful ownership boundaries through explicit
+constructor or function inputs. Use Rust traits or Swift protocols when a
+behavioral contract warrants them, closures for simple effects, and concrete types
+otherwise. Do not introduce an interface for every type or speculative future
+implementations. Keep dependency wiring explicit; no service locators or DI
+containers. This is not an inference-engine plugin framework.
+
+Test observable behavior through public interfaces, not mock call order. Controlled
+substitutes help exercise failures and races but do not establish real platform,
+inference, or privacy behavior; retain integration evidence for those boundaries.
+
 ## Dependency approval
 
 Ask the owner before adding dependencies outside the agreed starting set:
