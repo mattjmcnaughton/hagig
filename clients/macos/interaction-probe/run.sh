@@ -1,5 +1,5 @@
 #!/bin/bash
-# Finite automatic hosted-Mac candidate; existing acceptance gate stays separate.
+# Native synthetic shell interaction; no microphone/backend acceptance claim.
 set -euo pipefail
 umask 077
 root="${RUNNER_TEMP:?}/hagig-xcui-probe"
@@ -144,6 +144,9 @@ grep -Fx 'HAGIG_PROBE standard-edit-select-copy-cut-undo-escape-pointer-copy=tru
 grep -Fx 'HAGIG_PROBE standard-pointer-dismiss-reopen=true' "$root/evidence/status.txt"
 grep -Fx 'HAGIG_PROBE vim-insert-escape-visual-delete-undo-register=true' "$root/evidence/status.txt"
 grep -Fx 'HAGIG_PROBE vim-native-paste-normal-cursor-keyboard-copy-dismiss=true' "$root/evidence/status.txt"
+grep -Fx 'HAGIG_PROBE focus-standard-owned-text-area=true' "$root/evidence/status.txt"
+grep -Fx 'HAGIG_PROBE focus-vim-owned-text-area=true' "$root/evidence/status.txt"
+grep -Fx 'HAGIG_PROBE active-escape-cancel-error-recovery-no-copy=true' "$root/evidence/status.txt"
 grep -Fx 'HAGIG_PROBE scenario-complete=true' "$root/evidence/status.txt"
 grep -Fx 'HAGIG_PROBE cleanup=true' "$root/evidence/status.txt"
 grep -Fx 'HAGIG_PROBE recorder-cleanup=true' "$root/evidence/status.txt"
