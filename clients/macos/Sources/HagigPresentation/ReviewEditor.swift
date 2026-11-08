@@ -180,6 +180,12 @@ final class ReviewTextView: NSTextView, NSTextViewDelegate {
         return write((string as NSString).substring(with: range))
     }
 
+    override func readSelection(from pasteboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
+        let accepted = super.readSelection(from: pasteboard, type: type)
+        if accepted { normalCursor() }
+        return accepted
+    }
+
     // AppKit's line/paragraph/mark deletions otherwise populate a shared kill
     // buffer outside this review's lifetime. Keep deletion/undo native, but do
     // not call those superclass deletion implementations or import their yank.
@@ -472,7 +478,7 @@ final class ReviewTextView: NSTextView, NSTextViewDelegate {
         case "p":
             guard !register.isEmpty else { return }
             let at = lineRegister ? lineAfter(p) : min(lineEnd(p), p + 1)
-            let prefix = lineRegister && at == characters.count && !string.isEmpty && !string.hasSuffix("\n") ? "\n" : ""
+            let prefix = lineRegister && at == characters.count && !string.isEmpty && string.last?.isNewline != true ? "\n" : ""
             // Refuse amplification above 1 MiB rather than freezing the menu-bar UI.
             guard register.utf8.count <= 1_048_576 / n,
                   string.utf8.count + register.utf8.count * n <= 1_048_576 else { return }
@@ -487,7 +493,7 @@ final class ReviewTextView: NSTextView, NSTextViewDelegate {
         guard selection.length > 0 else { return false }
         register = (string as NSString).substring(with: selection)
         lineRegister = linewise
-        if linewise && !register.hasSuffix("\n") { register += "\n" }
+        if linewise && register.last?.isNewline != true { register += "\n" }
         return true
     }
 
