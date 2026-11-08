@@ -112,8 +112,25 @@ grep '^HAGIG_PROBE ' "$root/capture.log" >> "$root/evidence/status.txt" || true
 python3 - "$root/test.log" >> "$root/evidence/status.txt" <<'PY'
 import pathlib, re, sys
 # Preserve locations, never XCTest assertion values or UI/content diagnostics.
-for line in sorted(set(re.findall(r'InteractionProbe\.swift:(\d+):', pathlib.Path(sys.argv[1]).read_text(errors='replace')))):
+log = pathlib.Path(sys.argv[1]).read_text(errors='replace')
+for line in sorted(set(re.findall(r'InteractionProbe\.swift:(\d+):', log))):
     print('HAGIG_PROBE failure-line=' + line)
+# Fixed classifications only. Raw XCTest diagnostics can contain UI contents.
+for category, phrase in {
+    'synthesis': 'failed to synthesize',
+    'snapshot': 'failed to get matching snapshot',
+    'no-match': 'no matches found',
+    'not-hittable': 'not hittable',
+    'timeout': 'timed out',
+    'assertion': 'XCTAssert',
+    'keyboard': 'keyboard event',
+    'pasteboard': 'pasteboard',
+    'permission': 'not authorized',
+    'not-running': 'application is not running',
+    'main-thread': 'main thread',
+}.items():
+    if phrase.lower() in log.lower():
+        print('HAGIG_PROBE diagnostic-category=' + category)
 PY
 grep -E '^PASS recorder\.|^cleanup temporary-recording-removed=' "$root/capture.log" >> "$root/evidence/status.txt" || true
 printf 'HAGIG_PROBE test-exit=%s\n' "$status" >> "$root/evidence/status.txt"
