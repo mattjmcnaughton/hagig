@@ -75,7 +75,7 @@ run_test() {
     fi
 }
 
-for experiment in editor-copy presentation-copy immediate-discard dd-cursor dw-newline crlf-register paste-cursor; do
+for experiment in editor-copy presentation-copy immediate-discard dd-cursor dw-newline crlf-register paste-cursor paste-visual; do
     directory="$output/$experiment"
     mkdir "$directory"
     echo 'UNPROVEN: experiment has not completed candidate/mutant/restoration' > "$directory/verdict.txt"
@@ -122,6 +122,13 @@ for experiment in editor-copy presentation-copy immediate-discard dd-cursor dw-n
             test=testNativePastedTextPreservesEditorCursorMode
             replacement='/^        if accepted { normalCursor() }$/d'
             assertion='native paste cursor follows editor mode'
+            detail='XCTAssertEqual failed'
+            ;;
+        paste-visual)
+            source=$editor
+            test=testNativePastedTextPreservesEditorCursorMode
+            replacement='s/^        if accepted, mode == .visual || mode == .visualLine {$/        if accepted, false {/'
+            assertion='native paste exits replaced Visual selection'
             detail='XCTAssertEqual failed'
             ;;
     esac

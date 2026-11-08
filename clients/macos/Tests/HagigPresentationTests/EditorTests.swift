@@ -179,6 +179,22 @@ final class EditorTests: XCTestCase {
             XCTAssertTrue(insert.readSelection(from: board, type: .string))
             XCTAssertEqual(insert.selectedRange(), NSRange(location: 4, length: 0))
             XCTAssertEqual(insert.modeLabel, "Vim · Insert")
+            XCTAssertTrue(board.setString("Z", forType: .string))
+            for (input, selection, expected, afterDelete) in [
+                ("abcdef", "vlll", "Zef", "ef"),
+                ("abcd\nEF\ntail", "Vj", "Ztail", "tail")
+            ] {
+                let visual = editor(input)
+                keys(selection, in: visual)
+                XCTAssertTrue(visual.readSelection(from: board, type: .string))
+                XCTAssertEqual(visual.string, expected)
+                XCTAssertEqual(visual.modeLabel, "Vim · Normal", "native paste exits replaced Visual selection")
+                XCTAssertEqual(visual.selectedRange(), NSRange(location: 1, length: 0))
+                keys("hx", in: visual)
+                XCTAssertEqual(visual.string, afterDelete, "native paste discards stale Visual coordinates")
+                keys("u", in: visual)
+                XCTAssertEqual(visual.string, expected)
+            }
         }
     }
 

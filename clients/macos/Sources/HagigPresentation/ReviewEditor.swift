@@ -182,6 +182,11 @@ final class ReviewTextView: NSTextView, NSTextViewDelegate {
 
     override func readSelection(from pasteboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
         let accepted = super.readSelection(from: pasteboard, type: type)
+        if accepted, mode == .visual || mode == .visualLine {
+            mode = .normal
+            count = nil; pending = nil
+            modeChanged(modeLabel)
+        }
         if accepted { normalCursor() }
         return accepted
     }
@@ -408,6 +413,28 @@ final class ReviewTextView: NSTextView, NSTextViewDelegate {
         return min(p, size)
     }
 
+    private func wordEditRange(from p: Int, count repetitions: Int, operation: Operator) -> NSRange {
+        var end = p
+        for iteration in 0..<repetitions {
+            if operation == .change, iteration == 0, end < characters.count, kind(characters[end]) != 0 {
+                let current = kind(characters[end])
+                while end < characters.count && kind(characters[end]) == current { end += 1 }
+            } else if operation == .change, iteration > 0 {
+                end = min(characters.count, word(max(p, end - 1), direction: "e") + 1)
+            } else {
+                let start = end
+                end = word(end, direction: "w")
+                // Final dw preserves its word's terminator; intermediate
+                // counted steps and a start on an empty line still cross.
+                if operation == .delete, iteration == repetitions - 1,
+                   start < characters.count, !characters[start].isNewline {
+                    end = min(end, lineEnd(start))
+                }
+            }
+        }
+        return range(p, end)
+    }
+
     private func vim(_ key: String) {
         if key.count == 1, let digit = key.first, digit.isASCII && digit.isNumber,
            key != "0" || count != nil {
@@ -433,26 +460,9 @@ final class ReviewTextView: NSTextView, NSTextViewDelegate {
                 guard capture(selection, linewise: true) else { return }
                 if operation == .delete { replace(selection, with: ""); select(min(start, characters.count)) }
             } else if key == "w", operation == .delete || operation == .change {
-                var end = p
-                for iteration in 0..<repetitions {
-                    if operation == .change, iteration == 0, end < characters.count, kind(characters[end]) != 0 {
-                        let current = kind(characters[end])
-                        while end < characters.count && kind(characters[end]) == current { end += 1 }
-                    } else if operation == .change, iteration > 0 {
-                        end = min(characters.count, word(max(p, end - 1), direction: "e") + 1)
-                    } else {
-                        let start = end
-                        end = word(end, direction: "w")
-                        // Final dw preserves its word's terminator; intermediate
-                        // counted steps and a start on an empty line still cross.
-                        if operation == .delete, iteration == repetitions - 1,
-                           start < characters.count, !characters[start].isNewline {
-                            end = min(end, lineEnd(start))
-                        }
-                    }
-                }
+                let selection = wordEditRange(from: p, count: repetitions, operation: operation)
                 if operation == .change { mode = .insert }
-                delete(range(p, end))
+                delete(selection)
                 if operation == .change { modeChanged(modeLabel) }
             }
             return
