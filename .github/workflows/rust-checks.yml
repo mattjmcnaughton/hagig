@@ -115,3 +115,56 @@ jobs:
           elif test "$user_status" -ne 0 || test "$network_status" -ne 0; then
             exit 1
           fi
+
+  # Bounded owner-approved #9 experiment, not adoption or app packaging.
+  # Run once per task-branch push, not twice through pull_request events.
+  native-candidate-loader:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/user/issue-9-real-file-transcription' }}
+    name: Experimental arm64 native loader (no model inference)
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    defaults:
+      run:
+        shell: bash
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Prepare pinned native candidate without implicit downloads
+        run: bash tests/prepare_macos_candidate.sh
+      - name: Relocated Required loader, missing-helper/library controls, restoration
+        env:
+          HAGIG_NATIVE_BOOTSTRAP: ${{ runner.temp }}/hagig-issue9-native/Contents/Helpers/hagig-worker
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/hagig-issue9-native"
+          cargo test --locked --test native_loader -- --ignored --nocapture 2>&1 | tee "$root/evidence/loader-before.txt"
+          helper="$root/Contents/Helpers/hagig-inference-worker"
+          libraries="$root/Contents/Frameworks"
+          trap 'if test -f "$helper.absent"; then mv "$helper.absent" "$helper"; fi; if test -d "$libraries.absent"; then mv "$libraries.absent" "$libraries"; fi' EXIT
+          mv "$helper" "$helper.absent"
+          if cargo test --offline --locked --test native_loader -- --ignored --nocapture > "$root/evidence/loader-missing.txt" 2>&1; then
+            printf 'Missing native helper unexpectedly passed\n' >&2
+            exit 1
+          fi
+          grep -F 'native reply required after bootstrap ACK' "$root/evidence/loader-missing.txt"
+          mv "$helper.absent" "$helper"
+          mv "$libraries" "$libraries.absent"
+          if cargo test --offline --locked --test native_loader -- --ignored --nocapture > "$root/evidence/loader-no-libraries.txt" 2>&1; then
+            printf 'Missing native libraries unexpectedly passed\n' >&2
+            exit 1
+          fi
+          grep -F 'native reply required after bootstrap ACK' "$root/evidence/loader-no-libraries.txt"
+          mv "$libraries.absent" "$libraries"
+          cargo test --offline --locked --test native_loader -- --ignored --nocapture 2>&1 | tee "$root/evidence/loader-restored.txt"
+      - name: Upload sanitized loader evidence only
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: issue9-native-loader-${{ github.sha }}
+          path: ${{ runner.temp }}/hagig-issue9-native/evidence/
+          if-no-files-found: error
+          retention-days: 7

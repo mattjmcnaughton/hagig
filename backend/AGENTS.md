@@ -66,6 +66,12 @@ ask before adding or installing them. Standard Rust tools and the discussed just
 conventions are allowed. Pin toolchain and lockfile; review transitive dependencies,
 build scripts, native loading and automatic download behavior before adoption.
 
+For the owner-approved #9 Apple Silicon experiment only (2026-11-08), upstream
+zip's build-only nix may coexist with rustix. No runtime nix API is introduced;
+this exception does not waive the pinned candidate's adoption gate or authorize
+its implicit native downloader. Use the explicitly approved SHA256-pinned Mac
+archive and existing model assets in temporary CI storage, not user installations.
+
 Issue #4 dependency review: standard Rust has no unshare or post-fork FD
 enumeration API, so Linux alone uses approved `rustix = 1.1.6` with only
 std/fs/process/thread/event features. Do not also add nix. Active x86-64 Linux

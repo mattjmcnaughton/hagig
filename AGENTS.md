@@ -17,6 +17,12 @@ Download, checksum, WAV/resampling libraries and additional development/build
 tools have not been selected; request approval before introducing them. Review
 transitive dependencies and native build/download behavior as part of adoption.
 
+Owner-approved #9 experiment (2026-11-08): the pinned candidate's macOS
+build-only zip→nix closure may coexist with rustix for bounded Apple Silicon
+experiments. This is not permission to add runtime nix, change pins, invoke the
+upstream native downloader, or claim inference adoption. The four exact installer
+crates approved for #9 are recorded in backend guidance.
+
 Native macOS code and its render/test commands live in `clients/macos/`; follow
 its scoped [guidance](clients/macos/AGENTS.md). Use the same SwiftUI views in the
 shell and native screenshot harness. Prove the Ready render/artifact path on a
