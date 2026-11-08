@@ -220,9 +220,15 @@ final class InteractionProbe: XCTestCase {
             shell.buttons["Simulate result"].click()
             XCTAssertTrue(editor.waitForExistence(timeout: 5))
         }
+        func focus(_ mode: String) async throws {
+            let request = try XCTUnwrap(bridge)
+            request.prepareForNewContents(with: .currentHostOnly)
+            XCTAssertTrue(request.setString("focus-" + mode, forType: .string))
+            try await awaitRecorder("focused-" + mode)
+        }
         print("HAGIG_PROBE stage=standard-editor")
         editor.click()
-        XCTAssertTrue(editor.hasKeyboardFocus)
+        try await focus("standard")
         shell.typeKey("a", modifierFlags: .command)
         editor.typeText(standard)
         expectText(standard); clipboard(sentinel)
@@ -248,7 +254,7 @@ final class InteractionProbe: XCTestCase {
         shell.menuItems["Bounded Vim"].click()
         beginReview(); clipboard(standard); mode("Vim · Normal")
         editor.click()
-        XCTAssertTrue(editor.hasKeyboardFocus)
+        try await focus("vim")
         shell.typeKey("i", modifierFlags: [])
         shell.typeKey("a", modifierFlags: .command)
         editor.typeText(vim)

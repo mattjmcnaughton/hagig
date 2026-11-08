@@ -273,6 +273,29 @@ private struct CaptureProbe {
                 while request.string(forType: .string) != "stop" {
                     try recorder.check()
                     guard !process.isTerminated else { throw ProofFailure.gate }
+                    if let marker = request.string(forType: .string),
+                       ["focus-standard", "focus-vim"].contains(marker),
+                       status.string(forType: .string) != marker.replacingOccurrences(of: "focus-", with: "focused-") {
+                        // Read only the retained application's focused role and
+                        // owner, never text, selection contents or global focus.
+                        guard AXIsProcessTrusted() else { throw ProofFailure.gate }
+                        let app = AXUIElementCreateApplication(process.processIdentifier)
+                        guard AXUIElementSetMessagingTimeout(app, 0.3) == .success else { throw ProofFailure.gate }
+                        var focused: CFTypeRef?
+                        guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+                              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { throw ProofFailure.gate }
+                        try recorder.check()
+                        let element = focused as! AXUIElement
+                        var owner: pid_t = 0
+                        var role: CFTypeRef?
+                        guard AXUIElementSetMessagingTimeout(element, 0.3) == .success,
+                              AXUIElementGetPid(element, &owner) == .success, owner == process.processIdentifier,
+                              AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) == .success,
+                              role as? String == kAXTextAreaRole else { throw ProofFailure.gate }
+                        try recorder.check()
+                        try report(marker.replacingOccurrences(of: "focus-", with: "focused-"))
+                        print("HAGIG_PROBE " + marker + "-owned-text-area=true")
+                    }
                     try await Task.sleep(nanoseconds: 50_000_000)
                 }
                 window.backgroundColor = .magenta
