@@ -152,6 +152,11 @@ private final class ShellProof {
                   (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value != shell.processIdentifier else { continue }
             guard let bounds = window[kCGWindowBounds as String] as? [String: Any],
                   let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { throw ProofFailure.gate }
+            if rect.intersects(crop) {
+                // Geometry only: never identify foreign apps or inspect their content.
+                let layer = (window[kCGWindowLayer as String] as? NSNumber)?.intValue ?? -1
+                print("capture.blocked crop=\(crop) foreign-rect=\(rect) layer=\(layer)")
+            }
             try require(!rect.intersects(crop))
         }
     }
