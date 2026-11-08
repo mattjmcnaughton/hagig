@@ -17,7 +17,15 @@ both Ready images and 26 state images were inspected. This establishes static
 view rendering, not application interactions or dictation. The merged #7
 [controlled backend lifecycle](backend/AGENTS.md) supports a separate fake worker,
 single-request admission, cancellation and server stop; it is not transcription.
-There are no installation packages or implemented transcription features. The
+There are no installation packages. The experimental #9 backend implements
+explicit hash-verified model installation, bounded safe WAV decoding and a real
+CLI/server/isolated-worker path against the [shared contract](backend/PROTOCOL.md).
+Linux synthetic speech, Required isolation, warm reuse, cancellation/reap and
+recovery have been exercised with existing pinned assets. This is not macOS
+integration or inference adoption. The native candidate is excluded from default
+builds; two seconds of silence still hallucinated text, and exact recognition
+remains unproven. See [backend guidance](backend/AGENTS.md) for its experimental
+build/acquisition boundaries, not a complete-app installation procedure. The
 #6 candidate in [PR #18](https://github.com/mattjmcnaughton/hagig/pull/18) remains
 partial and blocked; inference has not passed its adoption gate.
 [MVP product requirements](docs/product/prds/01-mvp.md) own copy-only scope and
@@ -74,11 +82,13 @@ packaging, Rust binding coverage and privacy remain validation gates; accuracy
 and latency require measurements, not first-working-app numeric gates. None is
 an established capability of this repository.
 
-Configuration will be human-editable text at
+Experimental backend configuration is human-editable TOML at
 `$XDG_CONFIG_HOME/hagig/config.toml`, defaulting to
-`~/.config/hagig/config.toml`, including on macOS. TOML is the working format;
-model, runtime, and state locations will be specified separately in the technical
-design.
+`~/.config/hagig/config.toml`, including on macOS. Validated model, editor,
+isolation and vocabulary settings are frozen for the server lifetime; apply edits
+by explicitly stopping/relaunching the server. Runtime never downloads or repairs
+missing/corrupt models. The [backend contract](backend/PROTOCOL.md) owns concrete
+model/runtime locations and client settings identities.
 
 ## Privacy boundaries
 

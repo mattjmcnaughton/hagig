@@ -5,9 +5,25 @@ edition = "2024"
 rust-version = "1.90"
 publish = false
 
+[features]
+# Experimental build only; this is not native/privacy adoption clearance.
+inference-candidate = ["dep:sherpa-onnx"]
+
+[[bin]]
+name = "hagig-inference-worker"
+path = "src/bin/hagig-inference-worker.rs"
+required-features = ["inference-candidate"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio = { version = "=1.48.0", default-features = false, features = ["rt", "signal"] }
+toml = { version = "=0.9.8", default-features = false, features = ["parse", "serde", "std"] }
+ureq = { version = "=2.12.1", default-features = false, features = ["tls"] }
+sha2 = { version = "=0.11.1", default-features = false }
+tar = { version = "=0.4.46", default-features = false }
+flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
+sherpa-onnx = { git = "https://github.com/k2-fsa/sherpa-onnx", rev = "af2d8d81dbfa61c4cea4c568da78f3982edca005", default-features = false, features = ["shared"], optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "=1.1.6", default-features = false, features = ["std", "fs", "process", "thread", "event"] }

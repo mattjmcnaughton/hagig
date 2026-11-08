@@ -38,19 +38,31 @@ pub(super) fn runtime(create: bool) -> SafeResult<PathBuf> {
         }
         None => {
             #[cfg(target_os = "macos")]
-            let path = std::env::temp_dir();
-            #[cfg(not(target_os = "macos"))]
-            let path = PathBuf::from(format!("/tmp/hagig-{}", uid()));
-            if create && !path.exists() {
-                match fs::DirBuilder::new().mode(0o700).create(&path) {
-                    Ok(()) => (),
-                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
-                    Err(_) => return Err("runtime_unavailable"),
+            let path = {
+                // Use exactly the inherited client root, not a Foundation or
+                // libc-normalized temporary directory with a different spelling.
+                let path = PathBuf::from(std::env::var_os("TMPDIR").ok_or("unsafe_runtime")?);
+                if !path.is_absolute() {
+                    return Err("unsafe_runtime");
                 }
-            }
-            if path.exists() {
                 validate(&path, 0o700, "directory")?;
-            }
+                path
+            };
+            #[cfg(not(target_os = "macos"))]
+            let path = {
+                let path = PathBuf::from(format!("/tmp/hagig-{}", uid()));
+                if create && !path.exists() {
+                    match fs::DirBuilder::new().mode(0o700).create(&path) {
+                        Ok(()) => (),
+                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+                        Err(_) => return Err("runtime_unavailable"),
+                    }
+                }
+                if path.exists() {
+                    validate(&path, 0o700, "directory")?;
+                }
+                path
+            };
             path
         }
     };

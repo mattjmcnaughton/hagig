@@ -7,6 +7,10 @@
 
 #![deny(unsafe_code)]
 
+pub mod audio;
+pub mod config;
 pub mod launcher;
+pub mod model;
 pub mod service;
 pub mod supervisor;
+pub mod worker_protocol;
