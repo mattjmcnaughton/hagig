@@ -238,7 +238,7 @@ final class InteractionProbe: XCTestCase {
         print("HAGIG_PROBE standard-edit-select-copy-cut-undo-escape-pointer-copy=true")
         shell.buttons["Dismiss"].click()
         shell.buttons["Show menu-bar surface"].click()
-        XCTAssertTrue(shell.staticTexts["Ready when you are"].exists)
+        XCTAssertTrue(shell.staticTexts["Ready when you are"].waitForExistence(timeout: 3))
         XCTAssertFalse(editor.exists); clipboard(standard)
         print("HAGIG_PROBE standard-pointer-dismiss-reopen=true")
 
@@ -265,7 +265,7 @@ final class InteractionProbe: XCTestCase {
         shell.typeKey("u", modifierFlags: []); expectText(vim); clipboard(vim)
         shell.typeKey("d", modifierFlags: [.command, .shift])
         shell.buttons["Show menu-bar surface"].click()
-        XCTAssertTrue(shell.staticTexts["Ready when you are"].exists)
+        XCTAssertTrue(shell.staticTexts["Ready when you are"].waitForExistence(timeout: 3))
         XCTAssertFalse(editor.exists); clipboard(vim)
         print("HAGIG_PROBE vim-native-paste-normal-cursor-keyboard-copy-dismiss=true")
     }
