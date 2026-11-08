@@ -119,7 +119,10 @@ final class InteractionProbe: XCTestCase {
         XCTAssertTrue(shell.textViews["Transcript editor"].waitForExistence(timeout: 5))
         print("HAGIG_PROBE shell-review-reached=true")
 
-        XCTAssertTrue(AXIsProcessTrusted() && CGPreflightScreenCaptureAccess())
+        let trusted = AXIsProcessTrusted()
+        let captureAllowed = CGPreflightScreenCaptureAccess()
+        print("HAGIG_PROBE capabilities=ax-\(trusted)-capture-\(captureAllowed)")
+        XCTAssertTrue(trusted && captureAllowed)
         let board = NSPasteboard.general
         XCTAssertTrue(board.pasteboardItems?.isEmpty != false)
         let sentinel = "HAGIG-SYNTHETIC-XCUI-" + UUID().uuidString
