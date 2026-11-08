@@ -636,14 +636,20 @@ private final class ShellProof {
     }
 
     func restoreShell(using element: AXUIElement) async throws {
+        // The focus-race setup deliberately activates the driver. PID-directed
+        // events do not ask WindowServer to activate another application, so
+        // restore only the owned shell explicitly before any movie can begin.
+        try require(recording == nil)
+        let pid = try shellInputPID()
         receiverWindow?.orderOut(nil)
-        // A real shell-targeted click must restore focus normally. No activation
-        // or focus setter is used as a fallback if process-targeted input cannot.
-        try await click(element)
+        guard let application = NSRunningApplication(processIdentifier: pid) else { throw ProofFailure.gate }
+        try require(application.activate(options: [.activateIgnoringOtherApps]))
         let end = Date().addingTimeInterval(2)
         while NSWorkspace.shared.frontmostApplication?.processIdentifier != shellPID && Date() < end {
             try await pause(0.05)
         }
+        _ = try focused()
+        try await click(element)
         _ = try focused()
     }
 
