@@ -4,7 +4,8 @@ import XCTest
 @MainActor
 final class InteractionProbe: XCTestCase {
     private var owned: [NSRunningApplication] = []
-    private var bridge: URL?
+    private var bridge: NSPasteboard?
+    private var recorderStatus: NSPasteboard?
     private var captureStarted = false
     private var syntheticCopies: Set<String> = []
     private var seededClipboard = false
@@ -15,14 +16,17 @@ final class InteractionProbe: XCTestCase {
 
     private func cleanup() async {
         var stopped = !captureStarted
-        if captureStarted, let bridge {
-            try? Data().write(to: bridge.appendingPathComponent("stop"), options: .atomic)
+        if captureStarted, let bridge, let recorderStatus {
+            if !["complete", "failed"].contains(recorderStatus.string(forType: .string) ?? "") {
+                bridge.prepareForNewContents(with: .currentHostOnly)
+                _ = bridge.setString("stop", forType: .string)
+            }
             let end = Date().addingTimeInterval(7)
-            while !FileManager.default.fileExists(atPath: bridge.appendingPathComponent("complete").path),
-                  !FileManager.default.fileExists(atPath: bridge.appendingPathComponent("failed").path), Date() < end {
+            while recorderStatus.string(forType: .string) != "complete",
+                  recorderStatus.string(forType: .string) != "failed", Date() < end {
                 try? await Task.sleep(nanoseconds: 50_000_000)
             }
-            stopped = FileManager.default.fileExists(atPath: bridge.appendingPathComponent("complete").path)
+            stopped = recorderStatus.string(forType: .string) == "complete"
         }
         // Retained identities, never a PID read from text or a broad kill.
         for process in owned.reversed() where !process.isTerminated { process.terminate() }
@@ -41,26 +45,26 @@ final class InteractionProbe: XCTestCase {
             } else { clipboardClean = false } // Never clear unknown contents.
         }
         let clean = stopped && appsStopped && clipboardClean
+        if !captureStarted || stopped || recorderStatus?.string(forType: .string) == "failed" {
+            bridge?.releaseGlobally()
+            recorderStatus?.releaseGlobally()
+        }
+        print("HAGIG_PROBE cleanup-components=recorder-\(stopped)-apps-\(appsStopped)-clipboard-\(clipboardClean)")
         print("HAGIG_PROBE cleanup=\(clean)")
         XCTAssertTrue(clean, "owned cleanup required")
     }
 
     func testOwnedShellInputFeasibility() async throws {
         continueAfterFailure = false
-        // Check bridge access before UI input, so an unrelated input-control
-        // failure cannot hide this specific filesystem diagnostic.
-        if let path = ProcessInfo.processInfo.environment["HAGIG_PROBE_BRIDGE"] {
-            let directory = URL(fileURLWithPath: path)
-            do {
-                let probe = directory.appendingPathComponent("write-preflight")
-                try Data().write(to: probe, options: .atomic)
-                try FileManager.default.removeItem(at: probe)
-            } catch {
-                let error = error as NSError
-                print("HAGIG_PROBE bridge-preflight=false cocoa=\(error.domain == NSCocoaErrorDomain) code=\(error.code) exists=\(FileManager.default.fileExists(atPath: directory.path)) writable=\(FileManager.default.isWritableFile(atPath: directory.path))")
-                throw error
-            }
+        // Retain the metadata-only boards before any input-control failure can
+        // throw, so teardown owns their release even before capture admission.
+        let prefix = "com.mattjmcnaughton.hagig.synthetic-recording-"
+        guard let name = ProcessInfo.processInfo.environment["HAGIG_PROBE_BRIDGE"], name.hasPrefix(prefix),
+              UUID(uuidString: String(name.dropFirst(prefix.count))) != nil else {
+            throw NSError(domain: "HagigSyntheticProbe", code: 2)
         }
+        bridge = NSPasteboard(name: .init(name + ".request"))
+        recorderStatus = NSPasteboard(name: .init(name + ".status"))
         let shell = XCUIApplication()
         let products = Bundle(for: InteractionProbe.self).bundleURL.deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
@@ -155,32 +159,28 @@ final class InteractionProbe: XCTestCase {
             XCTAssertTrue(board.setString(text, forType: .string))
         }
         seed(sentinel)
-        guard let path = ProcessInfo.processInfo.environment["HAGIG_PROBE_BRIDGE"] else {
-            throw NSError(domain: "HagigSyntheticProbe", code: 2)
-        }
-        let bridge = URL(fileURLWithPath: path)
-        self.bridge = bridge
+        let bridge = try XCTUnwrap(bridge)
         captureStarted = true
-        do {
-            try Data().write(to: bridge.appendingPathComponent("start"), options: .atomic)
-        } catch {
-            let error = error as NSError
-            print("HAGIG_PROBE bridge-write=false cocoa=\(error.domain == NSCocoaErrorDomain) code=\(error.code) exists=\(FileManager.default.fileExists(atPath: bridge.path)) writable=\(FileManager.default.isWritableFile(atPath: bridge.path))")
-            throw error
+        bridge.prepareForNewContents(with: .currentHostOnly)
+        guard bridge.setString("start", forType: .string) else {
+            throw NSError(domain: "HagigSyntheticProbe", code: 5)
         }
         try await awaitRecorder("ready")
         try await driveEditor(shell: shell, board: board,
                               sentinel: sentinel, standard: standard, vim: vim)
-        try Data().write(to: bridge.appendingPathComponent("stop"), options: .atomic)
+        bridge.prepareForNewContents(with: .currentHostOnly)
+        guard bridge.setString("stop", forType: .string) else {
+            throw NSError(domain: "HagigSyntheticProbe", code: 5)
+        }
         try await awaitRecorder("complete")
         print("HAGIG_PROBE scenario-complete=true")
     }
 
     private func awaitRecorder(_ name: String) async throws {
-        let bridge = try XCTUnwrap(bridge)
+        let bridge = try XCTUnwrap(recorderStatus)
         let end = Date().addingTimeInterval(7)
-        while !FileManager.default.fileExists(atPath: bridge.appendingPathComponent(name).path) {
-            guard Date() < end, !FileManager.default.fileExists(atPath: bridge.appendingPathComponent("failed").path) else {
+        while bridge.string(forType: .string) != name {
+            guard Date() < end, bridge.string(forType: .string) != "failed" else {
                 throw NSError(domain: "HagigSyntheticProbe", code: 3)
             }
             try await Task.sleep(nanoseconds: 50_000_000)

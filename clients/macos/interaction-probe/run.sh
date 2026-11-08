@@ -35,7 +35,7 @@ swiftc -swift-version 5 -parse-as-library -D HAGIG_CAPTURE_PROBE shell-interacti
 # keepNever is Xcode's automatic-screen-capture OFF scheme option. Never export
 # xcresult/raw XCTest logs, app bundles or desktop screenshots from this probe.
 python3 - "$root/derived/Build/Products" "$shell" "$root/bridge" <<'PY'
-import pathlib, plistlib, subprocess, sys
+import pathlib, plistlib, subprocess, sys, uuid
 products = pathlib.Path(sys.argv[1])
 files = list(products.glob('*.xctestrun'))
 assert len(files) == 1, 'one test configuration required'
@@ -54,7 +54,9 @@ assert len(found) == 1 and found[0].get('IsUITestBundle') is True
 assert found[0].get('SystemAttachmentLifetime') == 'keepNever', 'capture must be OFF'
 # Only the existing exact-application ScreenCaptureKit recorder can export media.
 # Use this SAME verified configuration, not a regenerated project configuration.
-found[0].setdefault('EnvironmentVariables', {})['HAGIG_PROBE_BRIDGE'] = sys.argv[3]
+name = 'com.mattjmcnaughton.hagig.synthetic-recording-' + str(uuid.uuid4())
+found[0].setdefault('EnvironmentVariables', {})['HAGIG_PROBE_BRIDGE'] = name
+pathlib.Path(sys.argv[3], 'control-name').write_text(name)
 files[0].write_bytes(plistlib.dumps(configuration))
 app = products / 'Debug/HagigShellProbe.app/Contents/MacOS/HagigShellProbe'
 # The build phase copies the SwiftPM executable, without source instrumentation.
@@ -80,14 +82,14 @@ command = ['xcodebuild', 'test-without-building', '-xctestrun', str(configuratio
            '-parallel-testing-enabled', 'NO', '-test-timeouts-enabled', 'YES',
            '-default-test-execution-time-allowance', '120', '-maximum-test-execution-time-allowance', '120']
 with (root / 'capture.log').open('w') as capture_log, (root / 'test.log').open('w') as test_log:
-    recorder = subprocess.Popen([str(root / 'recorder'), str(app), str(root / 'bridge')],
+    name = (root / 'bridge/control-name').read_text()
+    recorder = subprocess.Popen([str(root / 'recorder'), str(app), str(root / 'bridge'), name],
                                 stdout=capture_log, stderr=subprocess.STDOUT)
     try:
         test_status = subprocess.run(command, stdout=test_log, stderr=subprocess.STDOUT, timeout=150).returncode
     except subprocess.TimeoutExpired:
         test_status = 124
     finally:
-        (root / 'bridge/stop').touch()
         try:
             recorder_status = recorder.wait(timeout=8)
         except subprocess.TimeoutExpired:
