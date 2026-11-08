@@ -120,7 +120,7 @@ jobs:
   # Run once per task-branch push, not twice through pull_request events.
   native-candidate-loader:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/user/issue-9-real-file-transcription' }}
-    name: Experimental arm64 native loader (no model inference)
+    name: Experimental arm64 native speech (not adoption)
     runs-on: macos-15
     timeout-minutes: 20
     env:
@@ -160,11 +160,22 @@ jobs:
           grep -F 'native reply required after bootstrap ACK' "$root/evidence/loader-no-libraries.txt"
           mv "$libraries.absent" "$libraries"
           cargo test --offline --locked --test native_loader -- --ignored --nocapture 2>&1 | tee "$root/evidence/loader-restored.txt"
-      - name: Upload sanitized loader evidence only
+      - name: Explicit pinned model install and real speech lifecycle with zero-PCM control
+        run: bash tests/exercise_macos_candidate.sh
+      - name: Dispose acquired assets and temporary binaries
+        if: ${{ always() }}
+        run: |
+          root="$RUNNER_TEMP/hagig-issue9-native"
+          if test -d "$root/mutant-source"; then git worktree remove --force "$root/mutant-source"; fi
+          rm -rf "$root/data" "$root/Contents" "$root/libraries" "$root/target" "$root/mutant-target"
+          rm -f "$root/native.tar.bz2"
+          test ! -e "$root/data"
+          test ! -e "$root/native.tar.bz2"
+      - name: Upload sanitized synthetic evidence only
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: issue9-native-loader-${{ github.sha }}
+          name: issue9-native-speech-${{ github.sha }}
           path: ${{ runner.temp }}/hagig-issue9-native/evidence/
           if-no-files-found: error
           retention-days: 7
