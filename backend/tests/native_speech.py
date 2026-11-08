@@ -157,18 +157,37 @@ with tempfile.TemporaryDirectory(prefix="hg9-speech-", dir="/tmp") as temporary:
             old_cpu = cpu_seconds(pid)
             pending = subprocess.Popen([str(exe), "transcribe", str(long_audio)], env=env,
                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            deadline = time.monotonic() + 8
+            started = time.monotonic()
+            upload_deadline = started + 30
+            computation_deadline = None
             try:
                 while True:
                     observed = status()
                     assert pending.poll() is None, "long request finished before fault injection"
+                    current_threads = threads(server.pid)
+                    cpu_delta = cpu_seconds(pid) - old_cpu
+                    now = time.monotonic()
+                    deadline = computation_deadline or upload_deadline
+                    assert now < deadline, (
+                        "active native computation not observed",
+                        "phase", "computation" if computation_deadline else "upload",
+                        "elapsed", round(now - started, 3),
+                        "state", observed["state"], "same_worker", observed["worker_pid"] == pid,
+                        "threads", idle_threads, current_threads, "cpu_seconds", round(cpu_delta, 3)
+                    )
+                    if current_threads > idle_threads and computation_deadline is None:
+                        computation_deadline = now + 8
+                        print("EXCHANGE_STARTED", args.mode,
+                              "elapsed", round(now - started, 3), flush=True)
                     # Busy includes upload. The exchange thread starts after
                     # end_audio; require that and native CPU progress together.
                     if (observed["state"] == "busy" and observed["worker_pid"] == pid
-                            and threads(server.pid) > idle_threads and cpu_seconds(pid) > old_cpu + .02):
-                        print("ACTIVE_NATIVE_EXCHANGE", args.mode, flush=True)
+                            and current_threads > idle_threads and cpu_delta > .02):
+                        print("ACTIVE_NATIVE_EXCHANGE", args.mode,
+                              "elapsed", round(now - started, 3),
+                              "threads", idle_threads, current_threads,
+                              "cpu_seconds", round(cpu_delta, 3), flush=True)
                         return pending
-                    assert time.monotonic() < deadline, "active native computation not observed"
                     time.sleep(.01)
             except BaseException:
                 pending.kill()
