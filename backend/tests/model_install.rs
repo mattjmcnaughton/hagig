@@ -71,12 +71,14 @@ fn explicit_install_rejects_unverified_input_without_publication_or_content_erro
 
     // Local acquisition must reject a FIFO without waiting for a writer.
     fs::remove_file(source.join("encoder.int8.onnx")).unwrap();
-    rustix::fs::mkfifoat(
-        rustix::fs::CWD,
-        source.join("encoder.int8.onnx"),
-        rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
-    )
-    .unwrap();
+    assert!(
+        Command::new("/usr/bin/mkfifo")
+            .args(["-m", "600"])
+            .arg(source.join("encoder.int8.onnx"))
+            .status()
+            .unwrap()
+            .success()
+    );
     let mut child = Command::new(env!("CARGO_BIN_EXE_hagig"))
         .env("XDG_DATA_HOME", root.join("data"))
         .args(["model", "install", MODEL, "--from"])
