@@ -47,7 +47,7 @@ final class InteractionProbe: XCTestCase {
         XCTAssertTrue(record.waitForExistence(timeout: 5))
         XCTAssertTrue(record.isEnabled)
         let point = record.frame
-        canary.launchEnvironment = ["PROBE_X": String(point.midX), "PROBE_Y": String(point.midY)]
+        canary.launchEnvironment = ["PROBE_X": String(Double(point.midX)), "PROBE_Y": String(Double(point.midY))]
         print("HAGIG_PROBE stage=canary-launch")
         canary.launch()
         let canaryProcess = try retainOwned("com.mattjmcnaughton.hagig.synthetic-canary", name: "InputCanary.app")
