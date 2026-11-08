@@ -133,6 +133,26 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
+  client-semantics:
+    runs-on: macos-15
+    timeout-minutes: 10
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Falsify asset-free client semantics in disposable worktree
+        run: bash clients/macos/client-proof.sh "$RUNNER_TEMP/issue21-client-proof"
+      - name: Upload bounded client semantic proof transcripts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-client-semantics-${{ github.sha }}
+          path: ${{ runner.temp }}/issue21-client-proof/
+          if-no-files-found: warn
+          retention-days: 3
+
   shell-interaction:
     runs-on: macos-15
     timeout-minutes: 10
