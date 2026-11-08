@@ -13,6 +13,12 @@ implementation and default-feature tests are not native inference adoption.
   owns the child and reap. The service request layer owns protocol/state and the
   returned private pipes. Keep request admission, generations, cancellation and
   result delivery out of the launcher. They live in `service`, not the adapters.
+- Follow the root dependency-boundary convention: `SandboxedWorkerLauncher` and
+  `Supervisor::new(launcher)` are the existing trait/constructor-injection example.
+  Keep this contract focused on launching; concrete platform selection belongs
+  in the wiring caller. Do not add traits to pure protocol/state code solely to
+  mock it. Validate launch effects with controlled child processes and real
+  platform checks, not only substitute implementations.
 - Inference-only external-network isolation defaults to Required; an explicit
   Disabled startup mode is a supported product opt-out, not an automatic fallback
   or development-only exception. Required enforces before native/model loading

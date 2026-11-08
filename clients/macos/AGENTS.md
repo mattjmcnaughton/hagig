@@ -29,6 +29,17 @@ a PUBLIC repository: Actions logs/artifacts are not a private review channel.
 Local clipboard managers can retain explicit Copy content; current-host-only is
 not a general retention guarantee.
 
+## Dependency boundaries
+
+Apply the root convention without adding a protocol for every view or model.
+`HagigView` receives its Copy closure explicitly, and `Presentation.copy(using:)`
+accepts the write effect rather than accessing `NSPasteboard` itself. The shell
+supplies the real clipboard writer; the screenshot harness supplies an inert
+closure. Preserve this separation. Use a Swift protocol when an effect needs a
+cohesive multi-operation contract, not just to wrap a single closure. Substitutes
+test presentation outcomes; native clipboard and interaction claims still require
+the platform evidence below.
+
 ## Commands (macOS required)
 
 From `clients/macos`, with Xcode 16.4 selected:
