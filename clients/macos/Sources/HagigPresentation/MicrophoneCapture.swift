@@ -38,8 +38,14 @@ final class PCMRecording {
 
     func append(_ input: AVAudioPCMBuffer) throws {
         lock.lock(); defer { lock.unlock() }
+        var accepted = false
+        defer {
+            // Invalidate before releasing the lock, not in the later UI event:
+            // Stop must never recover a prefix from a failed capture.
+            if !accepted { bytes.removeAll(); closed = true }
+        }
         guard !closed else { throw CaptureFailure.invalidAudio }
-        guard bytes.count < Self.maximumBytes else { return }
+        guard bytes.count < Self.maximumBytes else { accepted = true; return }
         // Bound converter allocation independently of a changing input device.
         guard input.frameLength > 0, input.frameLength <= 16_384,
               input.format == converter.inputFormat else { throw CaptureFailure.device }
@@ -58,12 +64,10 @@ final class PCMRecording {
             return input
         }
         guard status != .error, error == nil, let samples = output.floatChannelData?[0] else {
-            bytes.removeAll(); closed = true
             throw CaptureFailure.invalidAudio
         }
         // Validate the entire converted chunk before accepting any of it.
         for index in 0..<Int(output.frameLength) where !samples[index].isFinite || abs(samples[index]) > 1 {
-            bytes.removeAll(); closed = true
             throw CaptureFailure.invalidAudio
         }
         let count = min(Int(output.frameLength), (Self.maximumBytes - bytes.count) / 4)
@@ -71,6 +75,7 @@ final class PCMRecording {
             var value = samples[index].bitPattern.littleEndian
             withUnsafeBytes(of: &value) { bytes.append(contentsOf: $0) }
         }
+        accepted = true
     }
 
     func finish() -> Data {
