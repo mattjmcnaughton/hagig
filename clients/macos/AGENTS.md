@@ -1,5 +1,48 @@
 # Native shell and screenshot workflow
 
+## #21 integration candidate (not accepted dictation)
+
+This branch stacks on the exact unmerged #22 editor head e6e8e22. The normal
+shell now routes Record/Stop/Cancel to `DictationController`, native
+AVAudioEngine/AVAudioConverter capture and the #9 public socket contract frozen
+at 791f99c (`backend/PROTOCOL.md` on #9's branch). Backend/wire changes stay owned
+by #9; no Swift TOML parser, inference engine or normal-operation fake fallback.
+Previous synthetic-only descriptions below describe the checkpoint base, not
+the intended normal client path in this candidate.
+
+Normal operation requires the matching real #9 backend, model and native helper
+packaging, which are NOT present on this stacked editor base. The existing bundle
+recipe still packages controlled helpers; real Record must fail safely there,
+not transcribe or fall back. Do not call this candidate runnable end-to-end until
+actual integrated evidence passes. Resolve `hagig` only at
+`Contents/Helpers/hagig`; the helper starts/attaches with `start` (no fake flags).
+It owns runtime locking/stale-socket cleanup; Swift validates the same inherited
+XDG_RUNTIME_DIR or TMPDIR, private directory/socket and peer UID. No ambient PATH.
+
+Capture begins only after matching admission and microphone grant. Audio stays
+in memory as bounded mono16k f32le; warning at4:45, cap at5:00. Stop and cap share
+one completion path. Cancel/Escape invalidates main-actor visibility before
+disconnect/engine teardown. Device/configuration change and revoked access discard
+the request. Copy/Cut remain the preserved #22 currentHostOnly routes.
+
+The synthetic editor harness is now explicit:
+`swift run HagigShell --synthetic-demo`. Only that flag creates demo controls;
+normal launch does not show a fake result or request Accessibility/Input Monitoring.
+The owned synthetic interaction driver passes this flag and remains synthetic
+editor evidence, not microphone/socket or ordinary uninstrumented acceptance.
+
+Native commands remain `swift build` and `swift test` with Xcode16.4. Added tests
+exercise controlled admission/late-result cancellation, converter/cap bounds and
+explicit test-only Unix peers (including a six-second delayed result, busy,
+fake-service rejection and malformed framing). They use no personal audio/text.
+Ready proof remains two shared-view PNGs; representative gallery is now34 images
+(17 states × light/dark), adding admission, near-cap and recoverable client errors.
+Inspect Ready before every representative image, then execute AX/keyboard/pointer
+checks and inspect a complete moving-pointer clip. Hosted checks never establish
+physical microphone/TCC/grant-denial-rebuild, real inference or second-device
+clipboard acceptance. Linux source checks are not native compilation/render proof.
+No native #21 evidence is established merely by these source changes.
+
 Read the root guidance, constitution, MVP PRD and TDD. The reviewed UI source is
 `docs/product/prototypes/`; its browser checks do not validate this native client.
 This is a synthetic shell, not an implemented dictation pipeline or installed alpha.

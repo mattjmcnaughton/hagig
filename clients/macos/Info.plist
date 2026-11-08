@@ -21,6 +21,6 @@
     <key>LSUIElement</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Hagig will use the microphone for local dictation when you intentionally start recording. This synthetic build does not record audio or request microphone access.</string>
+    <string>Hagig uses the microphone for local dictation only when you choose Record. Recordings stay in memory and are not saved by Hagig.</string>
 </dict>
 </plist>

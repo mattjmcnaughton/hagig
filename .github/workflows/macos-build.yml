@@ -47,7 +47,7 @@ jobs:
       - name: Render bounded representative states
         run: |
           swift run --skip-build HagigScreenshots states state-captures
-          test "$(find state-captures -name '*.png' | wc -l | tr -d ' ')" = 26
+          test "$(find state-captures -name '*.png' | wc -l | tr -d ' ')" = 34
           for image in state-captures/*.png; do sips -g pixelWidth -g pixelHeight "$image"; done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

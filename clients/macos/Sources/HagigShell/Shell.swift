@@ -9,27 +9,42 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
     private let presentation = Presentation()
     private var demoWindow: NSWindow!
     private var escapeMonitor: Any?
+    private let synthetic = CommandLine.arguments.contains("--synthetic-demo")
+    private lazy var dictation = DictationController(presentation: presentation,
+        helper: Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/hagig"))
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "mic", accessibilityDescription: "Hagig synthetic demo")
-        statusItem.button?.toolTip = "Hagig · synthetic demo. Right-click for demo controls."
+        statusItem.button?.image = NSImage(systemSymbolName: "mic", accessibilityDescription: synthetic ? "Hagig synthetic demo" : "Hagig")
+        statusItem.button?.toolTip = synthetic ? "Hagig · synthetic demo. Right-click for demo controls." : "Hagig · Record, review, Copy. Right-click to quit."
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePopover)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView:
-            HagigView(presentation: presentation, copy: Self.copy)
+            HagigView(presentation: presentation,
+                      record: { [weak self] in
+                          guard let self else { return }
+                          if synthetic { presentation.begin() } else { dictation.record() }
+                      }, stop: { [weak self] in
+                          guard let self else { return }
+                          if synthetic { presentation.release() } else { dictation.stop() }
+                      }, cancel: { [weak self] in
+                          guard let self else { return }
+                          if synthetic { presentation.cancel() } else { dictation.cancel() }
+                      }, copy: Self.copy)
         )
         // Handle active cancellation before normal popover key processing.
         // Only events delivered to this app, and never review-mode Escape.
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.keyCode == 53,
-                  presentation.stage == .recording || presentation.stage == .transcribing else { return event }
-            presentation.cancel()
+                  [.awaitingAdmission, .recording, .transcribing].contains(presentation.stage) else { return event }
+            if synthetic { presentation.cancel() } else { dictation.cancel() }
             return nil
         }
+        // Explicit test/demo mode is never selected by a backend/capture failure.
+        guard synthetic else { return }
         demoWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 300),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         demoWindow.title = "Hagig · Demo controls"
@@ -53,8 +68,15 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
     @objc private func togglePopover() {
         if NSApp.currentEvent?.type == .rightMouseUp {
             popover.performClose(nil)
-            demoWindow.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            if synthetic {
+                demoWindow.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+            } else if let button = statusItem.button {
+                let menu = NSMenu()
+                let quit = menu.addItem(withTitle: "Quit Hagig", action: #selector(ShellDelegate.quit), keyEquivalent: "")
+                quit.target = self
+                menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.minY), in: button)
+            }
             return
         }
         if popover.isShown {
@@ -68,8 +90,11 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
         LocalClipboard().write(text)
     }
 
+    @objc private func quit() { NSApp.terminate(nil) }
+
     func applicationWillTerminate(_ notification: Notification) {
         if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
+        if !synthetic { dictation.cancel() }
     }
 }
 

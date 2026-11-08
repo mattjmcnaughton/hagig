@@ -6,6 +6,9 @@ public struct HagigView: View {
     @ObservedObject private var presentation: Presentation
     private let copy: (String) -> Bool
     private let animateActivity: Bool
+    private let record: () -> Void
+    private let stop: () -> Void
+    private let cancel: () -> Void
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
@@ -31,9 +34,14 @@ public struct HagigView: View {
             Color(red: 135 / 255, green: 85 / 255, blue: 18 / 255)
     }
 
-    public init(presentation: Presentation, animateActivity: Bool = true, copy: @escaping (String) -> Bool) {
+    public init(presentation: Presentation, animateActivity: Bool = true,
+                record: @escaping () -> Void = {}, stop: @escaping () -> Void = {},
+                cancel: (() -> Void)? = nil, copy: @escaping (String) -> Bool) {
         self.presentation = presentation
         self.animateActivity = animateActivity
+        self.record = record
+        self.stop = stop
+        self.cancel = cancel ?? { presentation.cancel() }
         self.copy = copy
     }
 
@@ -71,7 +79,7 @@ public struct HagigView: View {
         .clipShape(RoundedRectangle(cornerRadius: 13))
         .tint(blue)
         .onExitCommand {
-            if presentation.stage == .recording || presentation.stage == .transcribing { presentation.cancel() }
+            if [.awaitingAdmission, .recording, .transcribing].contains(presentation.stage) { cancel() }
         }
     }
 
@@ -85,6 +93,7 @@ public struct HagigView: View {
     private var title: String {
         switch presentation.stage {
         case .ready: return "Ready when you are"
+        case .awaitingAdmission: return "Preparing to record…"
         case .recording: return "Listening…"
         case .transcribing: return "Transcribing…"
         case .fallback: return "Review transcript"
@@ -97,23 +106,16 @@ public struct HagigView: View {
     @ViewBuilder private var content: some View {
         switch presentation.stage {
         case .ready:
-            description("Hold your shortcut and speak into the focused input.")
-            HStack(spacing: 7) {
-                ForEach(["⌃", "⇧", "Space"], id: \.self) { key in
-                    Text(key)
-                        .padding(.horizontal, 11).padding(.vertical, 6)
-                        .background(inset, in: RoundedRectangle(cornerRadius: 5))
-                        .overlay(RoundedRectangle(cornerRadius: 5)
-                            .strokeBorder(secondary.opacity(contrast == .increased ? 1 : 0.35)))
-                }
-            }
-            .padding(.top, 11)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Example shortcut: Control Shift Space")
-            Text("Example shortcut · configurable in TOML")
-                .font(.system(size: 11)).foregroundStyle(secondary)
+            description("Record a prompt, review the text, then Copy when you are ready.")
+            Button("Record", action: record)
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .frame(maxWidth: .infinity)
+        case .awaitingAdmission:
+            description("Reserving the shared transcription slot and checking microphone access. Nothing is recording yet.")
+            ProgressView().controlSize(.small)
+            cancelButton
         case .recording:
-            description("Release the shortcut to transcribe.\nEscape cancels and discards the audio.")
+            description("Choose Stop to transcribe.\nEscape cancels and discards the audio.")
             HStack(spacing: 8) {
                 RecordingIndicator(reduceMotion: reduceMotion)
                 Text("Microphone capture")
@@ -122,6 +124,12 @@ public struct HagigView: View {
             .padding(12).frame(maxWidth: .infinity, alignment: .leading)
             .background(inset, in: RoundedRectangle(cornerRadius: 7))
             .padding(.vertical, 11)
+            if presentation.nearLimit {
+                description("Recording ends at five minutes. Almost there.", color: warning)
+            }
+            Button("Stop", action: stop)
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .frame(maxWidth: .infinity)
             cancelButton
         case .transcribing:
             description("Turning your recording into text.\nNothing has been delivered.")
@@ -181,7 +189,7 @@ public struct HagigView: View {
     }
 
     private var cancelButton: some View {
-        Button("Cancel") { presentation.cancel() }.keyboardShortcut(.cancelAction)
+        Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
             .frame(maxWidth: .infinity)
     }
     private var backButton: some View {
