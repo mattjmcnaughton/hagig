@@ -393,12 +393,15 @@ private final class ShellProof {
         print("recorder.owned-visible-windows=\(ownedWindows)")
         try require(!bounds.isNull)
         let display = CGDisplayBounds(CGMainDisplayID())
-        // The driver uses owned demo controls, not menu-bar clicks. Exclude the
-        // system bar and unrelated status items rather than whitelisting them.
-        let barHeight = NSStatusBar.system.thickness
-        try require(barHeight.isFinite && barHeight > 0 && barHeight < display.height)
-        let screen = CGRect(x: display.minX, y: display.minY + barHeight,
-                            width: display.width, height: display.height - barHeight)
+        // The first NSScreen is the menu-bar display, not necessarily .main.
+        // Convert its bottom-left visible desktop to Quartz top-left coordinates;
+        // status-bar thickness alone can leave menu-bar pixels inside the crop.
+        guard let primary = NSScreen.screens.first else { throw ProofFailure.gate }
+        let visible = primary.visibleFrame
+        let screen = CGRect(x: display.minX + visible.minX - primary.frame.minX,
+                            y: display.minY + primary.frame.maxY - visible.maxY,
+                            width: visible.width, height: visible.height)
+        try require(!screen.isEmpty && display.contains(screen))
         // Include neighboring controls and the extra Copied feedback row.
         bounds = bounds.insetBy(dx: -48, dy: -48).intersection(screen).integral
         try require(!bounds.isEmpty)
