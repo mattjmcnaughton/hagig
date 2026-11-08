@@ -80,17 +80,17 @@ final class UnixChannel {
         }
     }
 
-    private func wait(_ events: Int16, deadline: ContinuousClock.Instant) throws {
+    private func wait(_ events: Int32, deadline: ContinuousClock.Instant) throws {
         while true {
             try checkCancellation()
             let remaining = ContinuousClock.now.duration(to: deadline)
             guard remaining > .zero else { throw BackendFailure(issue: .deadlineExceeded) }
             let seconds = remaining.components
             let milliseconds = min(Int64(100), seconds.seconds * 1_000 + seconds.attoseconds / 1_000_000_000_000_000)
-            var item = pollfd(fd: descriptor, events: events, revents: 0)
+            var item = pollfd(fd: descriptor, events: Int16(events), revents: 0)
             let status = Darwin.poll(&item, 1, Int32(max(1, milliseconds)))
             if status > 0 {
-                guard item.revents & POLLNVAL == 0 else { throw BackendFailure(issue: .serverUnavailable) }
+                guard Int32(item.revents) & POLLNVAL == 0 else { throw BackendFailure(issue: .serverUnavailable) }
                 return // read/write/SO_ERROR classifies HUP/ERR, including buffered EOF.
             }
             if status < 0, errno != EINTR { throw BackendFailure(issue: .serverUnavailable) }
