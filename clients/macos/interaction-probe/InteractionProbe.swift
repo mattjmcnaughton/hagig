@@ -47,6 +47,20 @@ final class InteractionProbe: XCTestCase {
 
     func testOwnedShellInputFeasibility() async throws {
         continueAfterFailure = false
+        // Check bridge access before UI input, so an unrelated input-control
+        // failure cannot hide this specific filesystem diagnostic.
+        if let path = ProcessInfo.processInfo.environment["HAGIG_PROBE_BRIDGE"] {
+            let directory = URL(fileURLWithPath: path)
+            do {
+                let probe = directory.appendingPathComponent("write-preflight")
+                try Data().write(to: probe, options: .atomic)
+                try FileManager.default.removeItem(at: probe)
+            } catch {
+                let error = error as NSError
+                print("HAGIG_PROBE bridge-preflight=false cocoa=\(error.domain == NSCocoaErrorDomain) code=\(error.code) exists=\(FileManager.default.fileExists(atPath: directory.path)) writable=\(FileManager.default.isWritableFile(atPath: directory.path))")
+                throw error
+            }
+        }
         let shell = XCUIApplication()
         let products = Bundle(for: InteractionProbe.self).bundleURL.deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
@@ -101,7 +115,17 @@ final class InteractionProbe: XCTestCase {
         canary.activate()
         XCTAssertEqual(NSWorkspace.shared.frontmostApplication?.processIdentifier, canaryProcess.processIdentifier)
         shell.typeKey("q", modifierFlags: [])
-        XCTAssertEqual(receiver.value as? String, "clicks=1 down=1 up=1")
+        let unchanged = receiver.value as? String == "clicks=1 down=1 up=1"
+        print("HAGIG_PROBE key-receiver-unchanged=\(unchanged)")
+        if !unchanged {
+            // This owned canary exposes only counters. Export numbers only,
+            // never arbitrary accessibility values or inserted content.
+            if let value = receiver.value as? String,
+               value.range(of: #"^clicks=[0-9]+ down=[0-9]+ up=[0-9]+$"#, options: .regularExpression) != nil {
+                print("HAGIG_PROBE key-receiver-counts=" + value)
+            }
+            throw NSError(domain: "HagigSyntheticProbe", code: 4)
+        }
         XCTAssertEqual(NSWorkspace.shared.frontmostApplication?.processIdentifier, shellProcess.processIdentifier)
         print("HAGIG_PROBE focus-race-key-receiver-unchanged=true")
         canaryProcess.terminate()
