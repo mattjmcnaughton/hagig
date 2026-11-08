@@ -6,7 +6,7 @@
  objects = {
   A00000000000000000000001 = {isa = PBXProject; buildConfigurationList = A00000000000000000000002; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; mainGroup = A00000000000000000000003; productRefGroup = A00000000000000000000004; projectDirPath = ""; targets = (B00000000000000000000001, C00000000000000000000001, D00000000000000000000001); attributes = {LastUpgradeCheck = 1640; TargetAttributes = {D00000000000000000000001 = {TestTargetID = B00000000000000000000001; }; }; }; };
   A00000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000005); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
-  A00000000000000000000003 = {isa = PBXGroup; children = (C00000000000000000000004, D00000000000000000000004, A00000000000000000000004); sourceTree = "<group>"; };
+  A00000000000000000000003 = {isa = PBXGroup; children = (C00000000000000000000004, D00000000000000000000004, D00000000000000000000010, A00000000000000000000004); sourceTree = "<group>"; };
   A00000000000000000000004 = {isa = PBXGroup; name = Products; children = (B00000000000000000000003, C00000000000000000000003, D00000000000000000000003); sourceTree = "<group>"; };
   A00000000000000000000005 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {SDKROOT = macosx; MACOSX_DEPLOYMENT_TARGET = 15.0; SWIFT_VERSION = 5.0; ARCHS = arm64; ONLY_ACTIVE_ARCH = YES; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; GENERATE_INFOPLIST_FILE = YES; }; };
   B00000000000000000000001 = {isa = PBXNativeTarget; name = HagigShellProbe; productName = HagigShellProbe; productReference = B00000000000000000000003; productType = "com.apple.product-type.application"; buildConfigurationList = B00000000000000000000002; buildPhases = (B00000000000000000000006); buildRules = (); dependencies = (); };
@@ -25,11 +25,13 @@
   D00000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (D00000000000000000000005); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
   D00000000000000000000003 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = InteractionProbe.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
   D00000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InteractionProbe.swift; sourceTree = "<group>"; };
-  D00000000000000000000005 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {PRODUCT_NAME = "$(TARGET_NAME)"; PRODUCT_BUNDLE_IDENTIFIER = com.mattjmcnaughton.hagig.synthetic-uitests; TEST_TARGET_NAME = HagigShellProbe; }; };
-  D00000000000000000000006 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (D00000000000000000000007); runOnlyForDeploymentPostprocessing = 0; };
+  D00000000000000000000005 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {PRODUCT_NAME = "$(TARGET_NAME)"; PRODUCT_BUNDLE_IDENTIFIER = com.mattjmcnaughton.hagig.synthetic-uitests; TEST_TARGET_NAME = HagigShellProbe; SWIFT_ACTIVE_COMPILATION_CONDITIONS = HAGIG_XCUI; }; };
+  D00000000000000000000006 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (D00000000000000000000007, D00000000000000000000011); runOnlyForDeploymentPostprocessing = 0; };
   D00000000000000000000007 = {isa = PBXBuildFile; fileRef = D00000000000000000000004; };
   D00000000000000000000008 = {isa = PBXTargetDependency; target = B00000000000000000000001; };
   D00000000000000000000009 = {isa = PBXTargetDependency; target = C00000000000000000000001; };
+  D00000000000000000000010 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../shell-interaction.swift"; sourceTree = "<group>"; };
+  D00000000000000000000011 = {isa = PBXBuildFile; fileRef = D00000000000000000000010; };
  };
  rootObject = A00000000000000000000001;
 }

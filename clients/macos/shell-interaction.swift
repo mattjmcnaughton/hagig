@@ -10,10 +10,11 @@ private enum ProofFailure: Error { case gate, foreignTarget }
 
 @available(macOS 15.0, *)
 @MainActor
-private final class RecordingSession: NSObject, SCRecordingOutputDelegate, SCStreamDelegate {
+final class RecordingSession: NSObject, SCRecordingOutputDelegate, SCStreamDelegate {
     let pid: pid_t
     let deadline: Date
     private(set) var bounds: CGRect?
+    private let background = CGColor(gray: 0, alpha: 1)
     private let movie = FileManager.default.temporaryDirectory.appendingPathComponent("hagig-proof-" + UUID().uuidString + ".mov")
     private var stream: SCStream?
     private var output: SCRecordingOutput?
@@ -98,7 +99,7 @@ private final class RecordingSession: NSObject, SCRecordingOutputDelegate, SCStr
         configuration.showsCursor = true
         configuration.capturesAudio = false
         configuration.captureMicrophone = false
-        configuration.backgroundColor = CGColor(gray: 0, alpha: 1)
+        configuration.backgroundColor = background
         configuration.width = display.width
         configuration.height = display.height
         bounds = display.frame
@@ -206,6 +207,7 @@ private final class RecordingSession: NSObject, SCRecordingOutputDelegate, SCStr
     }
 }
 
+#if !HAGIG_XCUI
 // Separate-PID receiving control, never part of Hagig or an accepted recording.
 @MainActor
 private final class InputCanary: NSTextView {
@@ -980,3 +982,4 @@ private struct ShellInteraction {
         application.run()
     }
 }
+#endif

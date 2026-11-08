@@ -1,5 +1,5 @@
 #!/bin/bash
-# Finite automatic hosted-Mac feasibility job; not the shell acceptance gate.
+# Finite automatic hosted-Mac candidate; existing acceptance gate stays separate.
 set -euo pipefail
 root="${RUNNER_TEMP:?}/hagig-xcui-probe"
 mkdir "$root"
@@ -30,7 +30,7 @@ printf 'HAGIG_PROBE build=true\n' > "$root/evidence/status.txt"
 # Verify the actual generated launch configuration before starting automation.
 # keepNever is Xcode's automatic-screen-capture OFF scheme option. Never export
 # xcresult/raw XCTest logs, app bundles or desktop screenshots from this probe.
-python3 - "$root/derived/Build/Products" "$shell" <<'PY'
+python3 - "$root/derived/Build/Products" "$shell" "$root/evidence" <<'PY'
 import pathlib, plistlib, sys
 products = pathlib.Path(sys.argv[1])
 files = list(products.glob('*.xctestrun'))
@@ -44,9 +44,14 @@ def targets(value):
     elif isinstance(value, list):
         for item in value:
             yield from targets(item)
-found = list(targets(plistlib.loads(files[0].read_bytes())))
+configuration = plistlib.loads(files[0].read_bytes())
+found = list(targets(configuration))
 assert len(found) == 1 and found[0].get('IsUITestBundle') is True
 assert found[0].get('SystemAttachmentLifetime') == 'keepNever', 'capture must be OFF'
+# Only the existing exact-application ScreenCaptureKit recorder can export media.
+# Use this SAME verified configuration, not a regenerated project configuration.
+found[0].setdefault('EnvironmentVariables', {})['HAGIG_PROBE_OUTPUT'] = sys.argv[3]
+files[0].write_bytes(plistlib.dumps(configuration))
 app = products / 'Debug/HagigShellProbe.app/Contents/MacOS/HagigShellProbe'
 # The build phase copies the SwiftPM executable, without source instrumentation.
 # Xcode then signs that copy; do not claim post-signing whole-file byte equality.
@@ -56,19 +61,32 @@ PY
 codesign --verify --deep --strict "$root/derived/Build/Products/Debug/HagigShellProbe.app"
 testing=true
 set +e
-xcodebuild test-without-building -project "$project" -scheme InteractionProbe \
-  -destination 'platform=macOS,arch=arm64' -derivedDataPath "$root/derived" \
+xcodebuild test-without-building -xctestrun "$root"/derived/Build/Products/*.xctestrun \
+  -destination 'platform=macOS,arch=arm64' \
   -resultBundlePath "$root/result.xcresult" -parallel-testing-enabled NO \
-  -test-timeouts-enabled YES -default-test-execution-time-allowance 60 \
-  -maximum-test-execution-time-allowance 60 \
-  "HAGIG_PROBE_SHELL=$shell" > "$root/test.log" 2>&1
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 120 \
+  -maximum-test-execution-time-allowance 120 > "$root/test.log" 2>&1
 status=$?
 set -e
 grep '^HAGIG_PROBE ' "$root/test.log" >> "$root/evidence/status.txt" || true
+python3 - "$root/test.log" >> "$root/evidence/status.txt" <<'PY'
+import pathlib, re, sys
+# Preserve locations, never XCTest assertion values or UI/content diagnostics.
+for line in sorted(set(re.findall(r'InteractionProbe\.swift:(\d+):', pathlib.Path(sys.argv[1]).read_text(errors='replace')))):
+    print('HAGIG_PROBE failure-line=' + line)
+PY
+grep -E '^PASS recorder\.|^cleanup temporary-recording-removed=' "$root/test.log" >> "$root/evidence/status.txt" || true
 printf 'HAGIG_PROBE test-exit=%s\n' "$status" >> "$root/evidence/status.txt"
 cat "$root/evidence/status.txt"
 test "$status" = 0
 grep -Fx 'HAGIG_PROBE canary-positive=true' "$root/evidence/status.txt"
 grep -Fx 'HAGIG_PROBE focus-race-receiver-unchanged=true recording-transition=true' "$root/evidence/status.txt"
+grep -Fx 'HAGIG_PROBE focus-race-key-receiver-unchanged=true' "$root/evidence/status.txt"
 grep -Fx 'HAGIG_PROBE shell-review-reached=true' "$root/evidence/status.txt"
+grep -Fx 'HAGIG_PROBE standard-edit-select-copy-cut-undo-escape-pointer-copy=true' "$root/evidence/status.txt"
+grep -Fx 'HAGIG_PROBE standard-pointer-dismiss-reopen=true' "$root/evidence/status.txt"
+grep -Fx 'HAGIG_PROBE vim-insert-escape-visual-delete-undo-register=true' "$root/evidence/status.txt"
+grep -Fx 'HAGIG_PROBE vim-native-paste-normal-cursor-keyboard-copy-dismiss=true' "$root/evidence/status.txt"
+grep -Fx 'HAGIG_PROBE movie-published=true' "$root/evidence/status.txt"
 grep -Fx 'HAGIG_PROBE cleanup=true' "$root/evidence/status.txt"
+test -s "$root/evidence/interaction.mov"
