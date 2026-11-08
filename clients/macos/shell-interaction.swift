@@ -441,14 +441,12 @@ private final class ShellProof {
               let event = factory.cgEvent else {
             throw ProofFailure.gate
         }
-        if type == .leftMouseDown {
-            let bridged = NSEvent(cgEvent: event)
-            let quartzMatches = abs(event.location.x - point.x) <= 1 && abs(event.location.y - point.y) <= 1
-            let localMatches = bridged.map { abs($0.locationInWindow.x - local.x) <= 1 && abs($0.locationInWindow.y - local.y) <= 1 } ?? false
-            print("mouse.factory own-window=\(factory.window != nil) quartz-target=\(quartzMatches) bridged-window-number=\(bridged?.windowNumber == window.number) bridged-local=\(localMatches)")
-        }
-        // Preserve the factory's window association/base coordinates. Overwriting
-        // its CG location with a global point would undo that coordinate contract.
+        try require(NSEvent(cgEvent: event)?.windowNumber == window.number)
+        // NSEvent's factory takes window-base coordinates; CGEvent requires a
+        // global Quartz point. Foreign-window bridging left that point incorrect.
+        // Keep the window association but supply that global point explicitly.
+        event.location = point
+        try require(event.location == point && NSEvent(cgEvent: event)?.windowNumber == window.number)
         return event
     }
 
