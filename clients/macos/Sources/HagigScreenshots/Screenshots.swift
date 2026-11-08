@@ -17,16 +17,21 @@ struct Screenshots {
         let output = URL(fileURLWithPath: arguments[2], isDirectory: true)
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let names = arguments[1] == "proof" ? ["ready"] :
-            ["ready", "recording", "transcribing", "fallback", "copied", "cancelled", "noSpeech"] + DemoIssue.allCases.map(\.rawValue)
+            ["ready", "awaitingAdmission", "recording", "nearLimit", "transcribing", "fallback", "copied", "cancelled", "noSpeech"] + DemoIssue.allCases.map(\.rawValue)
         for name in names {
-            // Same bounded gallery/count: review exercises Standard and Vim,
+            // Bounded synthetic gallery: review exercises Standard and Vim,
             // multiline Unicode and the current edited buffer through shared UI.
             let presentation = Presentation(editorMode: name == "copied" ? .vim : .standard)
             if let issue = DemoIssue(rawValue: name) {
                 presentation.show(issue: issue)
+            } else if name == "awaitingAdmission" {
+                presentation.reserve()
             } else if name != "ready" {
                 presentation.begin()
-                if name != "recording" { presentation.release() }
+                if name == "nearLimit", let id = presentation.requestID {
+                    presentation.warnNearLimit(requestID: id)
+                }
+                if !["recording", "nearLimit"].contains(name) { presentation.release() }
                 if ["fallback", "copied", "noSpeech"].contains(name), let id = presentation.requestID {
                     presentation.complete(requestID: id, text: name == "noSpeech" ? " \n" : Presentation.fixture)
                 }

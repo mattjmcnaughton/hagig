@@ -2,6 +2,34 @@ import XCTest
 @testable import HagigPresentation
 
 final class PresentationTests: XCTestCase {
+    func testAdmissionCancellationAndSingleStopBoundary() async {
+        await MainActor.run {
+            let model = Presentation()
+            let cancelled = model.reserve()
+            XCTAssertEqual(model.stage, .awaitingAdmission)
+            model.cancel()
+            XCTAssertFalse(model.admit(requestID: cancelled, editorMode: .vim))
+            XCTAssertEqual(model.stage, .cancelled)
+            XCTAssertNil(model.requestID)
+            let live = model.reserve()
+            XCTAssertFalse(model.admit(requestID: cancelled, editorMode: .vim))
+            XCTAssertTrue(model.admit(requestID: live, editorMode: .standard))
+            model.warnNearLimit(requestID: cancelled)
+            XCTAssertFalse(model.nearLimit)
+            model.warnNearLimit(requestID: live)
+            XCTAssertTrue(model.nearLimit)
+            model.release()
+            model.release() // Stop and cap converge, not a second generation.
+            model.complete(requestID: live, text: "Current request only")
+            XCTAssertEqual(model.transcript, "Current request only")
+            model.cancel()
+            model.complete(requestID: live, text: "Late repeated completion")
+            var writes = 0
+            model.copy { _ in writes += 1; return true }
+            XCTAssertEqual(writes, 0)
+        }
+    }
+
     func testSyntheticJourneyAndExplicitCopy() async {
         await MainActor.run {
             let model = Presentation()

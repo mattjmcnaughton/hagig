@@ -41,7 +41,7 @@ jobs:
           case "$SCENARIO" in proof|states) ;; *) exit 2 ;; esac
           swift run --skip-build HagigScreenshots "$SCENARIO" captures
           expected=2
-          if [ "$SCENARIO" = states ]; then expected=26; fi
+          if [ "$SCENARIO" = states ]; then expected=34; fi
           test "$(find captures -name '*.png' | wc -l | tr -d ' ')" = "$expected"
           for image in captures/*.png; do sips -g pixelWidth -g pixelHeight "$image"; done
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
