@@ -137,7 +137,13 @@ final class InteractionProbe: XCTestCase {
         let bridge = URL(fileURLWithPath: path)
         self.bridge = bridge
         captureStarted = true
-        try Data().write(to: bridge.appendingPathComponent("start"), options: .atomic)
+        do {
+            try Data().write(to: bridge.appendingPathComponent("start"), options: .atomic)
+        } catch {
+            let error = error as NSError
+            print("HAGIG_PROBE bridge-write=false cocoa=\(error.domain == NSCocoaErrorDomain) code=\(error.code) exists=\(FileManager.default.fileExists(atPath: bridge.path)) writable=\(FileManager.default.isWritableFile(atPath: bridge.path))")
+            throw error
+        }
         try await awaitRecorder("ready")
         try await driveEditor(shell: shell, board: board,
                               sentinel: sentinel, standard: standard, vim: vim)
