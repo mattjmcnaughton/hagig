@@ -64,6 +64,8 @@ run_test() {
         if [ "$experiment" = dw-newline ]; then
             # This fixed LF fixture puts the assertion message on the next line.
             grep -A 1 'XCTAssertEqual failed:' "$directory/$phase.log" | grep -F "$assertion"
+        elif [ "$experiment" = crlf-register ]; then
+            grep 'XCTAssertTrue failed' "$directory/$phase.log" | grep -F "$assertion"
         else
             grep 'XCTAssertEqual failed' "$directory/$phase.log" | grep -F "$assertion" | grep -F "$detail"
         fi
@@ -73,7 +75,7 @@ run_test() {
     fi
 }
 
-for experiment in editor-copy presentation-copy immediate-discard dd-cursor dw-newline; do
+for experiment in editor-copy presentation-copy immediate-discard dd-cursor dw-newline crlf-register paste-cursor; do
     directory="$output/$experiment"
     mkdir "$directory"
     echo 'UNPROVEN: experiment has not completed candidate/mutant/restoration' > "$directory/verdict.txt"
@@ -107,6 +109,19 @@ for experiment in editor-copy presentation-copy immediate-discard dd-cursor dw-n
             test=testDeletesRegisterPasteAndUndoRedo
             replacement='s/end = min(end, lineEnd(start))/end = min(end, characters.count)/'
             assertion='"one\ntwo": dw'
+            detail='XCTAssertEqual failed'
+            ;;
+        crlf-register)
+            source=$editor
+            test=testDeletesRegisterPasteAndUndoRedo
+            replacement='s/register.last?.isNewline != true/!register.hasSuffix("\\n")/'
+            assertion='linewise register preserves CRLF'
+            ;;
+        paste-cursor)
+            source=$editor
+            test=testNativePastedTextPreservesEditorCursorMode
+            replacement='/^        if accepted { normalCursor() }$/d'
+            assertion='native paste cursor follows editor mode'
             detail='XCTAssertEqual failed'
             ;;
     esac

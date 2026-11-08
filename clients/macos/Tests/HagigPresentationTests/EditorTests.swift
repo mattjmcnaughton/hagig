@@ -143,6 +143,42 @@ final class EditorTests: XCTestCase {
             let retainedRegister = editor("one\ntwo")
             keys("dwjp", in: retainedRegister)
             XCTAssertEqual(retainedRegister.string, "\ntonewo")
+            for (input, command, expected) in [
+                ("one\r\ntwo", "yyp", "one\r\none\r\ntwo"),
+                ("one\r\n", "yyGp", "one\r\none\r\n"),
+                ("one\r\ntwo", "jyyggp", "one\r\ntwo\ntwo")
+            ] {
+                let view = editor(input)
+                keys(command, in: view)
+                XCTAssertTrue(view.string == expected, "linewise register preserves CRLF: \(command)")
+            }
+        }
+    }
+
+    func testNativePastedTextPreservesEditorCursorMode() async {
+        await MainActor.run {
+            let board = NSPasteboard.withUniqueName()
+            defer { board.releaseGlobally() }
+            XCTAssertTrue(board.setString("a😀z", forType: .string))
+            for mode in EditorMode.allCases {
+                let view = editor("old text", mode: mode)
+                view.selectAll(nil)
+                XCTAssertTrue(view.readSelection(from: board, type: .string))
+                XCTAssertEqual(view.string, "a😀z")
+                let expectedOffset = mode == .vim ? 3 : 4
+                XCTAssertEqual(view.selectedRange(), NSRange(location: expectedOffset, length: 0),
+                               "native paste cursor follows editor mode")
+                if mode == .vim {
+                    keys("x", in: view)
+                    XCTAssertEqual(view.string, "a😀")
+                }
+            }
+            let insert = editor("old text")
+            keys("i", in: insert)
+            insert.selectAll(nil)
+            XCTAssertTrue(insert.readSelection(from: board, type: .string))
+            XCTAssertEqual(insert.selectedRange(), NSRange(location: 4, length: 0))
+            XCTAssertEqual(insert.modeLabel, "Vim · Insert")
         }
     }
 
