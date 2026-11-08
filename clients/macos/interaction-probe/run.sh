@@ -35,7 +35,7 @@ swiftc -swift-version 5 -parse-as-library -D HAGIG_CAPTURE_PROBE shell-interacti
 # keepNever is Xcode's automatic-screen-capture OFF scheme option. Never export
 # xcresult/raw XCTest logs, app bundles or desktop screenshots from this probe.
 python3 - "$root/derived/Build/Products" "$shell" "$root/bridge" <<'PY'
-import pathlib, plistlib, sys
+import pathlib, plistlib, subprocess, sys
 products = pathlib.Path(sys.argv[1])
 files = list(products.glob('*.xctestrun'))
 assert len(files) == 1, 'one test configuration required'
@@ -61,6 +61,11 @@ app = products / 'Debug/HagigShellProbe.app/Contents/MacOS/HagigShellProbe'
 # Xcode then signs that copy; do not claim post-signing whole-file byte equality.
 assert app.is_file() and pathlib.Path(sys.argv[2]).is_file()
 print('HAGIG_PROBE generated-capture-policy=keepNever')
+runner, = (products / 'Debug').glob('*-Runner.app')
+metadata = subprocess.run(['codesign', '-d', '--entitlements', ':-', str(runner)],
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True).stdout
+entitlements = plistlib.loads(metadata) if metadata else {}
+print('HAGIG_PROBE runner-app-sandbox=' + str(entitlements.get('com.apple.security.app-sandbox') is True).lower())
 PY
 codesign --verify --deep --strict "$root/derived/Build/Products/Debug/HagigShellProbe.app"
 testing=true
