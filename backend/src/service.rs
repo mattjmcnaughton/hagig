@@ -1,4 +1,4 @@
-//! Controlled lifecycle slice. No inference engine, user audio files or downloads.
+//! Serial service lifecycle, public protocol and controlled fake exerciser.
 
 use crate::launcher::{NetworkIsolation, PlatformLauncher, WorkerExecutable};
 use crate::supervisor::{Supervisor, WorkerPipes};
@@ -8,18 +8,31 @@ use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::process::{Command, Stdio};
-use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
+use std::sync::mpsc::{self, Sender, SyncSender};
 use std::time::{Duration, Instant};
 
+mod client;
+mod fake;
+mod inference;
 mod paths;
-use paths::{connect, runtime, validate};
+pub use client::cli;
+use paths::{runtime, validate};
 
 const CONTROL: usize = 65_536;
 const AUDIO: usize = 262_144;
 const TOTAL_AUDIO: usize = 19_200_000;
 const TICK: Duration = Duration::from_millis(5);
 type SafeResult<T> = Result<T, &'static str>;
+
+/// Real connections must reject fake-only fields even if their value is null.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InferenceControl {
+    version: u32,
+    #[serde(rename = "type")]
+    kind: String,
+    request_id: Option<String>,
+}
 
 /// Control schema rejects unknown fields; request IDs are bounded opaque tokens.
 #[derive(Deserialize)]
@@ -67,192 +80,6 @@ fn packet(value: &serde_json::Value) -> Vec<u8> {
     frame
 }
 
-fn read_before(stream: &mut UnixStream, bytes: &mut [u8], deadline: Instant) -> SafeResult<()> {
-    let mut offset = 0;
-    while offset < bytes.len() {
-        if Instant::now() >= deadline {
-            return Err("connection_timeout");
-        }
-        match stream.read(&mut bytes[offset..]) {
-            Ok(0) => return Err("connection_read_eof"),
-            Ok(n) => offset += n,
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => (),
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(TICK),
-            Err(_) => return Err("connection_read_failed"),
-        }
-    }
-    Ok(())
-}
-
-fn exchange(stream: &mut UnixStream, kind: &str) -> SafeResult<serde_json::Value> {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let value = if matches!(kind, "begin" | "end_audio") {
-        json!({"version":1,"type":kind,"request_id":"cli"})
-    } else {
-        json!({"version":1,"type":kind})
-    };
-    let outgoing = packet(&value);
-    let mut offset = 0;
-    while offset < outgoing.len() {
-        if Instant::now() >= deadline {
-            return Err("connection_timeout");
-        }
-        match stream.write(&outgoing[offset..]) {
-            Ok(0) => return Err("connection_write_zero"),
-            Ok(n) => offset += n,
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => (),
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(TICK),
-            Err(_) => return Err("connection_write_failed"),
-        }
-    }
-    let mut header = [0; 5];
-    read_before(stream, &mut header, deadline)?;
-    let len = u32::from_be_bytes(header[1..].try_into().unwrap()) as usize;
-    if header[0] != 1 || len > CONTROL {
-        return Err("incompatible_protocol");
-    }
-    let mut bytes = vec![0; len];
-    read_before(stream, &mut bytes, deadline)?;
-    let value: serde_json::Value =
-        serde_json::from_slice(&bytes).map_err(|_| "incompatible_protocol")?;
-    if value["version"] != 1 {
-        return Err("incompatible_protocol");
-    }
-    if value["type"] == "error" {
-        return Err(match value["code"].as_str() {
-            Some("busy") => "busy",
-            Some("worker_failed") => "worker_failed",
-            Some("deadline_exceeded") => "deadline_exceeded",
-            _ => "incompatible_protocol",
-        });
-    }
-    let expected = match kind {
-        "hello" => "hello_ok",
-        "begin" => "accepted",
-        "end_audio" => "result",
-        "stop" => "stopped",
-        _ => kind,
-    };
-    if value["type"] != expected {
-        return Err("incompatible_protocol");
-    }
-    Ok(value)
-}
-
-pub fn cli() -> SafeResult<()> {
-    let mut args: Vec<_> = std::env::args().skip(1).collect();
-    // Explicit internal controlled-slice harness, never inferred from environment.
-    let fake_tests = args.first().is_some_and(|c| c == "__serve")
-        && args.last().is_some_and(|c| c == "--fake-test-controls");
-    if fake_tests {
-        args.pop();
-    }
-    let command = args.first().map(String::as_str).ok_or(
-        "usage: hagig status|stop; hagig start|fake-request --fake-worker [--network-isolation required|disabled]",
-    )?;
-    let mode = match args.as_slice() {
-        [c] if c == "status" || c == "stop" => NetworkIsolation::Required,
-        [_, f] if f == "--fake-worker" => NetworkIsolation::Required,
-        [_, f, option, value] if f == "--fake-worker" && option == "--network-isolation" => {
-            match value.as_str() {
-                "required" => NetworkIsolation::Required,
-                "disabled" => NetworkIsolation::Disabled,
-                _ => return Err("invalid_isolation_mode"),
-            }
-        }
-        _ => return Err("invalid_arguments"),
-    };
-    if command == "__serve" {
-        return serve(mode, fake_tests);
-    }
-    if !["start", "fake-request", "status", "stop"].contains(&command) {
-        return Err("invalid_command");
-    }
-    let starts = matches!(command, "start" | "fake-request");
-    let path = runtime(starts)?;
-    let mut stream = connect(&path)?;
-    if stream.is_none() && starts {
-        let mut child = Command::new(std::env::current_exe().map_err(|_| "startup_failed")?)
-            .args([
-                "__serve",
-                "--fake-worker",
-                "--network-isolation",
-                &mode.to_string(),
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|_| "startup_failed")?;
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
-            match connect(&path) {
-                Ok(Some(s)) => {
-                    stream = Some(s);
-                    break;
-                }
-                Ok(None) => (),
-                Err(error) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(error);
-                }
-            }
-            std::thread::sleep(TICK);
-        }
-        // Reap losing/failed startup children. A winner remains the on-demand server.
-        if stream.is_none() {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("startup_failed");
-        }
-        std::thread::spawn(move || {
-            let _ = child.wait();
-        });
-    }
-    let Some(mut stream) = stream else {
-        println!("stopped");
-        return Ok(());
-    };
-    exchange(&mut stream, "hello")?;
-    if command == "fake-request" {
-        exchange(&mut stream, "begin")?;
-        let result = exchange(&mut stream, "end_audio")?;
-        if result["request_id"] != "cli" || result["text"] != "" {
-            return Err("incompatible_protocol");
-        }
-        println!();
-        return Ok(());
-    }
-    let response = exchange(
-        &mut stream,
-        if command == "stop" { "stop" } else { "status" },
-    )?;
-    if command == "stop" {
-        validate(&path.join("server.lock"), 0o600, "file")?;
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path.join("server.lock"))
-            .map_err(|_| "cleanup_failed")?;
-        let deadline = Instant::now() + Duration::from_secs(6);
-        loop {
-            if lock.try_lock().is_ok() {
-                if fs::symlink_metadata(path.join("server.sock")).is_ok() {
-                    return Err("cleanup_failed");
-                }
-                break;
-            }
-            if Instant::now() >= deadline {
-                return Err("cleanup_failed");
-            }
-            std::thread::sleep(TICK);
-        }
-    }
-    println!("{response}");
-    Ok(())
-}
-
 struct Client {
     stream: UnixStream,
     input: Vec<u8>,
@@ -278,6 +105,7 @@ struct Active {
     id: String,
     generation: u64,
     bytes: usize,
+    audio: Vec<u8>,
     deadline: Instant,
     cancel: Option<SyncSender<()>>,
     worker_pid: Option<u32>,
@@ -288,12 +116,48 @@ struct Active {
 enum WorkerEvent {
     Started(u64, u32),
     Progress(u64, usize),
-    Finished(u64, bool, Option<LiveWorker>),
+    Finished(u64, SafeResult<String>, Option<LiveWorker>),
 }
 
 struct LiveWorker {
     supervisor: Supervisor<PlatformLauncher>,
     pipes: WorkerPipes,
+}
+
+#[derive(Clone)]
+struct InferenceSettings {
+    config: crate::config::Config,
+    model: std::path::PathBuf,
+    generation: String,
+}
+impl InferenceSettings {
+    fn load() -> SafeResult<Self> {
+        Ok(Self {
+            config: crate::config::Config::load()?,
+            model: crate::model::installation()?,
+            generation: format!(
+                "server-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| "startup_failed")?
+                    .as_nanos()
+            ),
+        })
+    }
+}
+
+enum Job {
+    Fake(u8),
+    Inference(InferenceSettings, Vec<u8>),
+}
+
+fn start_worker(mode: NetworkIsolation, name: &str) -> SafeResult<LiveWorker> {
+    let exe = std::env::current_exe().map_err(|_| "worker_failed")?;
+    let exe = WorkerExecutable::new(exe.with_file_name(name)).map_err(|_| "worker_failed")?;
+    let mut supervisor = Supervisor::new(PlatformLauncher::new(exe).with_network_isolation(mode));
+    let pipes = supervisor.start().map_err(|_| "worker_failed")?;
+    Ok(LiveWorker { supervisor, pipes })
 }
 // Ownership transfers through completion events, never shared between threads.
 // A failed reap deliberately blocks replacement rather than losing child ownership.
@@ -320,7 +184,7 @@ fn invalidate(active: &mut Option<Active>) {
 
 fn run_worker(
     mode: NetworkIsolation,
-    action: u8,
+    job: Job,
     generation: u64,
     id: String,
     mut warm: Option<LiveWorker>,
@@ -328,109 +192,33 @@ fn run_worker(
 ) -> SyncSender<()> {
     let (cancel, cancelled) = mpsc::sync_channel(1);
     std::thread::spawn(move || {
-        let success = worker(mode, action, cancelled, generation, &id, &mut warm, &done);
-        if !success {
+        let result = match job {
+            Job::Fake(action) => {
+                if fake::run(mode, action, cancelled, generation, &id, &mut warm, &done) {
+                    Ok(String::new())
+                } else {
+                    Err("worker_failed")
+                }
+            }
+            Job::Inference(settings, pcm) => {
+                inference::run(settings, pcm, cancelled, generation, &id, &mut warm, &done)
+            }
+        };
+        if result.is_err() {
             while !retire(&mut warm) {
                 std::thread::sleep(TICK);
             }
         }
-        let _ = done.send(WorkerEvent::Finished(generation, success, warm));
+        let _ = done.send(WorkerEvent::Finished(generation, result, warm));
     });
     cancel
 }
 
-fn worker(
+fn serve(
     mode: NetworkIsolation,
-    action: u8,
-    cancelled: Receiver<()>,
-    generation: u64,
-    id: &str,
-    warm: &mut Option<LiveWorker>,
-    done: &Sender<WorkerEvent>,
-) -> bool {
-    if !matches!(cancelled.try_recv(), Err(mpsc::TryRecvError::Empty)) {
-        return false;
-    }
-    if warm.is_none() {
-        let Ok(exe) = std::env::current_exe() else {
-            return false;
-        };
-        let Ok(exe) = WorkerExecutable::new(exe.with_file_name("hagig-fake-worker")) else {
-            return false;
-        };
-        let mut supervisor =
-            Supervisor::new(PlatformLauncher::new(exe).with_network_isolation(mode));
-        let Ok(pipes) = supervisor.start() else {
-            return false;
-        };
-        *warm = Some(LiveWorker { supervisor, pipes });
-    }
-    let worker = warm.as_mut().unwrap();
-    use rustix::fs::{OFlags, fcntl_setfl};
-    if fcntl_setfl(&worker.pipes.output, OFlags::NONBLOCK).is_err()
-        || fcntl_setfl(&worker.pipes.input, OFlags::NONBLOCK).is_err()
-    {
-        return false;
-    }
-    let expected = private_frame(generation, id, 1);
-    let request = private_frame(generation, id, action);
-    if worker.pipes.input.write_all(&request).is_err() {
-        return false;
-    }
-    let deadline = Instant::now() + Duration::from_secs(120);
-    let _ = done.send(WorkerEvent::Started(
-        generation,
-        worker
-            .supervisor
-            .child_id()
-            .expect("successful start owns child"),
-    ));
-    let mut reply = Vec::with_capacity(expected.len());
-    while Instant::now() < deadline
-        && matches!(cancelled.try_recv(), Err(mpsc::TryRecvError::Empty))
-    {
-        // Read no more than the fixed maximum envelope; never trust a child length.
-        let mut bytes = [0; 140];
-        match worker.pipes.output.read(&mut bytes) {
-            Ok(0) => return false,
-            Ok(n) => {
-                if reply.len() + n > expected.len() {
-                    return false;
-                }
-                reply.extend_from_slice(&bytes[..n]);
-                if !expected.starts_with(&reply) {
-                    return false;
-                }
-                if reply.len() == expected.len() {
-                    return true;
-                }
-                // At most 138 valid short prefixes per bounded envelope.
-                let _ = done.send(WorkerEvent::Progress(generation, reply.len()));
-            }
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
-                ) => {}
-            Err(_) => return false,
-        }
-        std::thread::sleep(TICK);
-    }
-    false
-}
-
-// Private v1 envelope: version:u8, generation:u64 BE, id length:u8, opaque ID,
-// action/result:u8. IDs are 1..128 ASCII token bytes; maximum wire size 139.
-fn private_frame(generation: u64, id: &str, value: u8) -> Vec<u8> {
-    let mut bytes = vec![1];
-    bytes.extend_from_slice(&generation.to_be_bytes());
-    bytes.push(id.len() as u8);
-    bytes.extend_from_slice(id.as_bytes());
-    bytes.push(value);
-    bytes
-}
-
-fn serve(mode: NetworkIsolation, fake_tests: bool) -> SafeResult<()> {
+    fake_tests: bool,
+    settings: Option<InferenceSettings>,
+) -> SafeResult<()> {
     let path = runtime(true)?;
     let lockpath = path.join("server.lock");
     if fs::symlink_metadata(&lockpath).is_ok() {
@@ -467,7 +255,7 @@ fn serve(mode: NetworkIsolation, fake_tests: bool) -> SafeResult<()> {
     let listener = bound.map_err(|_| "bind_failed")?;
     let identity = fs::symlink_metadata(&socket).map_err(|_| "bind_failed")?;
     listener.set_nonblocking(true).map_err(|_| "bind_failed")?;
-    let result = event_loop(&listener, mode, fake_tests);
+    let result = event_loop(&listener, mode, fake_tests, settings);
     // Never unlink a replacement object, even though same-user attacks are out of scope.
     validate(&socket, 0o600, "socket")?;
     let current = fs::symlink_metadata(&socket).map_err(|_| "cleanup_failed")?;
@@ -479,7 +267,12 @@ fn serve(mode: NetworkIsolation, fake_tests: bool) -> SafeResult<()> {
     result
 }
 
-fn event_loop(listener: &UnixListener, mode: NetworkIsolation, fake_tests: bool) -> SafeResult<()> {
+fn event_loop(
+    listener: &UnixListener,
+    mode: NetworkIsolation,
+    fake_tests: bool,
+    settings: Option<InferenceSettings>,
+) -> SafeResult<()> {
     let mut clients = std::collections::BTreeMap::<u64, Client>::new();
     let mut next = 0u64;
     let mut generation = 0u64;
@@ -586,14 +379,36 @@ fn event_loop(listener: &UnixListener, mode: NetworkIsolation, fake_tests: bool)
                                     && a.cancel.is_none()
                                     && len > 0
                                     && len.is_multiple_of(4)
-                                    && a.bytes + len <= TOTAL_AUDIO =>
+                                    && a.bytes + len <= TOTAL_AUDIO
+                                    && (settings.is_none()
+                                        || payload.chunks_exact(4).all(|s| {
+                                            (-1.0..=1.0).contains(&f32::from_le_bytes(
+                                                s.try_into().unwrap(),
+                                            ))
+                                        })) =>
                             {
-                                a.bytes += len
+                                a.bytes += len;
+                                if settings.is_some() {
+                                    a.audio.extend_from_slice(&payload);
+                                }
                             }
                             _ => malformed = true,
                         }
                     } else {
-                        match serde_json::from_slice::<Control>(&payload) {
+                        let control = if settings.is_some() {
+                            serde_json::from_slice::<InferenceControl>(&payload).map(|c| Control {
+                                version: c.version,
+                                kind: c.kind,
+                                request_id: c.request_id,
+                                fake_action: None,
+                                fake_pause_delivery: None,
+                                fake_pause_completion: None,
+                                fake_advance_seconds: None,
+                            })
+                        } else {
+                            serde_json::from_slice::<Control>(&payload)
+                        };
+                        match control {
                             Ok(control) => {
                                 malformed = !handle(
                                     control,
@@ -606,6 +421,7 @@ fn event_loop(listener: &UnixListener, mode: NetworkIsolation, fake_tests: bool)
                                     &mut warm,
                                     &mut stopping,
                                     &mut tests,
+                                    settings.as_ref(),
                                 )
                             }
                             Err(_) => malformed = true,
@@ -653,30 +469,38 @@ fn event_loop(listener: &UnixListener, mode: NetworkIsolation, fake_tests: bool)
                             a.worker_reply_bytes = bytes;
                         }
                     }
-                    WorkerEvent::Finished(g, success, mut returned)
+                    WorkerEvent::Finished(g, result, mut returned)
                         if active.as_ref().is_some_and(|a| a.generation == g) =>
                     {
                         if !active.as_ref().unwrap().valid && !retire(&mut returned) {
                             // Preserve ownership/admission while retrying cleanup next
                             // tick; a failed stop must not spin on the service loop.
-                            pending_completion = Some(WorkerEvent::Finished(g, success, returned));
+                            pending_completion = Some(WorkerEvent::Finished(g, result, returned));
                         } else {
                             warm = returned;
                             let a = active.take().unwrap();
                             if a.valid
                                 && let Some(c) = clients.get_mut(&a.owner)
                             {
-                                if success {
+                                if let Ok(text) = result {
                                     // Do not place content behind unconsumed earlier replies.
                                     // A slow owner fails safely rather than retaining a result.
                                     if c.output.is_empty() {
-                                        c.output.extend(packet(&json!({"version":1,"type":"result","request_id":a.id,"text":""})));
-                                        c.unsent_result = Some(a.id);
+                                        let text = if text.trim().is_empty() { "" } else { &text };
+                                        let frame = packet(
+                                            &json!({"version":1,"type":"result","request_id":a.id,"text":text}),
+                                        );
+                                        if frame.len() > CONTROL + 5 {
+                                            c.reply("error", Some(&a.id), Some("result_too_large"));
+                                        } else {
+                                            c.output.extend(frame);
+                                            c.unsent_result = Some(a.id);
+                                        }
                                     } else {
                                         c.closing = true;
                                     }
                                 } else {
-                                    c.reply("error", Some(&a.id), Some("worker_failed"));
+                                    c.reply("error", Some(&a.id), Some(result.unwrap_err()));
                                 }
                             }
                         }
@@ -740,6 +564,7 @@ fn handle(
     warm: &mut Option<LiveWorker>,
     stopping: &mut bool,
     tests: &mut FakeTests,
+    settings: Option<&InferenceSettings>,
 ) -> bool {
     let id = control.request_id.as_deref();
     if control.version != 1 {
@@ -762,6 +587,9 @@ fn handle(
     let test_fields = control.fake_pause_delivery.is_some()
         || control.fake_pause_completion.is_some()
         || control.fake_advance_seconds.is_some();
+    if settings.is_some() && (test_fields || control.fake_action.is_some()) {
+        return false;
+    }
     if test_fields && control.kind != "fake_test" {
         return false;
     }
@@ -770,7 +598,15 @@ fn handle(
             return false;
         }
         c.hello = true;
-        c.output.extend(packet(&json!({"version":1,"type":"hello_ok","worker":"controlled_fake","network_isolation":mode.to_string(),"control_limit":CONTROL,"audio_limit":AUDIO})));
+        if let Some(s) = settings {
+            c.output.extend(packet(&json!({"version":1,"type":"hello_ok","worker":"inference","network_isolation":mode.to_string(),"config_generation":s.generation,
+                "settings":{"editor_mode":s.config.editor_mode(),"model_id":s.config.model_id(),"model_revision":crate::model::manifest().revision,"language":"en"},
+                "audio":{"encoding":"f32le","sample_rate_hz":16000,"channels":1},
+                "limits":{"control_bytes":CONTROL,"audio_chunk_bytes":AUDIO,"audio_total_bytes":TOTAL_AUDIO,"recording_seconds":300,"warning_seconds":285,"request_id_bytes":128},
+                "deadlines":{"control_seconds":5,"reservation_seconds":330,"computation_seconds":120}})));
+        } else {
+            c.output.extend(packet(&json!({"version":1,"type":"hello_ok","worker":"controlled_fake","network_isolation":mode.to_string(),"control_limit":CONTROL,"audio_limit":AUDIO})));
+        }
         return true;
     }
     if control.fake_action.is_some() && control.kind != "end_audio" {
@@ -800,6 +636,11 @@ fn handle(
                 .and_then(|w| w.supervisor.child_id())
                 .or_else(|| active.as_ref().and_then(|a| a.worker_pid));
             let mut response = json!({"version":1,"type":"status","state":if active.is_some() {"busy"} else {"idle"},"worker":"controlled_fake","network_isolation":mode.to_string(),"server_pid":std::process::id(),"worker_pid":pid});
+            if let Some(s) = settings {
+                response["worker"] = json!("inference");
+                response["model_id"] = json!(s.config.model_id());
+                response["config_generation"] = json!(s.generation);
+            }
             if tests.clock.is_some() {
                 response["pending_results"] = json!(tests.pending_results);
                 response["pending_completions"] = json!(tests.pending_completions);
@@ -823,13 +664,18 @@ fn handle(
                     id: id.unwrap().to_owned(),
                     generation: *generation,
                     bytes: 0,
+                    audio: Vec::new(),
                     deadline: tests.now() + Duration::from_secs(330),
                     cancel: None,
                     worker_pid: None,
                     worker_reply_bytes: 0,
                     valid: true,
                 });
-                c.reply("accepted", id, None);
+                if let Some(s) = settings {
+                    c.output.extend(packet(&json!({"version":1,"type":"accepted","request_id":id,"config_generation":s.generation,"model_id":s.config.model_id()})));
+                } else {
+                    c.reply("accepted", id, None);
+                }
             }
         }
         "cancel" if id.is_some() && control.fake_action.is_none() => {
@@ -851,23 +697,22 @@ fn handle(
             }) else {
                 return false;
             };
-            let action = match control.fake_action.as_deref() {
-                None | Some("complete") => 0,
-                Some("crash") => 1,
-                Some("stall") => 2,
-                Some("stale") => 3,
-                Some("wrong_id") => 4,
-                Some("oversized") => 5,
-                Some("partial") => 6,
-                Some("wrong_version") => 7,
-                Some("diagnostic") => 8,
-                Some("fragmented") => 9,
-                Some("excess_bytes") => 10,
-                _ => return false,
+            if settings.is_some() && a.audio.is_empty() {
+                c.reply("error", id, Some("invalid_audio"));
+                *active = None;
+                return true;
+            }
+            let job = if let Some(s) = settings {
+                Job::Inference(s.clone(), std::mem::take(&mut a.audio))
+            } else {
+                let Some(action) = fake::action(control.fake_action.as_deref()) else {
+                    return false;
+                };
+                Job::Fake(action)
             };
             a.cancel = Some(run_worker(
                 mode,
-                action,
+                job,
                 a.generation,
                 a.id.clone(),
                 warm.take(),

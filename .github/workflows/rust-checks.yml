@@ -55,7 +55,7 @@ jobs:
       - name: Format
         run: |
           cargo fmt --all -- --check
-          rustfmt --edition 2024 --check tests/fixtures/linux_worker.rs
+          rustfmt --edition 2024 --check tests/fixtures/linux_worker.rs tests/fixtures/inference_peer.rs
       - name: Clippy
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Tests
@@ -66,6 +66,10 @@ jobs:
             # These are explicit product-mode checks, NOT enforcement proof.
             cargo test --locked --test worker_boundary
             cargo test --locked --test server_admission -- --nocapture
+            cargo test --locked --test configuration
+            cargo test --locked --test model_install
+            cargo test --locked --test wav_input
+            cargo test --locked --test real_service
             cargo test --locked --test linux_isolation disabled_worker_hygiene_and_failure_contract -- --exact --nocapture
             cargo test --locked --test linux_isolation required_mode_reports_enforcement_or_refusal -- --exact --nocapture
             cargo test --locked --test linux_isolation unmapped_user_namespace_fails_closed -- --exact --nocapture

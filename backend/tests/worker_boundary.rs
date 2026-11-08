@@ -189,7 +189,7 @@ fn production_launch_and_executable_fail_closed() {
         .env("HAGIG_DISABLE_SANDBOX", "1")
         .output()
         .unwrap();
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
     // The lifecycle CLI now rejects the legacy bypass as an unknown argument;
     // it still must not silently launch an unrestricted worker.

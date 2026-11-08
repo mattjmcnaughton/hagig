@@ -6,11 +6,11 @@ build:
 
 fmt:
     cargo fmt --all
-    rustfmt --edition 2024 tests/fixtures/linux_worker.rs
+    rustfmt --edition 2024 tests/fixtures/linux_worker.rs tests/fixtures/inference_peer.rs
 
 fmt-check:
     cargo fmt --all -- --check
-    rustfmt --edition 2024 --check tests/fixtures/linux_worker.rs
+    rustfmt --edition 2024 --check tests/fixtures/linux_worker.rs tests/fixtures/inference_peer.rs
 
 lint:
     cargo clippy --locked --all-targets -- -D warnings

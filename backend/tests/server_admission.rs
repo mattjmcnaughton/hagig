@@ -438,7 +438,7 @@ fn fake_test_controls_require_explicit_foreground_opt_in() {
         );
     }
     let rejected = service.cli(&["start", "--fake-worker", "--fake-test-controls"]);
-    assert_eq!(rejected.status.code(), Some(1));
+    assert_eq!(rejected.status.code(), Some(2));
     assert_eq!(rejected.stderr, b"invalid_arguments\n");
     assert!(
         service

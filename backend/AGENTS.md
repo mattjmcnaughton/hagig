@@ -1,8 +1,9 @@
 # Rust backend guidance
 
 Read the root guidance, [constitution](../docs/CONSTITUTION.md) and
-[technical design](../docs/technical/tdds/01-mvp.md) first. This contains the launch
-foundation and a controlled fake-worker lifecycle service, not real transcription.
+[technical design](../docs/technical/tdds/01-mvp.md) first. The controlled launch
+foundation remains available explicitly. The #9 real path below is experimental;
+implementation and default-feature tests are not native inference adoption.
 
 ## Boundaries and scope
 
@@ -24,9 +25,10 @@ foundation and a controlled fake-worker lifecycle service, not real transcriptio
   `.with_network_isolation(NetworkIsolation::Disabled)` before startup to opt out.
   `.network_isolation()` plus Display reports only the content-free selection,
   not enforcement evidence. Only the trusted target and typed mode are configurable,
-  not arguments, shell commands, environment or arbitrary policy. TOML configuration
-  remains future work. `unconfigured()` and platforms without
-  an integrated adapter fail closed. The CLI requires explicit controlled-worker selection.
+  not arguments, shell commands, environment or arbitrary policy. The real service
+  freezes validated TOML configuration at startup. `unconfigured()` and platforms
+  without an integrated adapter fail closed. Fake CLI commands require explicit
+  controlled-worker selection; normal transcription never selects it.
   Test-only unrestricted launchers live in `tests/`, never production options.
 - The target must be a trusted small Rust bootstrap, not linked inference code.
   It flushes `HAGIG-WORKER-READY-v1\n` within five seconds, then begins the future
@@ -91,8 +93,8 @@ is ignored by this directory's `.gitignore`.
 | Recipe | Equivalent standard Rust commands |
 | --- | --- |
 | `just build` | `cargo build --locked --all-targets` |
-| `just fmt` | `cargo fmt --all` then `rustfmt --edition 2024 tests/fixtures/linux_worker.rs` |
-| `just fmt-check` | `cargo fmt --all -- --check` then `rustfmt --edition 2024 --check tests/fixtures/linux_worker.rs` |
+| `just fmt` | `cargo fmt --all` then `rustfmt --edition 2024 tests/fixtures/linux_worker.rs tests/fixtures/inference_peer.rs` |
+| `just fmt-check` | `cargo fmt --all -- --check` then `rustfmt --edition 2024 --check tests/fixtures/linux_worker.rs tests/fixtures/inference_peer.rs` |
 | `just lint` | `cargo clippy --locked --all-targets -- -D warnings` |
 | `just test` | `cargo test --locked --all-targets` then `cargo test --locked --doc` |
 | `just ci` | fmt-check, lint, test in that order |
@@ -105,7 +107,73 @@ failure, refusal without isolation, and child termination/reaping. No model asse
 are required. Future cancellation tests must reject late/stale results, not merely
 assert mock call order.
 
-## Controlled lifecycle service (#7)
+## Experimental real service (#9)
+
+The authoritative client contract is [PROTOCOL.md](PROTOCOL.md). Normal `start`,
+`__serve` and `transcribe <wav>` select inference; a live fake service is rejected,
+never replaced or silently accepted. `status`/`stop` do not start a server.
+The server freezes configuration and paths until explicit stop/relaunch.
+`service/client.rs` owns CLI/startup/response I/O and stdout cancellation;
+`service.rs` owns admission, generations, child ownership and delivery;
+`service/inference.rs` owns the bounded private real exchange; `service/fake.rs`
+owns the controlled worker exchange. No generic engine/plugin boundary exists.
+
+Configuration: `$XDG_CONFIG_HOME/hagig/config.toml`, otherwise
+`$HOME/.config/hagig/config.toml`. Optional tables: `[editor] mode="standard"|"vim"`,
+`[model] id="parakeet-tdt-0.6b-v2-int8-v1"` (the documented base alias also works),
+`[inference] network_isolation="required"|"disabled"`, and `[vocabulary] terms=[...]`.
+Defaults are Required, Standard and no boosting. Unknown/invalid fields fail with
+fixed errors, never raw TOML/vocabulary. Terms have syntax/count/UTF8-byte limits;
+native tokenizer representability is a separate worker check, not approximate
+normalization. Never use configuration errors as a content-bearing diagnostic.
+
+`hagig model install parakeet-tdt-0.6b-v2-int8-v1` explicitly acquires only the
+tracked manifest's pinned assets. `--from <directory>` copies/hash-verifies the
+same five already-acquired assets without network acquisition. Installation is
+under `$XDG_DATA_HOME/hagig/models/<id>` or `$HOME/.local/share/hagig/models/<id>`.
+The installer validates private directories, stages and syncs verified assets,
+then renames without replacing existing installations. The empty 0600 advisory
+`.install-lock` file persists: never unlink it, which would split lock ownership.
+Process exit releases its OS lock. Abrupt termination can leave a `.stage-<pid>`
+directory; after confirming no installer is running, inspect/remove only owned
+abandoned model staging, never the final model or caller source files. Runtime
+never downloads, repairs or falls back when assets are missing/corrupt.
+
+Safe Rust WAV decoding accepts PCM16/normalized finite float32, mono/stereo,
+16/44.1/48kHz up to300s. Stereo averages then deterministic rational linear
+resampling is used; this is not an anti-aliasing filter. The native WAV reader is
+not used. The input file remains caller-owned. Nonempty success writes exact
+text plus one newline, whitespace-only success writes nothing; busy exits3,
+invalid input/usage/config exits2, SIGINT before delivery exits130 with no result,
+and other failures exit1. Stderr contains fixed codes/field names, not content.
+
+Ordinary builds/CI exclude `inference-candidate`. That optional binary is pinned
+to the reviewed source revision but NOT adopted: upstream sys build can download
+unchecked native binaries even with Cargo offline. Experimental builds must use
+independently verified local native libraries via absolute `SHERPA_ONNX_LIB_DIR`
+and a blocked-network build environment; do not use its downloader. The normal
+`hagig` and trusted `hagig-worker` bootstrap must not link native inference.
+The bootstrap ACKs only after platform isolation and then exec-replaces itself
+with sibling `hagig-inference-worker`, preserving the supervised PID. Native
+loading must work with the launcher's empty environment, not LD_LIBRARY_PATH or
+ambient PATH. A tested macOS helper/dylib layout and native adoption remain gates;
+do not infer them from the Linux build or optional feature. Candidate macOS zip
+transitively introduces nix alongside rustix; reconcile policy before adoption.
+
+The owner approved exact installer crates ureq2.12.1(tls only), sha2 0.11.1,
+tar0.4.46(no defaults), flate2 1.1.10(Rust backend) on2026-11-08. Minimal starting-set
+TOML(parse/serde/std) and Tokio(rt/signal) handle config and process-lifetime SIGINT.
+Ring's normal TLS closure compiles bundled C/assembly. This source/build inventory
+does not establish runtime privacy, native provenance/licenses or adoption.
+
+`real_service` tests include a disposable std-only private peer behind the actual
+trusted bootstrap. It exercises real exchange framing, bounded results, errors,
+cancellation/reap and warm recovery; it does NOT load a native model. Tests use
+explicit Disabled for this portable controlled peer, not Required enforcement.
+Actual model success, separate runtime networking/write observation and blocked-
+network operation must be reported independently, preserving silence failures.
+
+## Controlled lifecycle service (#7 baseline; explicit exerciser retained)
 
 Build both binaries with `cargo build --locked --bins`. Public commands:
 
@@ -119,9 +187,9 @@ hagig stop
 `fake-request` reserves the shared slot and runs the separate sibling
 `hagig-fake-worker`; success writes only a newline (explicit empty result), busy
 writes `busy` to stderr and exits 3. This is a controlled lifecycle exerciser,
-never an inference fallback. There is no WAV transcription or model installation.
-`start`/`fake-request` start/connect on demand; status/stop never start an absent
-server. `__serve --fake-worker` is the internal foreground server entry point.
+never an inference fallback. Its fake requests do not transcribe WAVs or install models.
+`start --fake-worker`/`fake-request` start/connect on demand; status/stop never start
+an absent server. `__serve --fake-worker` is the internal foreground server entry point.
 Selected mode is frozen by the winning server and reported on hello/status;
 connecting clients cannot change it. Required is default, not evidence that
 enforcement succeeded; worker launch may refuse on a restricted host.
@@ -151,9 +219,9 @@ The server accepts only the exact expected version/generation/ID/success envelop
 malformed, oversized, stale and mismatched replies fail the request, never echo
 child bytes, and retire the worker. Pipe reads/writes are nonblocking; partial
 replies cannot bypass cancellation or the absolute computation safety budget.
-This controlled protocol is not audio/model inference; #9 must introduce bounded
-PCM/result framing when integrating real inference rather than reusing a one-byte
-result as transcript data. Status identity comes from the Supervisor-owned Child,
+This controlled protocol is not audio/model inference; the separate #9 private
+exchange uses bounded PCM/result framing rather than interpreting controlled
+success as transcript data. Status identity comes from the Supervisor-owned Child,
 not self-reported worker bytes. Empty controlled results are explicit.
 The private envelope is incompatible with #7's one-byte controlled helper. Stop
 the running service before replacing helpers, build/ship server and fake-worker
@@ -181,7 +249,7 @@ Invalidation precedes worker cancellation; no successor is admitted before reap.
 Stop waits for the lifetime lock/socket cleanup before reporting CLI success.
 The existing supervisor uses immediate kill/reap, not graceful escalation or a
 bounded kernel wait; cleanup failure retains ownership and blocks successors.
-Real inference integration belongs to #9. Cancellation cannot undo result
+The real inference path retains these shared ownership rules. Cancellation cannot undo result
 bytes whose delivery has already begun; clients must also invalidate locally.
 
 `cargo test --locked --test server_admission -- --nocapture` exercises actual CLI,
