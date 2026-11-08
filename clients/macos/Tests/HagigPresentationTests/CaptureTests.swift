@@ -22,6 +22,23 @@ final class CaptureTests: XCTestCase {
         XCTAssertEqual(Float(bitPattern: bits), 0.25, accuracy: 0.001)
         XCTAssertThrowsError(try recording.append(input))
 
+        let changedFormat = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
+        let changed = AVAudioPCMBuffer(pcmFormat: changedFormat, frameCapacity: 4_800)!
+        changed.frameLength = 4_800
+        let empty = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1)!
+        let oversized = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_385)!
+        oversized.frameLength = 16_385
+        for rejected in [changed, empty, oversized] {
+            let interrupted = try PCMRecording(format: format)
+            try interrupted.append(input)
+            XCTAssertThrowsError(try interrupted.append(rejected))
+            // Stop can win against the queued main-actor failure event. The
+            // recording itself must already have discarded the valid prefix.
+            XCTAssertTrue(interrupted.finish().isEmpty, "failed capture discards prior PCM before Stop")
+            XCTAssertThrowsError(try interrupted.append(input))
+            XCTAssertTrue(interrupted.finish().isEmpty)
+        }
+
         let invalid = try PCMRecording(format: format)
         input.floatChannelData![0][100] = .nan
         XCTAssertThrowsError(try invalid.append(input))

@@ -37,7 +37,7 @@ find Sources Tests -name '*.swift' -type f | LC_ALL=C sort | while read -r path;
     shasum -a 256 "$path"
 done > "$output/frozen.sha256"
 
-for experiment in admission late-result auto-stop cap warning capability frame-deadline result-wait; do
+for experiment in admission late-result auto-stop cap warning capability frame-deadline result-wait capture-failure; do
     directory="$output/$experiment"
     mkdir "$directory"
     echo UNPROVEN > "$directory/verdict.txt"
@@ -48,6 +48,7 @@ for experiment in admission late-result auto-stop cap warning capability frame-d
         capability) test=SocketTests.testFakeMalformedCapabilitiesAndDuplicateKeysAreRejected ;;
         frame-deadline) test=SocketTests.testBlockedUploadUsesFiveSecondFrameDeadline ;;
         result-wait) test=SocketTests.testFragmentedHandshakeAndDelayedUnicodeResult ;;
+        capture-failure) test=CaptureTests.testCanonicalConversionAndFiniteValidation ;;
     esac
     for phase in candidate mutant restored; do
         if [ "$phase" = mutant ]; then
@@ -83,6 +84,9 @@ elif case == 'frame-deadline':
 elif case == 'result-wait':
     replace('SocketRequest.swift', 'deadline: .now.advanced(by: .seconds(125)))',
             'deadline: .now.advanced(by: .seconds(5)))')
+elif case == 'capture-failure':
+    replace('MicrophoneCapture.swift', 'if !accepted { bytes.removeAll(); closed = true }',
+            'if false { bytes.removeAll(); closed = true }')
 else:
     raise AssertionError(case)
 PY
@@ -110,6 +114,7 @@ PY
                 warning) grep -F 'XCTAssertTrue failed' "$directory/$phase.log" ;;
                 capability) grep -F 'Incompatible peer accepted' "$directory/$phase.log" ;;
                 result-wait) grep -F 'failed: caught error: "BackendFailure(issue: HagigPresentation.DemoIssue.deadlineExceeded)"' "$directory/$phase.log" ;;
+                capture-failure) grep 'XCTAssertTrue failed' "$directory/$phase.log" | grep -F 'failed capture discards prior PCM before Stop' ;;
             esac
         else
             [ "$result" -eq 0 ]
