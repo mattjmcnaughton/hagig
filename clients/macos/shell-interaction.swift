@@ -646,6 +646,7 @@ private final class ShellProof {
         for event in positiveMouse { event.postToPid(getpid()) }
         let clickEnd = Date().addingTimeInterval(2)
         while canary.counts[0] == 0 && Date() < clickEnd { try await pause(0.05) }
+        print("input-canary.positive clicks=\(canary.counts[0]) first-responder=\(window.firstResponder === canary) focused=\(receiverIsFocused(window))")
         try require(canary.counts[0] == 1 && window.firstResponder === canary)
         let positiveKey = try keyPair(0, text: "q")
         try check()
