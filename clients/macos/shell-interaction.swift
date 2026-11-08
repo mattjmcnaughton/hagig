@@ -615,6 +615,53 @@ private final class ShellProof {
         _ = try focused()
     }
 
+    func diagnoseMouseRouting(window: NSWindow, canary: InputCanary, point: CGPoint, cocoa: CGPoint) async throws {
+        let local = window.convertPoint(fromScreen: cocoa)
+        try require(window.windowNumber > 0 && canary.bounds.contains(canary.convert(local, from: nil)))
+        var observed = 0
+        guard let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp], handler: { event in
+            observed += 1
+            print("input-canary.observed type=\(event.type.rawValue) retained-window=\(event.window === window) inside=\(canary.bounds.contains(canary.convert(event.locationInWindow, from: nil)))")
+            return event
+        }) else { throw ProofFailure.gate }
+        defer { NSEvent.removeMonitor(monitor) }
+        for label in ["raw", "public-fields", "window-factory"] {
+            stage = "driver.input-window-diagnostic." + label
+            try require(receiverIsFocused(window))
+            try warpCursor(to: point)
+            let events: [CGEvent]
+            if label == "window-factory" {
+                events = try [NSEvent.EventType.leftMouseDown, .leftMouseUp].map { type in
+                    guard let event = NSEvent.mouseEvent(with: type, location: local, modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                        context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)?.cgEvent else {
+                        throw ProofFailure.gate
+                    }
+                    return event
+                }
+            } else {
+                events = try mousePair(at: point)
+                if label == "public-fields" {
+                    for event in events {
+                        event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowNumber))
+                        event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window.windowNumber))
+                    }
+                }
+            }
+            let before = canary.counts[0], beforeObserved = observed
+            try check()
+            try require(receiverIsFocused(window))
+            for event in events { event.postToPid(getpid()) }
+            // Always observe the complete interval, including a delayed up event.
+            let end = Date().addingTimeInterval(2)
+            while Date() < end { try await pause(0.05) }
+            print("input-canary.case=\(label) clicks=\(canary.counts[0] - before) observed=\(observed - beforeObserved) first-responder=\(window.firstResponder === canary) focused=\(receiverIsFocused(window))")
+        }
+        // This is a diagnostic comparison, not an alternate accepted input path.
+        // Never let any outcome publish a movie or skip the original controls.
+        throw ProofFailure.gate
+    }
+
     func proveInputIsolation() async throws {
         stage = "driver.input-canary-positive"
         let control = try await awaitName("Show menu-bar surface")
@@ -637,6 +684,7 @@ private final class ShellProof {
         inputCanary = canary
         try require(screen.visibleFrame.contains(window.frame))
         try await showReceiver(window)
+        try await diagnoseMouseRouting(window: window, canary: canary, point: point, cocoa: cocoa)
         try warpCursor(to: point)
         let positiveMouse = try mousePair(at: point)
         try check()
