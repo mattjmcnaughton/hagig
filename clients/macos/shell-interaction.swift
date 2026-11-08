@@ -10,7 +10,7 @@ private enum ProofFailure: Error { case gate, foreignTarget }
 
 @available(macOS 15.0, *)
 @MainActor
-final class RecordingSession: NSObject, SCRecordingOutputDelegate, SCStreamDelegate {
+private final class RecordingSession: NSObject, SCRecordingOutputDelegate, SCStreamDelegate {
     let pid: pid_t
     let deadline: Date
     private(set) var bounds: CGRect?
@@ -207,7 +207,90 @@ final class RecordingSession: NSObject, SCRecordingOutputDelegate, SCStreamDeleg
     }
 }
 
-#if !HAGIG_XCUI
+#if HAGIG_CAPTURE_PROBE
+// Reuse the already-capable CLI recorder identity, never grant the UI runner
+// access or record a display. The XCTest process owns and terminates the shell.
+@main
+private struct CaptureProbe {
+    @MainActor static func main() {
+        guard #available(macOS 15.0, *), CommandLine.arguments.count == 3,
+              ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true",
+              let temporary = ProcessInfo.processInfo.environment["RUNNER_TEMP"] else { exit(2) }
+        let root = URL(fileURLWithPath: temporary).appendingPathComponent("hagig-xcui-probe")
+        let bridge = URL(fileURLWithPath: CommandLine.arguments[2]).standardizedFileURL
+        let bundle = URL(fileURLWithPath: CommandLine.arguments[1]).standardizedFileURL
+        guard bridge == root.appendingPathComponent("bridge").standardizedFileURL,
+              bundle == root.appendingPathComponent("derived/Build/Products/Debug/HagigShellProbe.app").standardizedFileURL,
+              CGPreflightScreenCaptureAccess() else {
+            print("HAGIG_PROBE recorder-preflight=false"); exit(2)
+        }
+        print("HAGIG_PROBE recorder-preflight=true")
+        signal(SIGINT) { _ in proofInterrupted = 1 }
+        signal(SIGTERM) { _ in proofInterrupted = 1 }
+        let application = NSApplication.shared
+        application.setActivationPolicy(.accessory)
+        Task { @MainActor in
+            var session: RecordingSession?
+            var background: NSWindow?
+            var passed = false
+            do {
+                let deadline = Date().addingTimeInterval(150)
+                func exists(_ name: String) -> Bool {
+                    FileManager.default.fileExists(atPath: bridge.appendingPathComponent(name).path)
+                }
+                while !exists("start") {
+                    guard !exists("stop"), proofInterrupted == 0, Date() < deadline else { throw ProofFailure.gate }
+                    try await Task.sleep(nanoseconds: 50_000_000)
+                }
+                let matches = NSRunningApplication.runningApplications(withBundleIdentifier: "com.mattjmcnaughton.hagig.synthetic-probe")
+                guard matches.count == 1, let process = matches.first, !process.isTerminated,
+                      process.bundleURL?.standardizedFileURL == bundle,
+                      process.executableURL?.standardizedFileURL == bundle.appendingPathComponent("Contents/MacOS/HagigShellProbe"),
+                      let screen = NSScreen.main else { throw ProofFailure.gate }
+                let window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.ignoresMouseEvents = true
+                window.backgroundColor = .magenta
+                window.orderBack(nil)
+                background = window
+                let recorder = RecordingSession(pid: process.processIdentifier, deadline: deadline)
+                session = recorder
+                try await recorder.start(displayID: CGMainDisplayID(), backdropID: CGWindowID(window.windowNumber))
+                guard !process.isTerminated else { throw ProofFailure.gate }
+                try await Task.sleep(nanoseconds: 500_000_000)
+                window.backgroundColor = .cyan
+                try await Task.sleep(nanoseconds: 500_000_000)
+                try Data().write(to: bridge.appendingPathComponent("ready"), options: .atomic)
+                print("HAGIG_PROBE exclusion-control=magenta-cyan-must-not-appear")
+                while !exists("stop") {
+                    try recorder.check()
+                    guard !process.isTerminated else { throw ProofFailure.gate }
+                    try await Task.sleep(nanoseconds: 50_000_000)
+                }
+                window.backgroundColor = .magenta
+                try await Task.sleep(nanoseconds: 500_000_000)
+                try await recorder.finish()
+                passed = true
+            } catch { print("HAGIG_PROBE recorder-attempt=false") }
+            let stopped = await session?.shutdown(until: Date().addingTimeInterval(5)) ?? true
+            background?.close()
+            if passed && stopped, let session {
+                do {
+                    // Private staging only. The coordinator exports only after
+                    // successful XCTest AND confirmed app/clipboard cleanup.
+                    try session.publish(to: bridge.appendingPathComponent("candidate.mov"))
+                } catch { passed = false }
+            }
+            let discarded = session?.discard() ?? true
+            print("HAGIG_PROBE recorder-cleanup=\(stopped && discarded)")
+            let success = passed && stopped && discarded
+            try? Data().write(to: bridge.appendingPathComponent(success ? "complete" : "failed"), options: .atomic)
+            exit(success ? 0 : 1)
+        }
+        application.run()
+    }
+}
+#else
 // Separate-PID receiving control, never part of Hagig or an accepted recording.
 @MainActor
 private final class InputCanary: NSTextView {
