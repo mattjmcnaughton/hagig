@@ -187,12 +187,11 @@ final class InteractionProbe: XCTestCase {
         }
     }
 
-    // A nonisolated async function runs on the generic executor in Swift 5 / the
-    // selected Xcode 16.4. Keep the test main actor runnable for teardown while
-    // synchronous XCTest RPCs execute. Capture has its own independent process.
-    nonisolated private func driveEditor(shell: XCUIApplication, board: NSPasteboard,
-                                        sentinel: String, standard: String, vim: String) async throws {
-        XCTAssertFalse(Thread.isMainThread, "recorder actor must remain runnable")
+    // Native UI and pasteboard calls stay on the main actor. The recorder's
+    // independent process keeps its watchdog runnable during XCTest RPCs.
+    private func driveEditor(shell: XCUIApplication, board: NSPasteboard,
+                             sentinel: String, standard: String, vim: String) async throws {
+        XCTAssertTrue(Thread.isMainThread)
         func seed(_ text: String) {
             board.prepareForNewContents(with: .currentHostOnly)
             XCTAssertTrue(board.setString(text, forType: .string))
