@@ -109,7 +109,7 @@ PY
                 auto-stop) grep -F 'Timed out waiting for controlled boundary' "$directory/$phase.log" ;;
                 warning) grep -F 'XCTAssertTrue failed' "$directory/$phase.log" ;;
                 capability) grep -F 'Incompatible peer accepted' "$directory/$phase.log" ;;
-                result-wait) grep -F 'threw error' "$directory/$phase.log" | grep -F deadlineExceeded ;;
+                result-wait) grep -F 'failed: caught error: "BackendFailure(issue: HagigPresentation.DemoIssue.deadlineExceeded)"' "$directory/$phase.log" ;;
             esac
         else
             [ "$result" -eq 0 ]
