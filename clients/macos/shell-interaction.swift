@@ -213,14 +213,17 @@ private final class RecordingSession: NSObject, SCRecordingOutputDelegate, SCStr
 @main
 private struct CaptureProbe {
     @MainActor static func main() {
-        guard #available(macOS 15.0, *), CommandLine.arguments.count == 3,
+        guard #available(macOS 15.0, *), CommandLine.arguments.count == 4,
               ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true",
               let temporary = ProcessInfo.processInfo.environment["RUNNER_TEMP"] else { exit(2) }
         let root = URL(fileURLWithPath: temporary).appendingPathComponent("hagig-xcui-probe")
         let bridge = URL(fileURLWithPath: CommandLine.arguments[2]).standardizedFileURL
         let bundle = URL(fileURLWithPath: CommandLine.arguments[1]).standardizedFileURL
+        let name = CommandLine.arguments[3]
+        let prefix = "com.mattjmcnaughton.hagig.synthetic-recording-"
         guard bridge == root.appendingPathComponent("bridge").standardizedFileURL,
               bundle == root.appendingPathComponent("derived/Build/Products/Debug/HagigShellProbe.app").standardizedFileURL,
+              name.hasPrefix(prefix), UUID(uuidString: String(name.dropFirst(prefix.count))) != nil,
               CGPreflightScreenCaptureAccess() else {
             print("HAGIG_PROBE recorder-preflight=false"); exit(2)
         }
@@ -229,19 +232,24 @@ private struct CaptureProbe {
         signal(SIGTERM) { _ in proofInterrupted = 1 }
         let application = NSApplication.shared
         application.setActivationPolicy(.accessory)
+        let request = NSPasteboard(name: .init(name + ".request"))
+        let status = NSPasteboard(name: .init(name + ".status"))
         Task { @MainActor in
             var session: RecordingSession?
             var background: NSWindow?
             var passed = false
+            var acceptedStart = false
+            func report(_ value: String) throws {
+                status.prepareForNewContents(with: .currentHostOnly)
+                guard status.setString(value, forType: .string) else { throw ProofFailure.gate }
+            }
             do {
                 let deadline = Date().addingTimeInterval(150)
-                func exists(_ name: String) -> Bool {
-                    FileManager.default.fileExists(atPath: bridge.appendingPathComponent(name).path)
-                }
-                while !exists("start") {
-                    guard !exists("stop"), proofInterrupted == 0, Date() < deadline else { throw ProofFailure.gate }
+                while request.string(forType: .string) != "start" {
+                    guard request.string(forType: .string) != "stop", proofInterrupted == 0, Date() < deadline else { throw ProofFailure.gate }
                     try await Task.sleep(nanoseconds: 50_000_000)
                 }
+                acceptedStart = true
                 let matches = NSRunningApplication.runningApplications(withBundleIdentifier: "com.mattjmcnaughton.hagig.synthetic-probe")
                 guard matches.count == 1, let process = matches.first, !process.isTerminated,
                       process.bundleURL?.standardizedFileURL == bundle,
@@ -260,9 +268,9 @@ private struct CaptureProbe {
                 try await Task.sleep(nanoseconds: 500_000_000)
                 window.backgroundColor = .cyan
                 try await Task.sleep(nanoseconds: 500_000_000)
-                try Data().write(to: bridge.appendingPathComponent("ready"), options: .atomic)
+                try report("ready")
                 print("HAGIG_PROBE exclusion-control=magenta-cyan-must-not-appear")
-                while !exists("stop") {
+                while request.string(forType: .string) != "stop" {
                     try recorder.check()
                     guard !process.isTerminated else { throw ProofFailure.gate }
                     try await Task.sleep(nanoseconds: 50_000_000)
@@ -283,8 +291,16 @@ private struct CaptureProbe {
             }
             let discarded = session?.discard() ?? true
             print("HAGIG_PROBE recorder-cleanup=\(stopped && discarded)")
-            let success = passed && stopped && discarded
-            try? Data().write(to: bridge.appendingPathComponent(success ? "complete" : "failed"), options: .atomic)
+            var success = passed && stopped && discarded
+            if acceptedStart {
+                do { try report(success ? "complete" : "failed") }
+                catch { success = false }
+            } else {
+                // No active waiter/capture was admitted. Do not recreate a
+                // failed status after early test teardown released the boards.
+                request.releaseGlobally()
+                status.releaseGlobally()
+            }
             exit(success ? 0 : 1)
         }
         application.run()
