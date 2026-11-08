@@ -1,23 +1,29 @@
 import AppKit
-import ApplicationServices
 import XCTest
 
 @MainActor
 final class InteractionProbe: XCTestCase {
     private var owned: [NSRunningApplication] = []
-    private var recording: RecordingSession?
-    private var backdrop: NSWindow?
+    private var bridge: URL?
+    private var captureStarted = false
     private var syntheticCopies: Set<String> = []
     private var seededClipboard = false
-    private var passed = false
-    private var destination: URL?
 
     nonisolated override func tearDown() async throws {
         await cleanup()
     }
 
     private func cleanup() async {
-        let stopped = await recording?.shutdown(until: Date().addingTimeInterval(5)) ?? true
+        var stopped = !captureStarted
+        if captureStarted, let bridge {
+            try? Data().write(to: bridge.appendingPathComponent("stop"), options: .atomic)
+            let end = Date().addingTimeInterval(7)
+            while !FileManager.default.fileExists(atPath: bridge.appendingPathComponent("complete").path),
+                  !FileManager.default.fileExists(atPath: bridge.appendingPathComponent("failed").path), Date() < end {
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+            stopped = FileManager.default.fileExists(atPath: bridge.appendingPathComponent("complete").path)
+        }
         // Retained identities, never a PID read from text or a broad kill.
         for process in owned.reversed() where !process.isTerminated { process.terminate() }
         let end = Date().addingTimeInterval(3)
@@ -34,17 +40,9 @@ final class InteractionProbe: XCTestCase {
                 clipboardClean = board.pasteboardItems?.isEmpty != false
             } else { clipboardClean = false } // Never clear unknown contents.
         }
-        backdrop?.close()
         let clean = stopped && appsStopped && clipboardClean
-        if passed && clean, let recording, let destination {
-            do {
-                try recording.publish(to: destination)
-                print("HAGIG_PROBE movie-published=true")
-            } catch { XCTFail("candidate publication failed") }
-        }
-        let discarded = recording?.discard() ?? true
-        print("HAGIG_PROBE cleanup=\(clean && discarded)")
-        XCTAssertTrue(clean && discarded, "owned cleanup required")
+        print("HAGIG_PROBE cleanup=\(clean)")
+        XCTAssertTrue(clean, "owned cleanup required")
     }
 
     func testOwnedShellInputFeasibility() async throws {
@@ -119,55 +117,50 @@ final class InteractionProbe: XCTestCase {
         XCTAssertTrue(shell.textViews["Transcript editor"].waitForExistence(timeout: 5))
         print("HAGIG_PROBE shell-review-reached=true")
 
-        let trusted = AXIsProcessTrusted()
-        let captureAllowed = CGPreflightScreenCaptureAccess()
-        print("HAGIG_PROBE capabilities=ax-\(trusted)-capture-\(captureAllowed)")
-        XCTAssertTrue(trusted && captureAllowed)
+        // XCUITest owns input. The separately launched existing recorder owns
+        // capture; the UI runner neither requests nor needs direct AX/SCK access.
         let board = NSPasteboard.general
         XCTAssertTrue(board.pasteboardItems?.isEmpty != false)
         let sentinel = "HAGIG-SYNTHETIC-XCUI-" + UUID().uuidString
         let standard = "Synthetic Standard 😀\nsecond line"
         let vim = "Synthetic Vim 😀\nsecond line"
-        syntheticCopies = [sentinel, standard, vim]
+        syntheticCopies = [sentinel, standard, vim, "Sy"]
         func seed(_ text: String) {
             board.prepareForNewContents(with: .currentHostOnly)
             seededClipboard = true
             XCTAssertTrue(board.setString(text, forType: .string))
         }
         seed(sentinel)
-        guard let output = ProcessInfo.processInfo.environment["HAGIG_PROBE_OUTPUT"] else {
+        guard let path = ProcessInfo.processInfo.environment["HAGIG_PROBE_BRIDGE"] else {
             throw NSError(domain: "HagigSyntheticProbe", code: 2)
         }
-        destination = URL(fileURLWithPath: output).appendingPathComponent("interaction.mov")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: destination!.path))
-
-        let screen = try XCTUnwrap(NSScreen.main)
-        let background = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
-        background.isReleasedWhenClosed = false
-        background.ignoresMouseEvents = true
-        background.backgroundColor = .magenta
-        background.orderBack(nil)
-        backdrop = background
-        let session = RecordingSession(pid: shellProcess.processIdentifier, deadline: Date().addingTimeInterval(90))
-        recording = session
-        try await session.start(displayID: CGMainDisplayID(), backdropID: CGWindowID(background.windowNumber))
-        try await Task.sleep(nanoseconds: 500_000_000)
-        background.backgroundColor = .cyan
-        try await Task.sleep(nanoseconds: 500_000_000)
-        print("HAGIG_PROBE exclusion-control=magenta-cyan-must-not-appear")
-
-        try await driveEditor(shell: shell, pid: shellProcess.processIdentifier, board: board,
+        let bridge = URL(fileURLWithPath: path)
+        self.bridge = bridge
+        captureStarted = true
+        try Data().write(to: bridge.appendingPathComponent("start"), options: .atomic)
+        try await awaitRecorder("ready")
+        try await driveEditor(shell: shell, board: board,
                               sentinel: sentinel, standard: standard, vim: vim)
-        background.backgroundColor = .magenta
-        try await Task.sleep(nanoseconds: 500_000_000)
-        try await session.finish()
-        passed = true
+        try Data().write(to: bridge.appendingPathComponent("stop"), options: .atomic)
+        try await awaitRecorder("complete")
+        print("HAGIG_PROBE scenario-complete=true")
+    }
+
+    private func awaitRecorder(_ name: String) async throws {
+        let bridge = try XCTUnwrap(bridge)
+        let end = Date().addingTimeInterval(7)
+        while !FileManager.default.fileExists(atPath: bridge.appendingPathComponent(name).path) {
+            guard Date() < end, !FileManager.default.fileExists(atPath: bridge.appendingPathComponent("failed").path) else {
+                throw NSError(domain: "HagigSyntheticProbe", code: 3)
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
     }
 
     // A nonisolated async function runs on the generic executor in Swift 5 / the
-    // selected Xcode 16.4. Synchronous XCTest RPCs must NOT starve the main-actor
-    // recorder callbacks or its independent 58s stop watchdog.
-    nonisolated private func driveEditor(shell: XCUIApplication, pid: pid_t, board: NSPasteboard,
+    // selected Xcode 16.4. Keep the test main actor runnable for teardown while
+    // synchronous XCTest RPCs execute. Capture has its own independent process.
+    nonisolated private func driveEditor(shell: XCUIApplication, board: NSPasteboard,
                                         sentinel: String, standard: String, vim: String) async throws {
         XCTAssertFalse(Thread.isMainThread, "recorder actor must remain runnable")
         func seed(_ text: String) {
@@ -182,19 +175,14 @@ final class InteractionProbe: XCTestCase {
             XCTAssertTrue(label.exists)
             XCTAssertTrue(label.label.contains(expected) || (label.value as? String)?.contains(expected) == true)
         }
-        func selection(_ expected: String) {
-            var focused: CFTypeRef?
-            XCTAssertEqual(AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid),
-                                                       kAXFocusedUIElementAttribute as CFString, &focused), .success)
-            guard let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else {
-                XCTFail("focused editor required"); return
-            }
-            let element = unsafeBitCast(focused, to: AXUIElement.self)
-            var role: CFTypeRef?, selected: CFTypeRef?
-            XCTAssertEqual(AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role), .success)
-            XCTAssertEqual(role as? String, kAXTextAreaRole)
-            XCTAssertEqual(AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &selected), .success)
-            XCTAssertEqual(selected as? String, expected)
+        func selection(_ expected: String, restoring previous: String) {
+            // Check selection through the public native Copy contract instead
+            // of direct AX access unavailable to the UI runner. Restore only
+            // our known synthetic sentinel before testing internal operations.
+            clipboard(previous)
+            shell.typeKey("c", modifierFlags: .command)
+            clipboard(expected)
+            seed(previous)
         }
         func beginReview() {
             shell.buttons["Simulate recording"].click()
@@ -208,7 +196,7 @@ final class InteractionProbe: XCTestCase {
         editor.typeText(standard)
         expectText(standard); clipboard(sentinel)
         shell.typeKey("a", modifierFlags: .command)
-        selection(standard)
+        selection(standard, restoring: sentinel)
         shell.typeKey("c", modifierFlags: .command); clipboard(standard)
         seed(sentinel)
         shell.typeKey("x", modifierFlags: .command); expectText(""); clipboard(standard)
@@ -235,7 +223,7 @@ final class InteractionProbe: XCTestCase {
         shell.typeKey(.escape, modifierFlags: [])
         expectText(vim); mode("Vim · Normal"); clipboard(standard)
         shell.typeText("ggvl")
-        selection("Sy"); mode("Vim · Visual")
+        selection("Sy", restoring: standard); mode("Vim · Visual")
         shell.typeKey("x", modifierFlags: []); expectText(String(vim.dropFirst(2)))
         shell.typeKey("u", modifierFlags: []); expectText(vim)
         shell.typeText("yy"); clipboard(standard)
