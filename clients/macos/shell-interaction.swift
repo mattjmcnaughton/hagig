@@ -411,14 +411,42 @@ private final class ShellProof {
         try require(abs(actual.x - point.x) <= 1 && abs(actual.y - point.y) <= 1)
     }
 
-    func mousePair(at point: CGPoint) throws -> [CGEvent] {
-        try [CGEventType.leftMouseDown, .leftMouseUp].map { type in
-            guard let event = CGEvent(mouseEventSource: nil, mouseType: type,
-                                      mouseCursorPosition: point, mouseButton: .left) else { throw ProofFailure.gate }
-            print("pointer.generated-click-state=\(event.getIntegerValueField(.mouseEventClickState))")
-            event.setIntegerValueField(.mouseEventClickState, value: 1)
-            return event
+    func inputWindow(at point: CGPoint, pid: pid_t) throws -> (number: Int, frame: CGRect)? {
+        try check()
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            throw ProofFailure.gate
         }
+        // WindowServer returns front-to-back order. Ignore other PIDs entirely;
+        // ordinary click also requires an owned AX hit immediately before posting.
+        for window in windows where (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid {
+            guard let alpha = window[kCGWindowAlpha as String] as? NSNumber, alpha.doubleValue > 0 else { continue }
+            guard let values = window[kCGWindowBounds as String] as? [String: Any],
+                  let frame = CGRect(dictionaryRepresentation: values as CFDictionary),
+                  !frame.isEmpty, frame.minX.isFinite, frame.minY.isFinite,
+                  frame.width.isFinite, frame.height.isFinite,
+                  let number = window[kCGWindowNumber as String] as? NSNumber, number.intValue > 0 else {
+                throw ProofFailure.gate
+            }
+            if frame.contains(point) { return (number.intValue, frame) }
+        }
+        return nil
+    }
+
+    func mouse(_ type: NSEvent.EventType, at point: CGPoint, window: (number: Int, frame: CGRect)) throws -> CGEvent {
+        let local = CGPoint(x: point.x - window.frame.minX, y: window.frame.maxY - point.y)
+        try require(window.frame.contains(point))
+        guard let event = NSEvent.mouseEvent(with: type, location: local, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.number,
+            context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)?.cgEvent else {
+            throw ProofFailure.gate
+        }
+        // Preserve the factory's window association/base coordinates. Overwriting
+        // its CG location with a global point would undo that coordinate contract.
+        return event
+    }
+
+    func mousePair(at point: CGPoint, window: (number: Int, frame: CGRect)) throws -> [CGEvent] {
+        try [NSEvent.EventType.leftMouseDown, .leftMouseUp].map { try mouse($0, at: point, window: window) }
     }
 
     func keyPair(_ code: CGKeyCode, flags: CGEventFlags = [], text: String? = nil) throws -> [CGEvent] {
@@ -444,12 +472,14 @@ private final class ShellProof {
             let point = CGPoint(x: origin.x + (target.x - origin.x) * t,
                                 y: origin.y + (target.y - origin.y) * t)
             try warpCursor(to: point)
-            guard let move = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
-                                     mouseCursorPosition: point, mouseButton: .left) else { throw ProofFailure.gate }
-            move.postToPid(pid)
+            if let window = try inputWindow(at: point, pid: pid) {
+                try mouse(.mouseMoved, at: point, window: window).postToPid(pid)
+            }
             try await pause(0.015)
         }
-        let events = try mousePair(at: target)
+        let targetPID = try shellInputPID()
+        guard let window = try inputWindow(at: target, pid: targetPID) else { throw ProofFailure.gate }
+        let events = try mousePair(at: target, window: window)
         let hit = try ownedHit(at: target)
         print("pointer.hit-editor-name=\(named(hit, "Transcript editor")) hit-text-area=\((attribute(hit, kAXRoleAttribute) as? String) == "AXTextArea")")
         print("pointer.hit-requested=\(CFEqual(hit, element)) hit-menu-item=\((attribute(hit, kAXRoleAttribute) as? String) == "AXMenuItem") target-enabled=\((attribute(element, kAXEnabledAttribute) as? NSNumber)?.intValue ?? -1)")
@@ -458,6 +488,8 @@ private final class ShellProof {
         let pid = try shellInputPID()
         try require(try targetPoint(element) == target)
         _ = try ownedHit(at: target)
+        let currentWindow = try inputWindow(at: target, pid: pid)
+        try require(currentWindow?.number == window.number && currentWindow?.frame == window.frame)
         for event in events { event.postToPid(pid) }
         try await pause()
     }
@@ -615,53 +647,6 @@ private final class ShellProof {
         _ = try focused()
     }
 
-    func diagnoseMouseRouting(window: NSWindow, canary: InputCanary, point: CGPoint, cocoa: CGPoint) async throws {
-        let local = window.convertPoint(fromScreen: cocoa)
-        try require(window.windowNumber > 0 && canary.bounds.contains(canary.convert(local, from: nil)))
-        var observed = 0
-        guard let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp], handler: { event in
-            observed += 1
-            print("input-canary.observed type=\(event.type.rawValue) retained-window=\(event.window === window) inside=\(canary.bounds.contains(canary.convert(event.locationInWindow, from: nil)))")
-            return event
-        }) else { throw ProofFailure.gate }
-        defer { NSEvent.removeMonitor(monitor) }
-        for label in ["raw", "public-fields", "window-factory"] {
-            stage = "driver.input-window-diagnostic." + label
-            try require(receiverIsFocused(window))
-            try warpCursor(to: point)
-            let events: [CGEvent]
-            if label == "window-factory" {
-                events = try [NSEvent.EventType.leftMouseDown, .leftMouseUp].map { type in
-                    guard let event = NSEvent.mouseEvent(with: type, location: local, modifierFlags: [],
-                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                        context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0)?.cgEvent else {
-                        throw ProofFailure.gate
-                    }
-                    return event
-                }
-            } else {
-                events = try mousePair(at: point)
-                if label == "public-fields" {
-                    for event in events {
-                        event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowNumber))
-                        event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window.windowNumber))
-                    }
-                }
-            }
-            let before = canary.counts[0], beforeObserved = observed
-            try check()
-            try require(receiverIsFocused(window))
-            for event in events { event.postToPid(getpid()) }
-            // Always observe the complete interval, including a delayed up event.
-            let end = Date().addingTimeInterval(2)
-            while Date() < end { try await pause(0.05) }
-            print("input-canary.case=\(label) clicks=\(canary.counts[0] - before) observed=\(observed - beforeObserved) first-responder=\(window.firstResponder === canary) focused=\(receiverIsFocused(window))")
-        }
-        // This is a diagnostic comparison, not an alternate accepted input path.
-        // Never let any outcome publish a movie or skip the original controls.
-        throw ProofFailure.gate
-    }
-
     func proveInputIsolation() async throws {
         stage = "driver.input-canary-positive"
         let control = try await awaitName("Show menu-bar surface")
@@ -684,9 +669,12 @@ private final class ShellProof {
         inputCanary = canary
         try require(screen.visibleFrame.contains(window.frame))
         try await showReceiver(window)
-        try await diagnoseMouseRouting(window: window, canary: canary, point: point, cocoa: cocoa)
         try warpCursor(to: point)
-        let positiveMouse = try mousePair(at: point)
+        guard let canaryWindow = try inputWindow(at: point, pid: getpid()) else { throw ProofFailure.gate }
+        try require(canaryWindow.number == window.windowNumber)
+        let local = CGPoint(x: point.x - canaryWindow.frame.minX, y: canaryWindow.frame.maxY - point.y)
+        try require(canary.bounds.contains(canary.convert(local, from: nil)))
+        let positiveMouse = try mousePair(at: point, window: canaryWindow)
         try check()
         try require(receiverIsFocused(window))
         // The sole non-shell dispatch: explicitly prove the driver's receiving
@@ -716,7 +704,8 @@ private final class ShellProof {
         try require(try targetPoint(control) == point)
         _ = try ownedHit(at: point)
         _ = try focused()
-        let negativeMouse = try mousePair(at: point)
+        guard let shellWindow = try inputWindow(at: point, pid: pid) else { throw ProofFailure.gate }
+        let negativeMouse = try mousePair(at: point, window: shellWindow)
         let negativeKey = try keyPair(0, text: "q")
         try await showReceiver(window)
         try warpCursor(to: point)
