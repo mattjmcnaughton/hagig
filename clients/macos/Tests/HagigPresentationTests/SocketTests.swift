@@ -34,7 +34,7 @@ private final class Peer {
     func serve(_ action: @escaping (Int32) throws -> Void) {
         DispatchQueue.global().async {
             defer { self.done.signal() }
-            var listening = pollfd(fd: self.listener, events: POLLIN, revents: 0)
+            var listening = pollfd(fd: self.listener, events: Int16(POLLIN), revents: 0)
             guard Darwin.poll(&listening, 1, 5_000) > 0 else { XCTFail("Peer accept deadline"); return }
             let fd = Darwin.accept(self.listener, nil, nil)
             guard fd >= 0 else { XCTFail("Peer accept"); return }
