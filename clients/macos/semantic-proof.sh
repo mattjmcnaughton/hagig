@@ -75,7 +75,7 @@ run_test() {
     fi
 }
 
-for experiment in editor-copy presentation-copy immediate-discard dd-cursor dw-newline crlf-register paste-cursor paste-visual; do
+for experiment in editor-copy presentation-copy immediate-discard dd-cursor dw-newline crlf-register paste-cursor paste-visual cut-visual; do
     directory="$output/$experiment"
     mkdir "$directory"
     echo 'UNPROVEN: experiment has not completed candidate/mutant/restoration' > "$directory/verdict.txt"
@@ -129,6 +129,13 @@ for experiment in editor-copy presentation-copy immediate-discard dd-cursor dw-n
             test=testNativePastedTextPreservesEditorCursorMode
             replacement='s/^        if accepted, mode == .visual || mode == .visualLine {$/        if accepted, false {/'
             assertion='native paste exits replaced Visual selection'
+            detail='XCTAssertEqual failed'
+            ;;
+        cut-visual)
+            source=$editor
+            test=testLongMultilineNativeSelectionUnicodeCutAndFailedCut
+            replacement='s/^        if mode == .visual || mode == .visualLine {$/        if false {/'
+            assertion='native Cut exits removed Visual selection'
             detail='XCTAssertEqual failed'
             ;;
     esac

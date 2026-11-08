@@ -168,6 +168,11 @@ final class ReviewTextView: NSTextView, NSTextViewDelegate {
         let range = safeSelection()
         guard range.length > 0, copySelection() else { return }
         replace(range, with: "")
+        if mode == .visual || mode == .visualLine {
+            mode = .normal
+            count = nil; pending = nil
+            modeChanged(modeLabel)
+        }
         normalCursor()
     }
     @objc func copyAll(_ sender: Any?) {

@@ -436,6 +436,31 @@ final class EditorTests: XCTestCase {
             XCTAssertTrue(view.string.hasPrefix("😀 e\u{301}Synthetic line"))
             XCTAssertFalse(writer.write(""))
             XCTAssertEqual(board.string(forType: .string), "😀 e\u{301}")
+            for (input, selection, copied, remaining, afterDelete) in [
+                ("abcdef", "vlll", "abcd", "ef", "f"),
+                ("abcd\nEF\ntail", "Vj", "abcd\nEF\n", "tail", "ail")
+            ] {
+                let visual = editor(input)
+                keys(selection, in: visual)
+                let selected = visual.selectedRange()
+                let selectedMode = visual.modeLabel
+                let previousClipboard = board.string(forType: .string)
+                keys("x", in: visual, modifiers: .command)
+                XCTAssertEqual(visual.string, input, "failed Cut preserves Visual text")
+                XCTAssertEqual(visual.selectedRange(), selected, "failed Cut preserves Visual selection")
+                XCTAssertEqual(visual.modeLabel, selectedMode, "failed Cut preserves Visual mode")
+                XCTAssertEqual(board.string(forType: .string), previousClipboard)
+                visual.write = writer.write
+                keys("x", in: visual, modifiers: .command)
+                XCTAssertEqual(board.string(forType: .string), copied)
+                XCTAssertEqual(visual.string, remaining)
+                XCTAssertEqual(visual.modeLabel, "Vim · Normal", "native Cut exits removed Visual selection")
+                XCTAssertEqual(visual.selectedRange(), NSRange(location: 0, length: 0))
+                keys("hx", in: visual)
+                XCTAssertEqual(visual.string, afterDelete, "native Cut discards stale Visual coordinates")
+                keys("u", in: visual)
+                XCTAssertEqual(visual.string, remaining)
+            }
         }
     }
 
