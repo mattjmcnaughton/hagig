@@ -442,11 +442,26 @@ private final class ShellProof {
             throw ProofFailure.gate
         }
         try require(NSEvent(cgEvent: event)?.windowNumber == window.number)
-        // NSEvent's factory takes window-base coordinates; CGEvent requires a
-        // global Quartz point. Foreign-window bridging left that point incorrect.
-        // Keep the window association but supply that global point explicitly.
-        event.location = point
-        try require(event.location == point && NSEvent(cgEvent: event)?.windowNumber == window.number)
+        if type == .leftMouseDown {
+            guard let untouched = event.copy(), let same = event.copy(), let target = event.copy() else {
+                throw ProofFailure.gate
+            }
+            let originalGlobal = event.location
+            let originalLocal = NSEvent(cgEvent: event)?.locationInWindow
+            let fields: [CGEventField] = [.mouseEventWindowUnderMousePointer,
+                .mouseEventWindowUnderMousePointerThatCanHandleThisEvent,
+                .mouseEventClickState, .mouseEventButtonNumber, .mouseEventNumber]
+            let metadata = fields.map { event.getIntegerValueField($0) }
+            same.location = originalGlobal
+            target.location = point
+            // Diagnostic copies are NEVER posted. Keep the known original
+            // transport while separating copy/setter effects on public metadata.
+            for (name, sample) in [("original", event), ("copy", untouched), ("same", same), ("target", target)] {
+                let bridged = NSEvent(cgEvent: sample)
+                let localMatches = bridged.map { abs($0.locationInWindow.x - local.x) <= 1 && abs($0.locationInWindow.y - local.y) <= 1 } ?? false
+                print("mouse.metadata case=\(name) own-window=\(factory.window != nil) global-original=\(sample.location == originalGlobal) global-target=\(sample.location == point) local-original=\(bridged?.locationInWindow == originalLocal) local-target=\(localMatches) window-number=\(bridged?.windowNumber == window.number) routing-and-fields=\(fields.map { sample.getIntegerValueField($0) } == metadata) type-and-flags=\(sample.type == event.type && sample.flags == event.flags)")
+            }
+        }
         return event
     }
 
