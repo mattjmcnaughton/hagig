@@ -29,17 +29,25 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 mkdir -m 700 "$scratch/runtime" "$scratch/relocated app"
 export XDG_RUNTIME_DIR="$scratch/runtime"
+export XDG_CONFIG_HOME="$scratch/config"
+export XDG_DATA_HOME="$scratch/data"
 cp -R "$source_app" "$scratch/relocated app/Hagig.app"
 app="$scratch/relocated app/Hagig.app"
 codesign --verify --deep --strict "$app"
 plutil -lint "$app/Contents/Info.plist"
-for binary in "$app/Contents/MacOS/HagigShell" "$app/Contents/Helpers/"*; do
+for binary in "$app/Contents/MacOS/HagigShell" "$app/Contents/Helpers/"* "$app/Contents/Frameworks/"*; do
     file "$binary" | grep 'arm64'
     otool -L "$binary"
-    # Permit only OS/Swift system libraries and frameworks, not checkout dylibs.
+    # Only the isolated native helper and the two exact dylibs may link inference.
+    # The trusted CLI/bootstrap and Swift shell must remain inference-free.
     otool -L "$binary" | tail -n +2 | while read -r dependency; do
         case "$dependency" in
             /usr/lib/*|/System/Library/*|@rpath/libswift*.dylib\ *) ;;
+            @rpath/libsherpa-onnx-c-api.dylib\ *|@rpath/libonnxruntime.dylib\ *)
+                case "$binary" in
+                    */Helpers/hagig-inference-worker|*/Frameworks/libsherpa-onnx-c-api.dylib|*/Frameworks/libonnxruntime.dylib) ;;
+                    *) echo 'Trusted executable linked inference before isolation.' >&2; exit 1 ;;
+                esac ;;
             *) echo 'Non-system loader dependency needs explicit bundle integration.' >&2; exit 1 ;;
         esac
     done
@@ -47,16 +55,18 @@ for binary in "$app/Contents/MacOS/HagigShell" "$app/Contents/Helpers/"*; do
         while read -r rpath; do
             case "$rpath" in
                 /usr/lib/swift) ;;
+                '@executable_path/../Frameworks')
+                    case "$binary" in */Helpers/*) ;; *) exit 1 ;; esac ;;
+                '@loader_path')
+                    case "$binary" in */Frameworks/*.dylib) ;; *) exit 1 ;; esac ;;
                 *) echo "Non-system loader search path needs explicit bundle integration: $rpath" >&2; exit 1 ;;
             esac
         done
 done
 cli="$app/Contents/Helpers/hagig"
 [ "$("$cli" status)" = stopped ]
-"$cli" fake-request --fake-worker > "$scratch/result"
-[ "$(wc -c < "$scratch/result" | tr -d ' ')" = 1 ]
-[ -z "$(cat "$scratch/result")" ]
-"$cli" status
+"$cli" start
+"$cli" status | python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["worker"] == "inference" and s["network_isolation"] == "required" and s["state"] == "idle"'
 "$cli" stop
 [ "$("$cli" status)" = stopped ]
 # Launch the relocated real shell executable, observe liveness, stop only our PID.
@@ -65,4 +75,4 @@ cli="$app/Contents/Helpers/hagig"
 shell_pid=$!
 sleep 2
 kill -0 "$shell_pid"
-echo 'Relocated synthetic shell remained alive; controlled sibling worker completed with Required default.'
+echo 'Relocated signed real-client shell remained alive; real service capabilities validated with Required default. No microphone/inference acceptance claim.'

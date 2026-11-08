@@ -26,6 +26,14 @@ class BundleContracts(unittest.TestCase):
         self.log = self.root / "calls"
         self.env = dict(os.environ, PATH=f"{self.tools}:/usr/bin:/bin", CALLS=str(self.log))
         self.env.pop("DEVELOPER_DIR", None)
+        self.native = self.root / "prepared native/Contents"
+        for name, value in (("Helpers/hagig", "cli"), ("Helpers/hagig-worker", "bootstrap"),
+                            ("Helpers/hagig-inference-worker", "native"),
+                            ("Frameworks/libsherpa-onnx-c-api.dylib", "sherpa"),
+                            ("Frameworks/libonnxruntime.dylib", "onnx")):
+            path = self.native / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(value)
         self.stub("uname", 'if [ "$1" = -m ]; then echo arm64; else echo Darwin; fi')
         self.stub("xcodebuild", 'echo "Xcode 16.4"')
         self.stub("swift", '''
@@ -33,10 +41,6 @@ case "$*" in
   *--show-bin-path*) printf '%s\n' "$PWD/.build/release" ;;
   *) mkdir -p .build/release; printf shell > .build/release/HagigShell ;;
 esac''')
-        self.stub("cargo", '''
-mkdir -p target/aarch64-apple-darwin/release
-printf cli > target/aarch64-apple-darwin/release/hagig
-printf fake > target/aarch64-apple-darwin/release/hagig-fake-worker''')
         self.stub("plutil", ':')
         self.stub("codesign", ':')
         self.stub("install_name_tool", ':')
@@ -48,6 +52,8 @@ printf fake > target/aarch64-apple-darwin/release/hagig-fake-worker''')
         path.chmod(0o755)
 
     def run_bundle(self, *args):
+        if args in (("build",), ("run",)):
+            args = (*args, str(self.native))
         return subprocess.run(["/bin/bash", str(self.mac / "bundle.sh"), *args],
                               cwd=self.root, env=self.env, capture_output=True, text=True)
 
@@ -88,14 +94,36 @@ printf fake > target/aarch64-apple-darwin/release/hagig-fake-worker''')
         contents = self.mac / ".build/Hagig.app/Contents"
         self.assertEqual((contents / "MacOS/HagigShell").read_text(), "shell")
         self.assertEqual((contents / "Helpers/hagig").read_text(), "cli")
-        self.assertEqual((contents / "Helpers/hagig-fake-worker").read_text(), "fake")
+        self.assertEqual((contents / "Helpers/hagig-worker").read_text(), "bootstrap")
+        self.assertEqual((contents / "Helpers/hagig-inference-worker").read_text(), "native")
+        self.assertEqual((contents / "Frameworks/libonnxruntime.dylib").read_text(), "onnx")
+        self.assertEqual((contents / "Frameworks/libsherpa-onnx-c-api.dylib").read_text(), "sherpa")
         self.assertEqual(sorted(str(p.relative_to(contents)) for p in contents.rglob("*") if p.is_file()),
-                         ["Helpers/hagig", "Helpers/hagig-fake-worker", "Info.plist", "MacOS/HagigShell"])
+                         ["Frameworks/libonnxruntime.dylib", "Frameworks/libsherpa-onnx-c-api.dylib",
+                          "Helpers/hagig", "Helpers/hagig-inference-worker", "Helpers/hagig-worker",
+                          "Info.plist", "MacOS/HagigShell"])
         self.assertNotIn("open ", self.calls())
-        self.assertIn("--locked", self.calls())
-        self.assertIn("--target aarch64-apple-darwin", self.calls())
+        self.assertNotIn("cargo", self.calls())
+        self.assertNotIn("curl", self.calls())
         self.assertIn("--verify", self.calls())
         self.assertFalse((self.mac / ".build/bundle.lock").exists())
+
+    def test_missing_or_symlink_native_member_never_publishes_or_launches(self):
+        helper = self.native / "Helpers/hagig-inference-worker"
+        helper.unlink()
+        self.assertNotEqual(self.run_bundle("run").returncode, 0)
+        self.assertFalse((self.mac / ".build/Hagig.app").exists())
+        helper.symlink_to(self.native / "Helpers/hagig")
+        self.assertNotEqual(self.run_bundle("run").returncode, 0)
+        self.assertNotIn("open ", self.calls())
+
+    def test_prepared_native_contents_are_never_changed(self):
+        before = {p: p.read_bytes() for p in self.native.rglob("*") if p.is_file()}
+        self.assertEqual(self.run_bundle("build").returncode, 0)
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+        signed = [line for line in self.calls().splitlines() if line.startswith("codesign ")]
+        self.assertTrue(signed)
+        self.assertTrue(all(str(self.native) not in line for line in signed))
 
     def test_run_launches_bundle_only_after_success(self):
         result = self.run_bundle("run")
@@ -126,7 +154,7 @@ esac''')
                          "shell\n@loader_path\n/usr/lib/swift\n")
 
     def test_failure_cleans_staging_and_does_not_publish_or_launch(self):
-        for tool in ("cargo", "swift", "install_name_tool", "codesign"):
+        for tool in ("swift", "install_name_tool", "codesign"):
             with self.subTest(tool=tool):
                 original = (self.tools / tool).read_text()
                 self.stub(tool, 'exit 19')
@@ -169,22 +197,41 @@ esac''')
 "$TEST_PYTHON" -c 'import os, stat; assert stat.S_IMODE(os.stat(os.environ["XDG_RUNTIME_DIR"]).st_mode) == 0o700' || exit 62
 printf '%s' "$XDG_RUNTIME_DIR" > "$RUNTIME_RECORD"
 case "$1" in
-status) if [ -e "$SERVICE_STATE" ]; then echo running; else echo stopped; fi ;;
-fake-request) touch "$SERVICE_STATE"; printf '\\n' ;;
+status) if [ -e "$SERVICE_STATE" ]; then printf '%s\\n' '{"worker":"inference","network_isolation":"required","state":"idle"}'; else echo stopped; fi ;;
+start) touch "$SERVICE_STATE" ;;
 stop) [ "$FAIL_STOP" = 0 ] || exit 63; rm -f "$SERVICE_STATE"; echo stopped ;;
 esac
 ''')
         self.stub("file", 'echo "Mach-O 64-bit executable arm64"')
         self.stub("otool", '''
+dependency=$DEPENDENCY
+rpath=$RPATH
+if [ "$DEPENDENCY" = native-layout ] || [ "$DEPENDENCY" = inference-in-cli ]; then
+    dependency=/usr/lib/libSystem.B.dylib
+    rpath=/usr/lib/swift
+    case "$2" in
+      */Helpers/*) rpath='@executable_path/../Frameworks' ;;
+      */Frameworks/*) rpath='@loader_path' ;;
+    esac
+    case "$2" in
+      */Helpers/hagig-inference-worker|*/Frameworks/libsherpa-onnx-c-api.dylib)
+        dependency='@rpath/libonnxruntime.dylib' ;;
+    esac
+    if [ "$DEPENDENCY" = inference-in-cli ]; then
+        case "$2" in */Helpers/hagig) dependency='@rpath/libsherpa-onnx-c-api.dylib' ;; esac
+    fi
+fi
 if [ "$1" = -L ]; then
-    printf 'binary:\\n\\t%s (compatibility version 1.0.0)\\n' "$DEPENDENCY"
+    printf 'binary:\\n\\t%s (compatibility version 1.0.0)\\n' "$dependency"
 else
-    printf '          cmd LC_RPATH\\n      cmdsize 32\\n         path %s (offset 12)\\n' "$RPATH"
+    printf '          cmd LC_RPATH\\n      cmdsize 32\\n         path %s (offset 12)\\n' "$rpath"
 fi''')
         cases = (("/usr/lib/libSystem.B.dylib", "/usr/lib/swift", True, False),
                  ("@rpath/libswift_Concurrency.dylib", "/usr/lib/swift", True, False),
                  ("/tmp/checkout/libbad.dylib", "/usr/lib/swift", False, False),
                  ("@rpath/libswift_Concurrency.dylib", "/tmp/checkout/lib", False, False),
+                 ("native-layout", "native-layout", True, False),
+                 ("inference-in-cli", "native-layout", False, False),
                  ("/usr/lib/libSystem.B.dylib", "/usr/lib/swift", False, True))
         for dependency, rpath, succeeds, fail_stop in cases:
             with self.subTest(dependency=dependency, rpath=rpath, fail_stop=fail_stop):
@@ -201,7 +248,6 @@ fi''')
                 if fail_stop:
                     self.assertIn("retained private smoke directory", result.stderr)
                     self.assertTrue((scratch / "relocated app/Hagig.app").is_dir())
-                    self.assertEqual((scratch / "result").read_bytes(), b"\n")
 
 
 if __name__ == "__main__":
