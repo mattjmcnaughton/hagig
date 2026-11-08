@@ -390,7 +390,7 @@ private final class ShellProof {
         let display = CGDisplayBounds(CGMainDisplayID())
         // The driver uses owned demo controls, not menu-bar clicks. Exclude the
         // system bar and unrelated status items rather than whitelisting them.
-        let barHeight = NSMenu.menuBarHeight
+        let barHeight = NSStatusBar.system.thickness
         try require(barHeight.isFinite && barHeight > 0 && barHeight < display.height)
         let screen = CGRect(x: display.minX, y: display.minY + barHeight,
                             width: display.width, height: display.height - barHeight)
