@@ -138,15 +138,6 @@ final class InteractionProbe: XCTestCase {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         XCTAssertTrue(canaryProcess.isTerminated)
-        print("HAGIG_PROBE stage=release-result")
-        shell.buttons["Simulate release"].click()
-        XCTAssertTrue(shell.buttons["Simulate result"].isEnabled)
-        shell.buttons["Simulate result"].click()
-        XCTAssertTrue(shell.textViews["Transcript editor"].waitForExistence(timeout: 5))
-        print("HAGIG_PROBE shell-review-reached=true")
-
-        // XCUITest owns input. The separately launched existing recorder owns
-        // capture; the UI runner neither requests nor needs direct AX/SCK access.
         let board = NSPasteboard.general
         XCTAssertTrue(board.pasteboardItems?.isEmpty != false)
         let sentinel = "HAGIG-SYNTHETIC-XCUI-" + UUID().uuidString
@@ -159,6 +150,16 @@ final class InteractionProbe: XCTestCase {
             XCTAssertTrue(board.setString(text, forType: .string))
         }
         seed(sentinel)
+        print("HAGIG_PROBE stage=release-result")
+        shell.buttons["Simulate release"].click()
+        XCTAssertTrue(shell.buttons["Simulate result"].isEnabled)
+        shell.buttons["Simulate result"].click()
+        XCTAssertTrue(shell.textViews["Transcript editor"].waitForExistence(timeout: 5))
+        XCTAssertEqual(board.string(forType: .string), sentinel)
+        print("HAGIG_PROBE shell-review-reached=true")
+
+        // XCUITest owns input. The separately launched existing recorder owns
+        // capture; the UI runner neither requests nor needs direct AX/SCK access.
         let bridge = try XCTUnwrap(bridge)
         captureStarted = true
         bridge.prepareForNewContents(with: .currentHostOnly)
@@ -217,10 +218,11 @@ final class InteractionProbe: XCTestCase {
             shell.buttons["Simulate recording"].click()
             shell.buttons["Simulate release"].click()
             shell.buttons["Simulate result"].click()
-            XCTAssertTrue(editor.exists)
+            XCTAssertTrue(editor.waitForExistence(timeout: 5))
         }
         print("HAGIG_PROBE stage=standard-editor")
         editor.click()
+        XCTAssertTrue(editor.hasKeyboardFocus)
         shell.typeKey("a", modifierFlags: .command)
         editor.typeText(standard)
         expectText(standard); clipboard(sentinel)
@@ -246,6 +248,7 @@ final class InteractionProbe: XCTestCase {
         shell.menuItems["Bounded Vim"].click()
         beginReview(); clipboard(standard); mode("Vim · Normal")
         editor.click()
+        XCTAssertTrue(editor.hasKeyboardFocus)
         shell.typeKey("i", modifierFlags: [])
         shell.typeKey("a", modifierFlags: .command)
         editor.typeText(vim)
