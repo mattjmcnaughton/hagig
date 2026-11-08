@@ -11,10 +11,10 @@ Previous synthetic-only descriptions below describe the checkpoint base, not
 the intended normal client path in this candidate.
 
 Normal operation requires the matching real #9 backend, model and native helper
-packaging, which are NOT present on this stacked editor base. The existing bundle
-recipe still packages controlled helpers; real Record must fail safely there,
-not transcribe or fall back. Do not call this candidate runnable end-to-end until
-actual integrated evidence passes. Resolve `hagig` only at
+packaging. These are NOT present on this stacked editor base. Bundle assembly
+requires explicit prepared native input, never a controlled-helper fallback.
+Do not call this candidate runnable end-to-end until actual integrated evidence
+passes. Resolve `hagig` only at
 `Contents/Helpers/hagig`; the helper starts/attaches with `start` (no fake flags).
 It owns runtime locking/stale-socket cleanup; Swift validates the same inherited
 XDG_RUNTIME_DIR or TMPDIR, private directory/socket and peer UID. No ambient PATH.
@@ -45,7 +45,7 @@ No native #21 evidence is established merely by these source changes.
 
 Read the root guidance, constitution, MVP PRD and TDD. The reviewed UI source is
 `docs/product/prototypes/`; its browser checks do not validate this native client.
-This is a synthetic shell, not an implemented dictation pipeline or installed alpha.
+This is an experimental real-client candidate, not an accepted installed alpha.
 
 ## Boundaries
 
@@ -54,9 +54,10 @@ This is a synthetic shell, not an implemented dictation pipeline or installed al
   authoritative server state, a Swift inference backend, or an IPC implementation.
 - `HagigPresentation/HagigView.swift`: reusable real SwiftUI surface. The shell and
   capture executable must use this same view; never duplicate screenshot UI.
-- `HagigShell`: AppKit status item/popover and explicit current-host-only clipboard
-  writes. Only Copy writes; no automatic paste, key injection, permission requests,
-  microphone, model downloads, or server launch. Demo error selection is shell-only.
+- `HagigShell`: AppKit status item/popover, real Record/Stop/Cancel and explicit
+  current-host-only Copy/Cut. Intentional capture requests Microphone permission
+  after backend admission. No automatic paste, key injection or model downloads.
+  Demo controls require `--synthetic-demo`.
 - `HagigScreenshots`: renders shared views through AppKit `NSHostingView` bitmap
   caching at 2×, including AppKit-backed controls that `ImageRenderer` omits, in
   light/dark appearances with activity animation disabled through the shared
@@ -97,20 +98,27 @@ swift run HagigScreenshots proof captures
 swift run HagigScreenshots states captures
 ```
 
-Click the menu-bar microphone to open the demo; use Simulate recording → Simulate
+Use `swift run HagigShell --synthetic-demo` for the editor demo. Click the
+menu-bar microphone; use Simulate recording → Simulate
 release → Simulate result → explicit Copy or Dismiss. Escape cancels active work.
 Preview error and Quit live below the shared surface. No global shortcut exists.
-`swift run HagigShell` is the unbundled SwiftPM demo, not the bundle launch path.
+Normal `swift run HagigShell` has no paired Contents/Helpers/hagig and must fail
+safely, not substitute demo success. Use the bundle for real integration.
 
-## Early local bundle layout (#23 checkpoint, not dictation)
+## Prepared native bundle (#21 experimental integration)
 
-From the clone root on an Apple Silicon Mac, native arm64 shell, Xcode 16.4 and
-the repository's Rust 1.90.0 toolchain installed via rustup and on PATH:
+From the clone root on an Apple Silicon Mac, native arm64 shell and Xcode 16.4,
+use an absolute already prepared Contents directory. The #9 contract was tested
+at db18603fa2fcdfe8d53a1485cf05c5705c639589 with
+`backend/tests/prepare_macos_candidate.sh` and Rust 1.90.0. Preparation acquires
+native assets/crate sources: it is a separate explicitly approved operation,
+never an implicit bundle step. Use that script and `backend/model-manifest.json`
+as the source of pins and layout; do not invent new versions/assets here.
 
 ```sh
-bash clients/macos/bundle.sh run    # build a NEW bundle, then terminal-launch via open
+bash clients/macos/bundle.sh run /absolute/prepared/Contents
 # Or build only, for iteration/CI:
-bash clients/macos/bundle.sh build
+bash clients/macos/bundle.sh build /absolute/prepared/Contents
 # Launch an already built bundle without rebuilding:
 open clients/macos/.build/Hagig.app
 ```
@@ -119,11 +127,74 @@ These are alternative build commands, not consecutive commands: an existing
 output is always refused (including symlinks). No Homebrew, release download,
 `/Applications` copy, certificates or notarization credentials are required.
 The default Xcode path is `/Applications/Xcode_16.4.app/Contents/Developer`;
-`DEVELOPER_DIR` may select another installation of exactly Xcode 16.4. Cargo uses
-`+1.90.0`, `--locked` and an explicit native target; building may fetch locked
-crate sources/toolchains through ordinary Cargo/rustup, not model/native assets.
-Swift builds only the existing HagigShell product. Build output is ignored under
-`clients/macos/.build/` and `backend/target/`.
+`DEVELOPER_DIR` may select another installation of exactly Xcode 16.4. The builder
+does not run Cargo, download native/model assets or install a model. It builds
+HagigShell, copies five explicit native files, and signs staged copies inside-out.
+Prepared inputs remain unchanged. Output is ignored under `clients/macos/.build/`.
+
+### Local source experiment after the gated merges
+
+Use an Apple Silicon Mac with Xcode 16.4 and Rust 1.90.0 already installed
+(`backend/rust-toolchain.toml` selects that Rust toolchain). This is an opt-in
+experimental build, not adoption or physical-Mac acceptance. Preparation and the
+explicit model install below acquire the existing pinned native/model/tokenizer
+assets (about 3.15 GB plus locked crate sources); neither app launch nor bundle
+assembly acquires or repairs them. No Homebrew, release binary, `/Applications`
+installation, public signing or notarization is involved. These commands are a
+local recipe, not a claim that they have executed successfully on this head.
+
+From a terminal, clone the merged source, prepare the exact backend in a separate
+detached worktree, and assemble a new app. Keep this terminal's variables for
+launch, stop and optional cleanup:
+
+```sh
+git clone https://github.com/mattjmcnaughton/hagig.git hagig
+cd hagig
+export DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer
+prep=$(mktemp -d "${TMPDIR:-/tmp}/hagig-local.XXXXXX")
+export RUNNER_TEMP="$prep"
+git fetch origin db18603fa2fcdfe8d53a1485cf05c5705c639589
+git worktree add --detach "$prep/backend-source" db18603fa2fcdfe8d53a1485cf05c5705c639589
+(cd "$prep/backend-source/backend" && bash tests/prepare_macos_candidate.sh)
+native="$prep/hagig-issue9-native"
+bash clients/macos/bundle.sh build "$native/Contents"
+app="$PWD/clients/macos/.build/Hagig.app"
+runtime=$(mktemp -d /private/tmp/hg-local.XXXXXX)
+export XDG_RUNTIME_DIR="$runtime"
+export XDG_CONFIG_HOME="$prep/local-config"
+export XDG_DATA_HOME="$native/data"
+"$app/Contents/Helpers/hagig" model install parakeet-tdt-0.6b-v2-int8-v1
+"$app/Contents/MacOS/HagigShell"
+```
+
+Run each command only after its predecessor succeeds; stop and diagnose failure,
+never retry with isolation disabled. The foreground terminal launch preserves
+the explicit private environment (unlike relying on LaunchServices environment
+inheritance). No config file is needed: editor defaults to Standard and isolation
+to Required. Use intentional Record, Stop, review/edit, explicit Copy and Dismiss;
+the first real Record may ask for Microphone permission. Never grant Accessibility
+or Input Monitoring for this path. Known model-quality and #6/#25 privacy gates,
+physical microphone/device/permission/rebuild and second-device clipboard checks
+remain open. Local clipboard managers/destinations may retain explicit Copy.
+
+Quit the shell before cleanup. Its service is shared by clients using this same
+private runtime; coordinate those clients, then stop the paired helper. The model
+data is intentionally retained for further experiments until this optional cleanup:
+
+```sh
+if "$app/Contents/Helpers/hagig" stop; then
+  git worktree remove "$prep/backend-source" && rm -rf -- "$prep" "$runtime"
+else
+  printf '%s\n' 'Stop failed: retain app, model and runtime; do not dispose or replace them.' >&2
+fi
+```
+
+Only use those variables in the original terminal with the same exported private
+environment. Cleanup removes the dedicated model data, so a subsequent experiment
+needs another explicit install; it does not remove the assembled app or clone.
+Do not delete or replace app/model bytes under a live service. The whole-bundle
+backup/rollback procedure below applies before any rebuild; no automatic upgrade,
+service kill, recording history or model acquisition is introduced by launch.
 
 Layout (all paths relative to the bundle):
 
@@ -131,27 +202,29 @@ Layout (all paths relative to the bundle):
 Hagig.app/Contents/Info.plist
 Hagig.app/Contents/MacOS/HagigShell
 Hagig.app/Contents/Helpers/hagig
-Hagig.app/Contents/Helpers/hagig-fake-worker
+Hagig.app/Contents/Helpers/hagig-worker
+Hagig.app/Contents/Helpers/hagig-inference-worker
+Hagig.app/Contents/Frameworks/libsherpa-onnx-c-api.dylib
+Hagig.app/Contents/Frameworks/libonnxruntime.dylib
 ```
 
-Bundle identity is `com.mattjmcnaughton.hagig`. The existing CLI reexecutes itself
-as the controlled server and finds `hagig-fake-worker` beside its own executable,
-not on PATH. There is no separate real worker, inference library or model to
-bundle yet. The shell does **not** start/connect to this server. To exercise the
-controlled backend explicitly, use (from clone root):
+Bundle identity is `com.mattjmcnaughton.hagig`. The shell starts/attaches through
+its paired CLI. CLI/bootstrap must link only system libraries; only the isolated
+native helper links inference. Helpers retain `@executable_path/../Frameworks`,
+and dylibs retain `@loader_path`. No native loader rewrite or unused C++ dylib.
+Model installation is explicit and separate. For five already acquired assets:
 
 ```sh
-clients/macos/.build/Hagig.app/Contents/Helpers/hagig status
-clients/macos/.build/Hagig.app/Contents/Helpers/hagig fake-request --fake-worker
-clients/macos/.build/Hagig.app/Contents/Helpers/hagig stop
+clients/macos/.build/Hagig.app/Contents/Helpers/hagig model install parakeet-tdt-0.6b-v2-int8-v1 --from /absolute/preacquired/assets
 ```
 
-Default Required isolation is retained; failure never retries Disabled. This is
-empty-result fake lifecycle work, not WAV transcription. `hagig transcribe`,
-model installation, real Record/Stop/edit/Copy and shared app/server busy policy
-are NOT implemented by packaging. No assets are downloaded or repaired on launch.
+Default Required isolation is retained; failure never retries Disabled. Missing
+model/helper/library must fail, never use fake success or automatic downloads.
+#9's functional experimental evidence is not privacy/adoption, signed-app or
+physical-Mac acceptance. #6/#25, quality failures and microphone/TCC checks remain
+separate gates.
 
-Before rebuilding/replacing any paired bundle: Quit its synthetic shell, coordinate
+Before rebuilding/replacing any paired bundle: Quit its shell, coordinate
 with other clients using the per-user server, then **intentionally** run that
 bundle's `Contents/Helpers/hagig stop` and require success. Stop affects shared
 work; the builder never does it for you. Move the **whole** stopped bundle to a
@@ -165,19 +238,17 @@ disposable and cleaned; any incomplete published output must be inspected and
 moved aside, not blindly deleted. No automatic upgrade or service killing exists.
 
 Before signing, Xcode's `install_name_tool` removes SwiftPM's `@loader_path`
-search entry from the staged shell only. This checkpoint uses system libraries,
-not bundled sibling dylibs; `/usr/lib/swift` is retained. The native smoke still
+search entry from the staged shell only; `/usr/lib/swift` is retained. Native
+helper/dylib loader commands remain unchanged. The native smoke still
 rejects unexpected dependencies/search paths and verifies actual relocated launch.
 Removal failure aborts assembly; the SwiftPM build output is left unchanged.
 Nested helpers and the outer app are ad-hoc signed inside-out, then verified.
 Ad-hoc signing is not Developer ID, notarization, Gatekeeper approval, TCC grant,
 permission stability across rebuilds, or worker-isolation proof. Diagnose launch
-or signing failures; do not disable Gatekeeper. Info.plist contains a microphone
-usage description for future intentional recording, **not a request**. This
-shell requests no Microphone, Accessibility or Input Monitoring permission.
-Stable identity alone does not establish TCC continuity; denial/grant/rebuild
-testing waits for real capture integration. Signing identity/loader paths for
-future adopted native assets must be integrated and verified separately.
+or signing failures; do not disable Gatekeeper. Info.plist contains the Microphone
+usage description for intentional Record. No Accessibility/Input Monitoring
+request. Stable identity alone does not establish TCC continuity; physical
+denial/grant/rebuild and public signing/notarization remain acceptance gates.
 
 Checks (from clone root):
 
@@ -187,16 +258,68 @@ bash clients/macos/smoke-bundle.sh    # macOS only, after build-only above
 ```
 
 The native smoke copies the bundle away from the checkout into a disposable path
-with spaces, checks arm64/system-only loader paths and signatures, runs the actual
-controlled CLI/worker with Required default using a private temporary runtime,
+with spaces, checks arm64/scoped loader paths and signatures, validates real
+inference/Required/idle service capabilities using private temporary paths,
 then launches the relocated shell executable briefly and terminates only that
 owned PID. Its cleanup stops only its isolated service and preserves scratch on
 stop failure. It does not touch the user's live runtime. It is not a terminal
 LaunchServices interaction test or runtime-free physical-Mac installation proof.
-Normal `macos-build.yml` includes this smoke; exact-head success and inspection
-remain required. No native bundle check has been executed in the Linux orb.
+The parent owns `macos-build.yml` integration: keep the packaging stand-in
+contracts always on, but replace the old no-argument native bundle caller with
+the finite PR32 real-backend job. D27 permits that automatic integration run to
+reuse #9's same pinned native/model/tokenizer acquisition (about 3.15 GB), hash
+verification and disposal. It is not permission for permanent downloads on
+every PR/main build. Bound the job to PR32 and the expected source branch/repo,
+with a twenty-minute hard timeout; skip it elsewhere without claiming main
+native-smoke evidence. No new pins, tools/dependencies, manual reruns, TCC changes
+or adoption waiver. Coordinate before publishing this changed bundle contract.
+Exact-head native success and inspection remain required. Linux stand-ins are
+not native signing/loader proof.
 Full #23 acceptance remains blocked on real integration (#9/#21/#22, adopted
 inference), macOS launch/relocation/signing/TCC and owner physical-Mac checks.
+
+Opt-in `RealBackendTests` takes absolute `HAGIG_INTEGRATION_HELPER`,
+`HAGIG_INTEGRATION_DATA_HOME` and `HAGIG_INTEGRATION_WAV`. Use a signed relocated
+helper, isolated explicitly installed model data and #9's existing synthetic WAV.
+It exercises production conversion/controller/socket, real review, CLI busy,
+isolated-pasteboard Copy and cancellation/reconnect. Injected audio is not a
+physical microphone or app pointer test. All unset means skip; partial setup
+fails. This integration is UNPROVEN until run on reviewed exact client/backend
+heads. For the D27 run, first execute #9's preparation script from its separate
+exact db18603 backend checkout, then explicitly install with private paths:
+
+```sh
+root="${RUNNER_TEMP:?}/hagig-issue9-native"
+XDG_DATA_HOME="$root/data" XDG_CONFIG_HOME="$root/install-config" \
+  "$root/Contents/Helpers/hagig" model install parakeet-tdt-0.6b-v2-int8-v1
+```
+
+The installer verifies the manifest pins, including the original tokenizer
+archive, and removes the archive before publish. Independently verify all five
+installed sizes/hashes and absence of retained install staging using #9's
+`backend/tests/exercise_macos_candidate.sh` logic; do not run that entire script
+before this test, because its exit trap deletes the model data. Never upload
+models/native bytes. Supply the relocated signed app helper, `$root/data` and
+the exact backend's `backend/tests/fixtures/speech.wav` to XCTest. The test creates
+its own private short runtime/config, sets `[editor] mode='vim'`, inherits the
+Required isolation default (no disabled override), and owns only that service.
+It stops the service on success/error, removes the runtime only after successful
+stop, and prints `REAL_BACKEND_CLEANUP_COMPLETE` then. A failed stop retains its
+runtime for the outer cleanup gate; no cleanup marker means failure. The outer
+job records each phase before invoking XCTest and requires that marker in every
+invoked phase's log before disposal. On interruption, compile/setup failure or
+missing marker, fail cleanup and retain the dedicated assets on the runner
+(never upload them); do not delete model/app bytes beneath a possibly live pair
+or kill an unverified PID. Only after the cleanup gate passes, dispose of the
+dedicated model/archive/preparation and relocated copies. Upload only bounded
+synthetic text evidence.
+
+`bash clients/macos/client-proof.sh /absolute/new/evidence` runs preregistered
+client-only candidate/mutant/restoration in a disposable worktree with unchanged
+tests/digests and identical commands. Existing Xcode/Swift/Python only, no assets;
+CI must provide the ten-minute hard timeout. Compile/setup/zero-test failures do
+not count. Coverage: admission/late-result guards, PCM cap/warning, fake service
+rejection, frame deadline and delayed result allowance, not every protocol claim.
 
 Native evidence: [run 40509803030](https://github.com/mattjmcnaughton/hagig/actions/runs/40509803030)
 executed build, three passing presentation tests, two Ready renders and 26 state
