@@ -8,26 +8,40 @@ portable Rust backend and a future Linux path.
 
 ## Status
 
-This repository contains an adopted [constitution](docs/CONSTITUTION.md), design
-documents, and a first [native macOS synthetic shell](clients/macos/AGENTS.md).
-The shell and native screenshot harness share SwiftUI views. The first
-[native CI evidence](https://github.com/mattjmcnaughton/hagig/actions/runs/40509803030)
-passed build and three presentation tests on macOS 15.7.9 arm64 / Xcode 16.4;
-both Ready images and 26 state images were inspected. This establishes static
-view rendering, not application interactions or dictation. The merged #7
-[controlled backend lifecycle](backend/AGENTS.md) supports a separate fake worker,
-single-request admission, cancellation and server stop; it is not transcription.
-There are no installation packages. The experimental #9 backend implements
-explicit hash-verified model installation, bounded safe WAV decoding and a real
-CLI/server/isolated-worker path against the [shared contract](backend/PROTOCOL.md).
-Linux synthetic speech, Required isolation, warm reuse, cancellation/reap and
-recovery have been exercised with existing pinned assets. This is not macOS
-integration or inference adoption. The native candidate is excluded from default
-builds; two seconds of silence still hallucinated text, and exact recognition
-remains unproven. See [backend guidance](backend/AGENTS.md) for its experimental
-build/acquisition boundaries, not a complete-app installation procedure. The
-#6 candidate in [PR #18](https://github.com/mattjmcnaughton/hagig/pull/18) remains
-partial and blocked; inference has not passed its adoption gate.
+Main is an **experimental development build, not an accepted alpha**. Besides the
+adopted [constitution](docs/CONSTITUTION.md) and design documents, it contains:
+
+- **Rust backend (#7–#9):** a per-user service with single-request admission,
+  a warm supervised worker, cancellation generations and recovery, and an
+  experimental real CLI → server → isolated native-worker path against the
+  [shared contract](backend/PROTOCOL.md). It also has explicit hash-verified model
+  installation, bounded safe WAV decoding and validated TOML. See
+  [backend guidance](backend/AGENTS.md).
+- **Native macOS client (#21, #22):** menu-bar Record/Stop/Cancel. Capture starts
+  only after backend admission, audio stays in memory as canonical PCM, and a
+  Unix-socket client talks to the service. Review is editable (Standard or
+  bounded Vim), Copy/Cut are explicit and current-host-only, and the shell shares
+  its SwiftUI views with the native screenshot harness. See
+  [native guidance](clients/macos/AGENTS.md).
+- **Local app assembly (#23):** `clients/macos/bundle.sh` assembles an ignored,
+  ad-hoc-signed `Hagig.app` from explicitly prepared native helpers. The
+  [local experiment recipe](clients/macos/AGENTS.md#local-source-experiment-after-the-gated-merges)
+  builds and launches it from a clone.
+
+Linux and GitHub-hosted Apple Silicon CI have exercised real synthetic speech
+under Required and explicit Disabled isolation: warm reuse, busy, cancellation,
+crash recovery and reap. One finite app integration ran with an injected
+synthetic WAV. Native state renders and a synthetic interaction recording were
+inspected. Exact runs and limits are recorded in the guidance and pull requests.
+
+None of this is acceptance of physical microphone capture, permissions, devices
+or rebuilds, second-device clipboard locality, model quality, privacy or
+inference adoption. The native inference candidate is excluded from default
+builds and has not passed its adoption gate (#6, #25). Two seconds of silence
+still hallucinated text, and a plural was transcribed as singular. Owner
+physical-Mac checks remain open in #21, #23 and #10. There are no installation
+packages or releases (#24).
+
 [MVP product requirements](docs/product/prds/01-mvp.md) own copy-only scope and
 acceptance; the [technical design](docs/technical/tdds/01-mvp.md) owns configuration,
 the bounded Vim key table and implementation contracts. The behavior below is
@@ -61,8 +75,8 @@ MVP requirement. Initial transcription is English-only.
 ## Intended architecture
 
 - **Swift macOS app:** menu-bar Record/Stop, microphone capture, permissions,
-  in-memory editing and explicit Copy. Its home is `clients/macos/`; only synthetic
-  presentation and explicit Copy are implemented in the initial shell.
+  in-memory editing and explicit Copy. Its home is `clients/macos/`, where the
+  experimental client awaits physical-Mac acceptance.
 - **Rust server:** session state and inference-worker supervision.
 - **Rust worker:** a separate process calling an existing speech-recognition
   library, rather than a new recognition engine built for Hagig.
@@ -109,12 +123,12 @@ privacy guarantees.
 ## Scope and development
 
 The MVP excludes a Linux desktop app, MCP integrations, coding-agent plugins, and
-a general inference-engine plugin framework. A clone-buildable, relocatable local
-`.app` launched from a terminal is planned in #23, not implemented. No Homebrew,
-public release, notarization or `/Applications` placement is a prerequisite;
-distribution is separately tracked in #24. Existing runnable scaffold commands
-live in [backend guidance](backend/AGENTS.md) and native guidance below; they do
-not build or launch the planned complete app.
+a general inference-engine plugin framework. Experimental clone-buildable,
+relocatable local `.app` assembly and terminal launch exist (#23); physical-Mac
+launch, permission and rebuild acceptance is pending. No Homebrew, public
+release, notarization or `/Applications` placement is a prerequisite;
+distribution is separately tracked in #24. Developer commands live in
+[backend guidance](backend/AGENTS.md) and the native guidance below.
 
 Linux can validate portable Rust behavior and inference experiments. macOS builds
 and physical-Mac acceptance remain necessary for microphone permissions, native

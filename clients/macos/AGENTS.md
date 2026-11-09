@@ -1,20 +1,19 @@
 # Native shell and screenshot workflow
 
-## #21 integration candidate (not accepted dictation)
+## Experimental real client (merged; not accepted dictation)
 
-This branch stacks on the exact unmerged #22 editor head e6e8e22. The normal
-shell now routes Record/Stop/Cancel to `DictationController`, native
-AVAudioEngine/AVAudioConverter capture and the #9 public socket contract frozen
-at 791f99c (`backend/PROTOCOL.md` on #9's branch). Backend/wire changes stay owned
-by #9; no Swift TOML parser, inference engine or normal-operation fake fallback.
-Previous synthetic-only descriptions below describe the checkpoint base, not
-the intended normal client path in this candidate.
+The #22 editor (PR30) and the #21 capture/socket client (PR32) are merged on main.
+The normal shell routes Record/Stop/Cancel to `DictationController`, native
+AVAudioEngine/AVAudioConverter capture and the #9 public socket contract
+(`backend/PROTOCOL.md`). Backend and wire changes are owned by the backend; there
+is no Swift TOML parser, inference engine or normal-operation fake fallback.
+Older synthetic-only descriptions below are historical evidence notes.
 
-Normal operation requires the matching real #9 backend, model and native helper
-packaging. These are NOT present on this stacked editor base. Bundle assembly
+Normal operation requires the paired real backend, an explicitly installed model
+and native helper packaging (see the local experiment below). Bundle assembly
 requires explicit prepared native input, never a controlled-helper fallback.
-Do not call this candidate runnable end-to-end until actual integrated evidence
-passes. Resolve `hagig` only at
+Hosted integration evidence is not physical-Mac acceptance (#21/#23 remain
+open). Resolve `hagig` only at
 `Contents/Helpers/hagig`; the helper starts/attaches with `start` (no fake flags).
 It owns runtime locking/stale-socket cleanup; Swift validates the same inherited
 XDG_RUNTIME_DIR or TMPDIR, private directory/socket and peer UID. No ambient PATH.
@@ -135,7 +134,12 @@ Prepared inputs remain unchanged. Output is ignored under `clients/macos/.build/
 ### Local source experiment after the gated merges
 
 Use an Apple Silicon Mac with Xcode 16.4 and Rust 1.90.0 already installed
-(`backend/rust-toolchain.toml` selects that Rust toolchain). This is an opt-in
+(`backend/rust-toolchain.toml` selects that Rust toolchain). Apple supports
+Xcode 16.4 only on macOS 15.3 through 26.1.x
+([system requirements](https://developer.apple.com/xcode/system-requirements)),
+and `bundle.sh` requires exactly Xcode 16.4. Check `sw_vers -productVersion`
+first: on a newer macOS, stop rather than edit the version check; selecting a
+different Xcode is an unapproved toolchain change, not a local workaround. This is an opt-in
 experimental build, not adoption or physical-Mac acceptance. Preparation and the
 explicit model install below acquire the existing pinned native/model/tokenizer
 assets (about 3.15 GB plus locked crate sources); neither app launch nor bundle
@@ -264,19 +268,15 @@ then launches the relocated shell executable briefly and terminates only that
 owned PID. Its cleanup stops only its isolated service and preserves scratch on
 stop failure. It does not touch the user's live runtime. It is not a terminal
 LaunchServices interaction test or runtime-free physical-Mac installation proof.
-The parent owns `macos-build.yml` integration: keep the packaging stand-in
-contracts always on, but replace the old no-argument native bundle caller with
-the finite PR32 real-backend job. D27 permits that automatic integration run to
-reuse #9's same pinned native/model/tokenizer acquisition (about 3.15 GB), hash
-verification and disposal. It is not permission for permanent downloads on
-every PR/main build. Bound the job to PR32 and the expected source branch/repo,
-with a twenty-minute hard timeout; skip it elsewhere without claiming main
-native-smoke evidence. No new pins, tools/dependencies, manual reruns, TCC changes
-or adoption waiver. Coordinate before publishing this changed bundle contract.
-Exact-head native success and inspection remain required. Linux stand-ins are
-not native signing/loader proof.
-Full #23 acceptance remains blocked on real integration (#9/#21/#22, adopted
-inference), macOS launch/relocation/signing/TCC and owner physical-Mac checks.
+`macos-build.yml` keeps the packaging stand-in contracts always on. Its finite
+real-backend job is bound to PR32's source repo/branch with a twenty-minute hard
+timeout and skips elsewhere (including main), so main runs do not claim native
+smoke or real-backend evidence. D27 permitted only that PR32 run to reuse the
+pinned native/model/tokenizer acquisition (about 3.15 GB), hash verification and
+disposal; it is not permission for downloads on other PR or main builds. Running
+it for another branch needs a new explicit owner grant. Linux stand-ins are not
+native signing/loader proof. Full #23 acceptance remains blocked on inference
+adoption (#6/#25) and owner physical-Mac launch/relocation/TCC/rebuild checks.
 
 Opt-in `RealBackendTests` takes absolute `HAGIG_INTEGRATION_HELPER`,
 `HAGIG_INTEGRATION_DATA_HOME` and `HAGIG_INTEGRATION_WAV`. Use a signed relocated
@@ -284,8 +284,10 @@ helper, isolated explicitly installed model data and #9's existing synthetic WAV
 It exercises production conversion/controller/socket, real review, CLI busy,
 isolated-pasteboard Copy and cancellation/reconnect. Injected audio is not a
 physical microphone or app pointer test. All unset means skip; partial setup
-fails. This integration is UNPROVEN until run on reviewed exact client/backend
-heads. For the D27 run, first execute #9's preparation script from its separate
+fails. It passed once on PR32 head 83d63f8 (macOS-build run 42540022130):
+candidate, missing-copied-Frameworks counterfactual (expected workerFailed) and
+restored runs, with cleanup markers. That finite hosted run is not repeated on
+main. For the D27 run, first execute #9's preparation script from its separate
 exact db18603 backend checkout, then explicitly install with private paths:
 
 ```sh
@@ -406,12 +408,13 @@ Apple device, native packaging, privacy and performance. This shell deliberately
 does not solve those spikes. Do not claim the ordinary interactive NSPopover is
 production-safe nonactivating feedback.
 
-## Editable review (#22 candidate)
+## Editable review (#22, merged)
 
 `ReviewEditor.swift` embeds a real plain NSTextView in the shared HagigView, with
 native selection, accessibility, scrolling and in-memory undo. Standard remains
 default. `Presentation(editorMode:)` / `begin(editorMode:)` accept the eventual
-validated server setting; there is NO Swift TOML parsing or server integration.
+validated server setting; the real client takes it from the server's `hello_ok`
+settings during reservation, and there is no Swift TOML parsing.
 The demo controls' explicitly synthetic mode picker applies to the next request.
 The existing 26-image gallery retains its count: fallback is Standard; copied is
 Vim Normal with a synthetic edited multiline Unicode fixture. No new render or
