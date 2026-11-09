@@ -1,0 +1,11 @@
+term-hagig	term	Open Hagig and transcribe the next instruction.	Open ha geeg and transcribe the next instruction.
+term-ghostty	term	Run the command in Ghostty without pressing enter.	Run the command in ghost tee without pressing enter.
+term-sherpa	term	Use sherpa-onnx for local speech recognition.	Use sherpa onyx for local speech recognition.
+term-parakeet	term	Compare Parakeet with the current speech model.	Compare parakeet with the current speech model.
+control-tests	control	Run the unit tests before changing the parser.	Run the unit tests before changing the parser.
+control-ghost	control	The ghost is hiding behind the old tree.	The ghost is hiding behind the old tree.
+control-bird	control	The little bird is singing by the window.	The little bird is singing by the window.
+control-amp	control	Turn the amp down before you start the music.	Turn the amp down before you start the music.
+silence	control		
+long-term	term	Open the Hagig settings, switch the inference worker to Parakeet, and then run the Ghostty integration tests again before you push the branch. If the sherpa-onnx build fails, paste the error into the Amp thread and stop there.	Open the ha geeg settings, switch the inference worker to parakeet, and then run the ghost tee integration tests again before you push the branch. If the sherpa onyx build fails, paste the error into the amp thread and stop there.
+long-control	control	Refactor the request parser so that it rejects empty frames, add a regression test for the oversized header case, and update the protocol document to describe the new error code. Keep the change small and do not touch the worker supervisor.	Refactor the request parser so that it rejects empty frames, add a regression test for the oversized header case, and update the protocol document to describe the new error code. Keep the change small and do not touch the worker supervisor.

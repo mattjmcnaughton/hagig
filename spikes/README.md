@@ -8,6 +8,8 @@ on these packages.
 
 - [Inference S1](inference-s1/README.md): pinned Linux inference/vocabulary and
   isolated-worker experiments; see its [preservation review](inference-s1/REVIEW.md).
+- [Inference S2](inference-s2/README.md): Python engines from maintained libraries
+  (transformers Qwen3-ASR, NeMo Parakeet, Apple mlx-whisper) on shared fixtures.
 
 Keep models, native binaries, generated audio, build outputs, personal content,
 and raw native diagnostics out of Git. Recipes use explicit acquisition and

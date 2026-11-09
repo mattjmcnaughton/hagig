@@ -1,0 +1,74 @@
+name: Inference S2 (Python engines on Apple Silicon)
+
+# Spike evidence only: synthetic `say` fixtures, pinned public models, results
+# uploaded as a short-retained artifact. Not product CI, not adoption evidence.
+on:
+  push:
+    paths:
+      - 'spikes/inference-s2/**'
+      - '.github/workflows/inference-s2.yml'
+  pull_request:
+    paths:
+      - 'spikes/inference-s2/**'
+      - '.github/workflows/inference-s2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  engines:
+    name: S2 ${{ matrix.engine }}
+    runs-on: macos-15
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - engine: qwen-1.7b
+            script: qwen_asr.py
+            args: --variant 1.7b
+          - engine: qwen-0.6b
+            script: qwen_asr.py
+            args: --variant 0.6b
+          - engine: nemo-parakeet
+            script: nemo_parakeet.py
+            args: ''
+          - engine: mlx-whisper-turbo
+            script: mlx_whisper_turbo.py
+            args: ''
+    defaults:
+      run:
+        shell: bash
+        working-directory: spikes/inference-s2
+    env:
+      WORK: ${{ runner.temp }}/s2
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.12.9'
+          enable-cache: false
+      - name: Host
+        run: |
+          uname -a
+          sw_vers
+          sysctl -n machdep.cpu.brand_string hw.memsize hw.ncpu
+          system_profiler SPDisplaysDataType | grep -E 'Chipset|Metal' || true
+      - name: Synthesize fixtures
+        run: python3 fixtures.py "$WORK/fixtures"
+      - name: Acquire pinned model (explicit network step)
+        run: uv run --locked --script ${{ matrix.script }} acquire "$WORK/models" ${{ matrix.args }}
+      - name: Transcribe
+        run: |
+          mkdir -p "$WORK/results"
+          /usr/bin/time -l uv run --locked --script ${{ matrix.script }} run "$WORK/models" "$WORK/fixtures" \
+            "$WORK/results/${{ matrix.engine }}.jsonl" ${{ matrix.args }}
+      - name: Summarize
+        run: python3 summarize.py "$WORK/results/${{ matrix.engine }}.jsonl" | tee "$WORK/results/${{ matrix.engine }}.md"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: s2-${{ matrix.engine }}
+          path: ${{ runner.temp }}/s2/results/
+          retention-days: 7
