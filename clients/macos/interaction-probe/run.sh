@@ -30,7 +30,7 @@ if ! xcodebuild build-for-testing -project "$project" -scheme InteractionProbe \
   exit 1
 fi
 printf 'HAGIG_PROBE build=true\n' > "$root/evidence/status.txt"
-swiftc -swift-version 5 -parse-as-library -D HAGIG_CAPTURE_PROBE shell-interaction.swift -o "$root/recorder"
+swiftc -swift-version 5 -parse-as-library shell-interaction.swift -o "$root/recorder"
 # Verify the actual generated launch configuration before starting automation.
 # keepNever is Xcode's automatic-screen-capture OFF scheme option. Never export
 # xcresult/raw XCTest logs, app bundles or desktop screenshots from this probe.
