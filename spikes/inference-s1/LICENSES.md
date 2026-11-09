@@ -65,7 +65,7 @@ are not shipped.
 
 1. The bundle has no LICENSE/NOTICE/third-party-notices file, and no
    attribution handling exists anywhere in the repo.
-2. The Hagig repository and its `hagig` crate declare no license of their own.
+2. Resolved 2026-11-09: Hagig's own source is MIT (`LICENSE`, `backend/Cargo.toml`).
 3. The ORT build is third-party. Which ThirdPartyNotices entries apply to this
    macOS/CoreML build, and whether the dylibs correspond to the cited sources, are
    both unverified.

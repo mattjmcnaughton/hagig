@@ -145,3 +145,11 @@ screenshot workflow, including what each form of evidence cannot establish.
 
 The name is inspired by Biblical Hebrew הֲגִיג, provisionally associated with
 murmuring or musing; the precise wording remains to be verified.
+
+## License
+
+Hagig's own source is licensed under the [MIT License](LICENSE). Third-party
+libraries and model assets keep their own licenses. Their bundled-notice and
+attribution obligations are inventoried in
+[`spikes/inference-s1/LICENSES.md`](spikes/inference-s1/LICENSES.md) and must be
+satisfied before any redistribution (#24).
