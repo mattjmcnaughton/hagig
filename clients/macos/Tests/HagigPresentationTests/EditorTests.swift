@@ -69,6 +69,17 @@ final class EditorTests: XCTestCase {
             XCTAssertEqual(unicode.modeLabel, "Vim · Visual line")
             keys("\u{1b}", in: unicode)
             XCTAssertEqual(unicode.selectedRange().length, 0)
+
+            // A saturated upward count on the first line must preserve its
+            // nonzero column without rescanning that long line for every step.
+            let long = editor("prefix-" + String(repeating: "x", count: 65_536))
+            long.setSelectedRange(NSRange(location: 7, length: 0))
+            let started = Date.timeIntervalSinceReferenceDate
+            keys("9999k", in: long)
+            XCTAssertLessThan(Date.timeIntervalSinceReferenceDate - started, 2,
+                              "first-line upward count remains responsive")
+            XCTAssertEqual(long.selectedRange(), NSRange(location: 7, length: 0))
+            XCTAssertEqual(long.string, "prefix-" + String(repeating: "x", count: 65_536))
         }
     }
 

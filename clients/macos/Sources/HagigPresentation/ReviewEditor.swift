@@ -394,6 +394,7 @@ final class ReviewTextView: NSTextView, NSTextViewDelegate {
         case "j", "k":
             let column = p - lineStart(p)
             for _ in 0..<n {
+                if key == "k" && lineStart(p) == 0 { break }
                 if key == "j" && lineEnd(p) == size { break }
                 let next = key == "j" ? lineAfter(p) : lineStart(max(0, lineStart(p) - 1))
                 p = min(next + column, max(next, lineEnd(next) - 1))

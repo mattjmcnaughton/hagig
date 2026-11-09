@@ -66,6 +66,8 @@ run_test() {
             grep -A 1 'XCTAssertEqual failed:' "$directory/$phase.log" | grep -F "$assertion"
         elif [ "$experiment" = crlf-register ]; then
             grep 'XCTAssertTrue failed' "$directory/$phase.log" | grep -F "$assertion"
+        elif [ "$experiment" = up-boundary ]; then
+            grep 'XCTAssertLessThan failed' "$directory/$phase.log" | grep -F "$assertion"
         else
             grep 'XCTAssertEqual failed' "$directory/$phase.log" | grep -F "$assertion" | grep -F "$detail"
         fi
@@ -75,7 +77,7 @@ run_test() {
     fi
 }
 
-for experiment in editor-copy presentation-copy immediate-discard dd-cursor dw-newline crlf-register paste-cursor paste-visual cut-visual; do
+for experiment in editor-copy presentation-copy immediate-discard dd-cursor dw-newline crlf-register paste-cursor paste-visual cut-visual up-boundary; do
     directory="$output/$experiment"
     mkdir "$directory"
     echo 'UNPROVEN: experiment has not completed candidate/mutant/restoration' > "$directory/verdict.txt"
@@ -137,6 +139,12 @@ for experiment in editor-copy presentation-copy immediate-discard dd-cursor dw-n
             replacement='s/^        if mode == .visual || mode == .visualLine {$/        if false {/'
             assertion='native Cut exits removed Visual selection'
             detail='XCTAssertEqual failed'
+            ;;
+        up-boundary)
+            source=$editor
+            test=testEveryMotionCountsAndVisualUnicodeBounds
+            replacement='/^                if key == "k" && lineStart(p) == 0 { break }$/d'
+            assertion='first-line upward count remains responsive'
             ;;
     esac
     verify_restored > "$directory/before.sha256.log"
