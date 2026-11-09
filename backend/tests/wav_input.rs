@@ -112,3 +112,40 @@ fn five_minutes_is_inclusive_and_overlong_audio_is_not_truncated() {
         Err("invalid_audio")
     );
 }
+
+/// F1/F2 in the pinned native WAV reader are avoided, not repaired: keep every
+/// backend source (including the optional native worker) off that reader.
+#[test]
+fn backend_sources_never_reference_the_native_wav_reader() {
+    fn sources(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                sources(&path, found);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                found.push(path);
+            }
+        }
+    }
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut files = Vec::new();
+    sources(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
+    assert!(files.len() > 10, "source walk found too few files");
+    for file in files {
+        let text = std::fs::read_to_string(&file).unwrap();
+        for name in [
+            "Wave",
+            "SherpaOnnxReadWave",
+            "SherpaOnnxReadWaveFromBinaryData",
+        ] {
+            let reachable = text.match_indices(name).any(|(at, _)| {
+                !text[..at].chars().next_back().is_some_and(ident)
+                    && !text[at + name.len()..].chars().next().is_some_and(ident)
+            });
+            assert!(!reachable, "{} references native {name}", file.display());
+        }
+    }
+}
