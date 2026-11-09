@@ -40,8 +40,6 @@ jobs:
       run:
         shell: bash
         working-directory: spikes/inference-s2
-    env:
-      WORK: ${{ runner.temp }}/s2
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -52,6 +50,7 @@ jobs:
           enable-cache: false
       - name: Host
         run: |
+          echo "WORK=$RUNNER_TEMP/s2" >> "$GITHUB_ENV"
           uname -a
           sw_vers
           sysctl -n machdep.cpu.brand_string hw.memsize hw.ncpu
