@@ -360,12 +360,218 @@ with `inference-candidate`. The sherpa-onnx-sys build-dependency instance has
 default/gzip/proxy-from-env and **does** honor proxy variables. That is one more
 reason the network-denied build matters.
 
+No exploit attempt, scanner, new tool or dependency was used.
+
+## Provenance, tokenizer, interface and operator follow-up — 2026-11-09
+
+Owner decisions for this pass, all 2026-11-09:
+- **D1:** native F1/F2 reproduction is no longer required once PR #37's guard
+  merges. Acceptance asks for negative cases on *reachable* findings, and the
+  backend never calls the native WAV reader. The defects stay unrepaired upstream.
+- **D2:** review the tokenizer and native interface, and record the operators
+  the graphs use. Reviewing ORT kernel code for those operators is deferred.
+- **D3:** trace public build records only. No rebuild, no upstream request.
+
+Evidence boundary:
+- Read-only GitHub API reads of public releases, workflow runs and job logs.
+- Pinned-source reads: S; the simple-sentencepiece v0.7 tarball, whose SHA256
+  matches S's cmake pin; and a sparse `cmake/` + `tools/ci_build/` checkout of ORT
+  tag v1.28.2.
+- The three ONNX graphs and `tokens.txt`, downloaded from the manifest URLs and
+  SHA256-verified. `bpe.vocab` was read from the first MiB of the `.nemo` with an
+  HTTP range request; its SHA256 matches the manifest.
+- Python standard-library scratch scripts and gcc on a Linux x86-64 orb. These
+  were removed afterwards.
+
+No native library was loaded, no inference ran, sherpa-onnx/ORT were not built,
+and no scanner, new tool or dependency was used.
+
+### Build provenance (remaining item 2)
+
+| Artifact | Public build record | Build facts from the log |
+| --- | --- | --- |
+| `sherpa-onnx-v2.0.1-osx-arm64-shared-no-tts-lib.tar.bz2` | Release v2.0.1; tag → `af2d8d81` (= S). Uploaded by `github-actions[bot]` 2026-10-26T16:39:50Z. The GitHub asset digest equals our pin `ac5594ad…f2e3`, and `updated_at` is 2 s later, so it was not replaced afterwards. [Run 40348432449](https://github.com/k2-fsa/sherpa-onnx/actions/runs/40348432449), job 121661567048 "Release shared tts-OFF macos-latest arm64;x86_64" | Image macos-26-arm64 20261021.0445.8, AppleClang 21.0.0, CMake 4.4.4. Checks out `refs/tags/v2.0.1` at `af2d8d81`, then `new-release.sh` rewrites version/sha1/date strings before compiling. Release, `BUILD_SHARED_LIBS=ON`, TTS/GPU/sanitizer off, `LINK_LIBSTDCPP_STATICALLY=ON`. The ccache restore found no cache; its 14/353 hits are within the run. A universal2 build is `lipo -thin arm64`'d, ad-hoc re-signed (`codesign --force --sign -`), tarred and uploaded by `svenstaro/upload-release-action` (SHA `29e53e9`, `overwrite: true`) |
+| `onnxruntime-osx-universal2-1.28.2.zip` (S's pin `b5033fb6…0191`) | csukuangfj/onnxruntime-libs release v1.28.2. Uploaded by `github-actions[bot]` 2026-09-04T17:20:41Z; the digest equals the pin. [Run 33892225135](https://github.com/csukuangfj/onnxruntime-libs/actions/runs/33892225135), job 101086390048 "macos-15-intel universal2". It ran on a push to branch `test-ci` at `bb069649`, an unsigned "Small fixes" commit 24 ahead of and 5 behind `master` | Checks out microsoft/onnxruntime `refs/tags/v1.28.2` → `33ca962` (= O). `build.py --config Release --build_shared_lib --use_coreml` for arm64 and x86_64, then combined. ccache was restored from the previous day's key but had 0/2060 hits. `USE_COREML=ON`, `DISABLE_CONTRIB_OPS=OFF`, `ENABLE_PYTHON=OFF`, `MINIMAL_BUILD=OFF`, training and every GPU/NPU provider off. The same zip was also pushed to Hugging Face `csukuangfj2/onnxruntime-libs` |
+
+What this shows:
+- Each binary traces to a public CI job that checked out the expected source tag.
+- Every `FetchContent_Declare` in S's `cmake/*.cmake` has a `URL_HASH`, so the
+  archive's dependency downloads during configure are SHA256-pinned. That includes
+  the ORT zip above, and portaudio, which is fetched over plain `http://`.
+- `ENABLE_LANGUAGE_INTEROP_OPS` is defined nowhere in the tag's `cmake/` or
+  `tools/ci_build/`. Per source, the interop custom-op loading guarded at
+  O `inference_session.cc:1197,1293,1331,1373,1407` is therefore compiled out.
+- The CoreML provider is compiled in, but the worker selects plain `cpu`.
+
+What it does not show:
+- The GitHub attestation API returns 404 for both digests, so neither file has a
+  build provenance attestation.
+- Matching build records are not reproducibility. Workflows on a maintainer
+  branch, with repository write tokens, produced and uploaded these bytes. GitHub's
+  digest records only what was uploaded.
+- **That these bytes were built from this source remains unproven.**
+- The ORT library is a third-party build from Microsoft source, not a Microsoft
+  release binary.
+
+Advisory consequence: all five ORT 1.24.3 security-fix PRs are ancestors of
+`33ca962`. The GitHub compare API reports them 849, 865, 861, 801 and 815 commits
+behind it, 0 ahead:
+- [#27444](https://github.com/microsoft/onnxruntime/pull/27444) GatherCopyData
+- [#27430](https://github.com/microsoft/onnxruntime/pull/27430) external data from bytes
+- [#27419](https://github.com/microsoft/onnxruntime/pull/27419) Resize
+- [#27543](https://github.com/microsoft/onnxruntime/pull/27543) RoiAlign
+- [#27518](https://github.com/microsoft/onnxruntime/pull/27518) LoRA
+
+This settles the earlier "packaged applicability unresolved" entry at source
+level, subject to the binary correspondence gap above.
+
+### Operator inventory (remaining item 3, inventory only)
+
+Method:
+- A standard-library protobuf wire-format walker reads ModelProto, GraphProto and
+  NodeProto, recursing into graph-valued attributes.
+- An independent byte search for the encoded NodeProto `op_type` field reproduced
+  the counts for encoder MatMulInteger (217), ConvInteger (77), LayerNormalization
+  (120), Where (73) and Softmax (24), decoder DynamicQuantizeLSTM (2) and joiner
+  MatMulInteger (3).
+
+| Graph | Header | Nodes / initializers | Operators (count) |
+| --- | --- | --- | --- |
+| encoder.int8.onnx | IR 8, `ai.onnx` opset 17, producer `onnx.quantize` 0.1.0 | 5,654 / 1,229 (612 float, 588 uint8, 29 int64) | Add 205, And 2, Cast 426, Concat 221, Constant 1,661, ConstantOfShape 51, ConvInteger 77, Div 27, DynamicQuantizeLinear 223, Equal 1, Expand 2, Floor 3, Gather 149, LayerNormalization 120, Less 1, MatMul 72, MatMulInteger 217, Mul 733, Not 2, Pad 48, Range 1, Relu 3, Reshape 295, Shape 175, Sigmoid 96, Slice 123, Softmax 24, Split 24, Squeeze 24, Sub 2, Tile 1, Transpose 244, Unsqueeze 328, Where 73 |
+| decoder.int8.onnx | IR 8, `ai.onnx` 17 + `com.microsoft` 1 | 30 / 17 (7 float, 2 uint8, 8 int8) | Cast 1, Concat 2, Constant 14, DequantizeLinear 1, Gather 1, Identity 1, Slice 4, Squeeze 2, Transpose 2, **com.microsoft::DynamicQuantizeLSTM 2** |
+| joiner.int8.onnx | IR 8, `ai.onnx` 17 | 26 / 12 (6 float, 6 int8) | Add 4, Cast 3, Constant 2, DynamicQuantizeLinear 3, MatMulInteger 3, Mul 6, Relu 1, Transpose 2, Unsqueeze 2. Output last dimension 1030 |
+
+Structure:
+- The union is 36 standard operators plus one contrib operator.
+- No graph has subgraphs (no If/Loop/Scan), model-local functions or external-data
+  initializers. ORT's external-data loader (O `tensorprotoutils.cc`) is therefore
+  not exercised by these assets.
+- Encoder metadata includes `vocab_size=1024`, `feat_dim=128`,
+  `subsampling_factor=8` and `model_type=EncDecRNNTBPEModel`.
+- Resize, RoiAlign, GatherND and LoRA (the 1.24.3 fix sites other than Gather) do
+  not appear.
+
+For the deferred kernel review, the higher-risk surfaces are:
+- The shape-driven allocation operators: Pad, Tile, Expand, Range,
+  ConstantOfShape, Reshape and Slice. Their sizes follow the audio length.
+- The integer-quantized kernels: ConvInteger, MatMulInteger and
+  DynamicQuantizeLinear.
+- The contrib DynamicQuantizeLSTM.
+- Nodes produced by graph optimizers. Sherpa sets no optimization level for plain
+  `cpu` (S `session.cc:209–310`), so ORT's default applies and optimizers can
+  rewrite these nodes before any kernel runs. The executed kernel set is not
+  exactly this list.
+
+### Tokenizer and vocabulary path
+
+Pinned tables:
+- `tokens.txt` is exactly `bpe.vocab`'s 1,024 pieces in order plus `<blk>` at ID
+  1024. IDs run contiguously from 0 to 1024, with no duplicate pieces.
+- S `offline-recognizer-transducer-nemo-impl.h:228–276` exits unless `<blk>` is
+  last and the line count equals the model's vocab size (metadata + 1). The joiner
+  width 1030 is 1025 tokens plus 5 TDT durations.
+- `bpe.vocab` has 1,024 two-field lines and 205 single-character pieces. Every
+  piece except `<unk>` is made only of single-character pieces. So the worker's
+  single-character check (`backend/src/bin/hagig-inference-worker.rs:24–36`)
+  guarantees that every accepted term can be segmented into vocabulary pieces.
+- `#` and `@` are not single-character pieces, so terms containing them are
+  rejected by that check. Configuration validation also rejects `:`, `/`, control
+  characters and non-space whitespace (`backend/src/config.rs:74–85`).
+
+Native path: hotwords → `/`→newline regex (nemo-impl `118–126`) →
+`EncodeHotwords` (S `utils.cc:104–206`) → ssentencepiece `Encode` → `EncodeBase`
+(`utils.cc:21–101`). `EncodeBase` maps each piece through the symbol table. A
+non-member piece beginning with `:` or `#` reaches `std::stof` (`utils.cc:53,57`),
+which throws on malformed numbers. Any other non-member piece is logged with its
+full line (`utils.cc:65–68`). `CreateStream` logs the entire hotword string on
+failure (nemo-impl `126`).
+- **Reachability:** with the pinned tables and the backend's two checks, every
+  emitted piece is in `tokens.txt`. The out-of-vocabulary, `stof` and
+  hotword-logging paths are therefore unreachable.
+- **If reached:** native stderr is null in both launchers
+  (`backend/src/launcher/linux.rs:29`, `macos.rs:43`). The non-WASM
+  `SHERPA_ONNX_LOGE` writes to stderr, not stdout (S `csrc/macros.h:22–52`), so
+  these logs cannot reach the private reply pipe. A C++ exception escaping an
+  `extern "C"` call is undefined behaviour at the Rust boundary, because the
+  declarations are not `C-unwind`. The worker is expected to terminate, and process
+  separation contains it.
+
+simple-sentencepiece v0.7:
+- `LoadVocab` (`ssentencepiece.cc:248–260`) exits the process on a malformed line.
+- `GetDag` (`64–78`) passes the remaining byte count as the result limit to darts
+  `commonPrefixSearch`, then iterates the returned count. Darts documents that
+  count as possibly larger than the limit (`darts.h:287–290`). It is bounded here
+  because matches from one position are distinct non-empty keys with distinct
+  lengths, at most the remaining bytes. This is a latent pattern, not a reachable
+  defect.
+- With no `<0x00>` piece, byte fallback is off; unmatched bytes become `<unk>`
+  (`115–150`).
+- The constructor starts a thread pool sized to `hardware_concurrency()`
+  (`ssentencepiece.h:39–52`). The single-string `Encode` used for hotwords does not
+  use it.
+
+**Correction to the F3 row above:** the worker accesses sherpa objects
+sequentially on one Rust thread, but the process is not single-threaded. ORT's
+thread pools are configured with `num_threads=2` (`session.cc:219–222`), and this
+idle tokenizer pool also exists. F3 containment depends only on sequential stream access, which
+still holds.
+
+Other native code reviewed:
+- `SymbolTable::operator[](id)` uses `.at()` (S `symbol-table.cc:192`), so an
+  out-of-range ID throws and aborts rather than reading out of bounds.
+- The TDT beam-search decoder (S
+  `offline-transducer-modified-beam-search-nemo-decoder.cc:240–253`) splits the
+  joiner output at the vocab size without checking that the output is wider. A
+  hostile, narrower joiner would read past the logits. The hash-pinned joiner
+  avoids this; it is a model-trust hazard, not reachable with pinned assets.
+
+### Rust ↔ C interface
+
+Layout check:
+- I transcribed every `repr(C)` field list reachable from
+  `OfflineRecognizerConfig` in S `rust/sherpa-onnx-sys/src/{offline_asr,online_asr}.rs`
+  into C, then compiled it against the real `c-api/c-api.h`.
+- For each struct, `sizeof`, every field's `offsetof` and every field's size were
+  compared. A field name missing from the header would fail to compile.
+- Result: **24 structs, 109 fields, no mismatch.** `OfflineRecognizerConfig` is
+  624 bytes on gcc x86-64 Linux.
+- The fields are only pointers, `int32_t` and `float`, whose size and alignment
+  are the same on aarch64 Darwin. No Apple-target compile was run.
+- Counterfactual: swapping `num_threads` and `debug` in a copy produced two
+  reported mismatches.
+
+The nine entry points used match the header's parameter and return types:
+create/destroy recognizer, create stream (with and without hotwords), destroy
+stream, accept waveform, decode, and get/destroy result JSON.
+
+Wrapper behaviour (S `rust/sherpa-onnx/src/offline_asr.rs`):
+- `create_stream*` (`702–712`) does not null-check. The C API returns null only for
+  a null recognizer (`c-api.cc:750–756`), which `create` already excludes.
+- `accept_waveform` casts the length to `i32` (`756`). The worker protocol caps
+  input at 4,800,000 samples.
+- `get_result` (`762–774`) copies the JSON, frees it with the matching destroy
+  call, and maps a parse failure to `worker_failed`.
+- `CString::new(..).unwrap()` panics on NUL; configuration already rejects
+  control characters.
+
+Not reviewed:
+- Unused C API functions.
+- Exception behaviour of every entry point. The earlier pass found only
+  recognizer creation catching exceptions.
+- Apple-target layout.
+
 ### Remaining #25 acceptance
 
-1. Isolated native negative cases for F1/F2. These need an owner-approved capture plan and native asset use.
-2. Source/binary correspondence for the prebuilt sherpa-onnx and the third-party ORT build.
-3. ORT graph/kernel, tokenizer and remaining FFI review against matching source.
-4. Recheck the packaged artifact in both modes after any fix.
-5. An explicit adoption decision for unresolved findings.
+1. ~~Isolated native negative cases for F1/F2~~. Not required by owner decision
+   D1 once PR #37 merges. The upstream defects remain unrepaired.
+2. Source/binary correspondence: the build records are traced (above). That the
+   bytes match the source is unproven for both the sherpa-onnx archive and the
+   third-party ORT build. Closing this needs a reproducible rebuild or a
+   publisher attestation, neither available.
+3. ORT kernel code review for the operators above, the optimizer-rewritten graph
+   and contrib DynamicQuantizeLSTM. This is deferred; tokenizer and interface
+   review is done.
+4. Recheck the packaged artifact in both modes after any fix. No fix is planned.
+5. An explicit adoption decision for the unresolved items.
 
 No exploit attempt, scanner, new tool or dependency was used.
