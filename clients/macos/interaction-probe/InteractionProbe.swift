@@ -66,6 +66,7 @@ final class InteractionProbe: XCTestCase {
         bridge = NSPasteboard(name: .init(name + ".request"))
         recorderStatus = NSPasteboard(name: .init(name + ".status"))
         let shell = XCUIApplication()
+        shell.launchArguments = ["--synthetic-demo"]
         let products = Bundle(for: InteractionProbe.self).bundleURL.deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent()
