@@ -8,6 +8,7 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
     private let popover = NSPopover()
     private let presentation = Presentation()
     private var demoWindow: NSWindow!
+    private var escapeMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -21,6 +22,14 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
         popover.contentViewController = NSHostingController(rootView:
             HagigView(presentation: presentation, copy: Self.copy)
         )
+        // Handle active cancellation before normal popover key processing.
+        // Only events delivered to this app, and never review-mode Escape.
+        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, event.keyCode == 53,
+                  presentation.stage == .recording || presentation.stage == .transcribing else { return event }
+            presentation.cancel()
+            return nil
+        }
         demoWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 300),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         demoWindow.title = "Hagig · Demo controls"
@@ -57,6 +66,10 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
 
     private static func copy(_ text: String) -> Bool {
         LocalClipboard().write(text)
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
     }
 }
 
