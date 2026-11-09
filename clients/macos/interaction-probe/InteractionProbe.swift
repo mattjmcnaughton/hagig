@@ -301,6 +301,7 @@ final class InteractionProbe: XCTestCase {
         XCTAssertTrue(shell.staticTexts["Listening…"].waitForExistence(timeout: 3))
         shell.typeKey(.escape, modifierFlags: [])
         shell.buttons["Show menu-bar surface"].click()
+        print("HAGIG_PROBE after-active-escape=listening-\(shell.staticTexts["Listening…"].exists)-cancelled-\(shell.staticTexts["Cancelled"].exists)-release-enabled-\(shell.buttons["Simulate release"].isEnabled)")
         XCTAssertTrue(shell.staticTexts["Cancelled"].waitForExistence(timeout: 3))
         XCTAssertFalse(editor.exists); clipboard(vim)
         try await pauseForMovie()
