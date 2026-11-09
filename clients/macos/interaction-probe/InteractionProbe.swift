@@ -300,6 +300,7 @@ final class InteractionProbe: XCTestCase {
         shell.buttons["Simulate recording"].click()
         XCTAssertTrue(shell.staticTexts["Listening…"].waitForExistence(timeout: 3))
         shell.typeKey(.escape, modifierFlags: [])
+        shell.buttons["Show menu-bar surface"].click()
         XCTAssertTrue(shell.staticTexts["Cancelled"].waitForExistence(timeout: 3))
         XCTAssertFalse(editor.exists); clipboard(vim)
         try await pauseForMovie()
