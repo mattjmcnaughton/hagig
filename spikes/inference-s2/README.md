@@ -57,7 +57,41 @@ reports term recovery, control and overall WER, false vocabulary insertions,
 silence output and latency. Synthetic TTS is not human dictation; these are a
 handful of clips, not accuracy samples, and the vocabulary is not held out.
 
-## Evidence so far
+## Hosted macOS results (run 42636236736, commit `f145a06`)
+
+[Run](https://github.com/mattjmcnaughton/hagig/actions/runs/42636236736): GitHub
+`macos-15` runners, "Apple M1 (Virtual)", 3 vCPU, 7 GiB, macOS 15.8.2. Fixtures
+from `say`. Raw records and full transcripts are in [evidence/](evidence/);
+`evidence/summary-run-42636236736.md` is `summarize.py` over them.
+
+| Engine (device) | Terms plain → biased (of 9) | Control WER | Silence plain / biased | Median short / 13 s clip, biased | Peak RSS |
+| --- | --- | --- | --- | --- | --- |
+| Qwen3-ASR 1.7B (CPU) | 3 → **9** | 0 / 0 | "Okay." / "Vocabulary: Hagig, Ghostty, sherpa-onnx, Parakeet, Amp." | 11.7 s / 43.6 s | 4.2 GiB |
+| Qwen3-ASR 0.6B (CPU) | 2 → **9** | 0 / 0 | "I'm." / "Hagig, Ghostty, sherpa-onnx, Parakeet, Amp." | 3.9 s / 16.0 s | 2.2 GiB |
+| NeMo Parakeet TDT v2 (CPU, alpha 1.0) | 3 → 4 | 0 / 0 | **empty / empty** | 1.4 s / 3.4 s | 3.8 GiB |
+| mlx-whisper turbo (Metal GPU) | 3 → 6 | 0 / 0 | "Thank you." / multilingual gibberish | 1.5 s / 2.0 s | 1.7 GiB |
+
+Observations, all on synthetic speech and a nine-term vocabulary that was not
+held out:
+
+- **Qwen's context prompt is the strongest biasing**: every term fixed in both
+  sizes, no control changes. Plain 1.7B once rendered Hagig as "Hugging Face".
+  On silence both sizes **echo the prompt** when biased and invent a word plain.
+- **NeMo GPU-PB at the documented starting alpha (1.0) barely moved**: only
+  "Ghostty" in the long clip. Alpha is explicitly data-tuned and was not swept.
+  It is the only engine that returned empty text on silence in both modes.
+- **mlx-whisper's `initial_prompt`** fixed Ghostty and the long clip's terms but
+  not short-clip "Hajig"/"Sherpa-Onix". Silence hallucinates in both modes; the
+  biased silence text differed between runs while being stable within a run.
+- **Latency is not representative of a real Mac.** torch 2.15 rejects the VM's
+  "Apple Paravirtual device that does not support Metal 2.0", so Qwen ran on CPU.
+  torch 2.12 accepted it, and NeMo on that MPS device produced garbage ("M", empty
+  strings) then crashed in TDT label looping (`index 32 is out of bounds`; run
+  42628772828), so the workflow pins NeMo to CPU. Only MLX ran on the GPU.
+- Cold load: MLX 8.7 s, NeMo 47.7 s (unpacks the `.nemo` archive), Qwen ~1–2 s
+  after the first-run environment install.
+
+## Linux smoke (2026-11-09)
 
 Linux orb smoke only, 2026-11-09 (2 vCPU x86-64, 3.8 GiB, no GPU). Fixtures were
 the repository's existing flite `backend/tests/fixtures/speech.wav` ("Open the
@@ -87,7 +121,7 @@ installed in the orb. This checks the scripts, not Mac performance or accuracy.
 
 ## Not established
 
-Apple Silicon latency/memory, MPS or Metal behavior, accuracy on real speech,
+Real Apple Silicon (non-VM) latency/memory, PyTorch MPS behavior, accuracy on real speech, tuned NeMo alpha,
 runtime network/write observation, blocked-network operation, packaging, or any
 privacy property. The NeMo lock includes `wandb`, `grpcio` and an OpenTelemetry
 OTLP/HTTP exporter via `nv-one-logger`, and NeMo constructs a OneLogger callback
