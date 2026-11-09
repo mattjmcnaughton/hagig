@@ -300,3 +300,72 @@ Review checkpoint and remaining issue acceptance, in order:
    isolation modes; required mode must fail closed before native load. Mac native
    CI, owner physical-Mac/human audio and #10 acceptance remain separate gates.
    Do not close #25 or adopt the candidate based on this documentation checkpoint.
+
+## Final backend reconciliation — 2026-11-09
+
+This section applies the findings above to the merged backend on main
+`369039530b6135ca760a45164d490532933bf8e5`. Its `backend/src` and `backend/tests`
+are byte-identical to PR31 head `db18603`, which was exercised on hosted Apple
+Silicon. It is a source-level reconciliation plus a refreshed advisory triage.
+It is **not** a native reproduction, a source/binary correspondence check, or
+adoption clearance. Earlier sections remain the historical record for H.
+
+### Findings against the final path
+
+| Finding | Final backend state | Still open |
+| --- | --- | --- |
+| F1/F2 native WAV reader | **Avoided, not repaired.** `backend/src/audio.rs` decodes WAV in safe Rust: a 300 s/file-byte cap before allocation, complete-frame alignment and finite samples. The worker receives only canonical PCM. `worker_protocol::read_request` requires 4-byte alignment, at most 19,200,000 bytes and every sample in [-1,1] (NaN rejected) before `accept_waveform`. No `Wave::read` call exists | Native reader defects in the prebuilt library remain unreproduced and unrepaired; never expose it to untrusted files |
+| F3 shared-stream race | **Contained by ownership.** `hagig-inference-worker` is single-threaded. It creates one stream per request and calls `accept_waveform`/`decode`/`get_result` sequentially. Cancellation kills and reaps the process rather than tearing down concurrently | Binding `Sync` hazard unrepaired upstream |
+| F4 native build integrity | **Contained in the documented recipe.** `backend/tests/prepare_macos_candidate.sh` verifies the archive SHA256 (`ac5594ad…f2e3`) and extracts only three allowlisted regular dylibs. It passes them via absolute `SHERPA_ONNX_LIB_DIR`, runs `cargo fetch --locked` first, then builds under `sandbox-exec (deny network*)`. The build-script downloader therefore cannot fetch. The trusted CLI/bootstrap are checked not to link sherpa/ORT | Only the archive's bytes are pinned, not where they came from or whether they match the sherpa-onnx source (see [LICENSES.md](LICENSES.md) on its universal2-thinned ORT input). Upstream `build.rs` remains unverified when used without the recipe |
+| Config/provider surface | Fixed `provider=cpu`, `debug=false`, two threads, `max_active_paths=4`. Worker exec uses `env_clear()` and `cwd=/` (so `ORT_LOAD_CONFIG_FROM_MODEL` is absent), and no `SessionConfig.*`/profiling is forwarded. Vocabulary syntax rejects control characters (including NUL), `/`, `:` and over-length terms. A pinned-table scalar check runs before native construction | Interior-NUL panics are unreachable via validated config but not via other callers; model paths are re-opened by native code after hash validation (TOCTOU within the user's private model directory) |
+| Model assets | Runtime hash-validates all five manifest assets inside the isolated worker before recognizer creation. The installer never unpacks the `.nemo`: it reads one literal tar member bounded by size and SHA256 | ONNX graph/metadata, ORT kernel and tokenizer native parsing not audited |
+
+### Advisory triage, final `backend/Cargo.lock` (154 entries)
+
+Sources (read 2026-11-09, no scanner run):
+- RustSec advisory-db at `7a40350e1b8ba5b656d909f88222a8059a83d88d` (2026-11-08).
+- The OSV crates.io bulk export (last modified 2026-11-08, 3,055 records), matched by version range against every locked name.
+- The GitHub advisory API per crate (reviewed, unreviewed and malware).
+
+All lookups succeeded. The features cited below were checked with `cargo tree -e features`.
+
+| Record | Locked | Affected? | Reachability |
+| --- | --- | --- | --- |
+| [RUSTSEC-2026-0386](https://rustsec.org/advisories/RUSTSEC-2026-0386.html) (informational, unsound `AsyncFd`; patched ≥1.51.6,<1.52 or ≥1.53.3) | tokio 1.48.0 | **Yes, by version** | Not compiled: `AsyncFd` is behind `cfg(all(unix, feature="net"))`. The resolved tokio features are only rt/signal/libc/mio/signal-hook-registry. Bumping tokio is an owner pin decision |
+| [RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382.html) (distrusted intermediates) | rustls-webpki 0.103.16 | No (first patched) | Installer TLS |
+| [RUSTSEC-2026-0381](https://rustsec.org/advisories/RUSTSEC-2026-0381.html) (root store) | webpki-roots 1.0.11 / 0.26.11 shim | No | Installer TLS roots (bundled, not native store) |
+| [RUSTSEC-2026-0346](https://rustsec.org/advisories/RUSTSEC-2026-0346.html)–[0349](https://rustsec.org/advisories/RUSTSEC-2026-0349.html), [0285](https://rustsec.org/advisories/RUSTSEC-2026-0285.html) | rustls 0.23.46 | No (first patched for 0346–0349) | Installer TLS |
+| [GHSA-3pv8-6f4r-ffg2](https://github.com/advisories/GHSA-3pv8-6f4r-ffg2) (PAX desync, ≤0.4.45); RUSTSEC-2026-0067/0068 | tar 0.4.46 | No (first patched) | Installer `entries()` read of a SHA-verified archive; no unpack |
+| [RUSTSEC-2026-0385](https://rustsec.org/advisories/RUSTSEC-2026-0385.html); [GHSA-3rjw-m598-pq24](https://github.com/advisories/GHSA-3rjw-m598-pq24) (aarch64 wrong results, <0.5.4) | ctutils 0.4.6; cmov 0.5.4 | No (cmov first patched) | sha2/digest path, relevant on Apple Silicon |
+| Build-only: RUSTSEC-2026-0429/0367–0369, [GHSA-m665-v7pm-7grj](https://github.com/advisories/GHSA-m665-v7pm-7grj) (zip <9.0.5); RUSTSEC-2026-0391–0393 (zstd), 0395–0406 (zstd-safe), 0410 (zstd-sys, wasm32); RUSTSEC-2023-0004 (bzip2); RUSTSEC-2021-0119 (nix) | zip 9.1.2, zstd 0.14.3, zstd-safe 8.2.0, zstd-sys 2.1.2, bzip2 0.4.4, nix 0.31.3 | No | sherpa-onnx-sys build script only |
+
+Older records for ring, untrusted, idna, zerovec, smallvec, hashbrown, mio, rustix,
+base64, once_cell, sha2, zlib-rs, time, shlex and bumpalo exclude the locked
+versions. 120 entries have no record in any source, including ureq 2.12.1,
+flate2, miniz_oxide, toml 0.9.8 and serde_json. "No record" is not a clean bill.
+The bundled C code (bzip2 1.0.8, zstd 1.5.7), sherpa-onnx/ORT binaries and git
+dependencies are outside these databases. ONNX Runtime advisories still need a
+source/build mapping for the third-party ORT build.
+
+Installer HTTP behavior was checked in [ureq 2.12.1 source](https://github.com/algesten/ureq/blob/ba4555d54fd72e16fc737f7e8fcc812efb131260/src/unit.rs#L346-L354):
+- `https_only(true)` rejects http redirect targets before connecting.
+- `redirects(5)` follows at most four hops.
+- Without `proxy-from-env`, proxy environment variables are not read ([agent.rs L267-L290](https://github.com/algesten/ureq/blob/ba4555d54fd72e16fc737f7e8fcc812efb131260/src/agent.rs#L267-L290)).
+- With only `tls`, no Accept-Encoding is sent and nothing is decompressed.
+- Roots come from bundled webpki-roots.
+- `User-Agent: ureq/2.12.1` identifies the library version.
+
+`cargo tree -e normal,features` confirms the runtime ureq has only `tls`, even
+with `inference-candidate`. The sherpa-onnx-sys build-dependency instance has
+default/gzip/proxy-from-env and **does** honor proxy variables. That is one more
+reason the network-denied build matters.
+
+### Remaining #25 acceptance
+
+1. Isolated native negative cases for F1/F2. These need an owner-approved capture plan and native asset use.
+2. Source/binary correspondence for the prebuilt sherpa-onnx and the third-party ORT build.
+3. ORT graph/kernel, tokenizer and remaining FFI review against matching source.
+4. Recheck the packaged artifact in both modes after any fix.
+5. An explicit adoption decision for unresolved findings.
+
+No exploit attempt, scanner, new tool or dependency was used.
