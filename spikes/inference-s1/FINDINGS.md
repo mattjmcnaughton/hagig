@@ -165,6 +165,10 @@ traces have zero network syscalls/writable opens, and only stderr writes.
 No fixture/model hash changed. These observations cover selected syscalls and
 finite CPU scenarios, not all possible OS persistence or dependency behavior.
 
+macOS (#6, D6): a separate finite fs_usage/lsof/nettop/unified-log observation of
+the real Apple Silicon worker in Required and Disabled is recorded in
+[MACOS-OBSERVATION.md](MACOS-OBSERVATION.md); it is not Linux evidence.
+
 ### 3. Operation with outbound networking blocked
 
 Repeated all 36 decodes inside `unshare -Urn`. Separate direct-connect probe to

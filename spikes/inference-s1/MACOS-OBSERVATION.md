@@ -137,3 +137,79 @@ retention. No model or native bytes are uploaded.
   proof that no attempt can occur.
 
 Results will be appended below after inspection of the run.
+
+## Results (inspected 2026-11-09)
+
+One run, no reruns: [Rust checks run 42551402179](https://github.com/mattjmcnaughton/hagig/actions/runs/42551402179/job/128947578364)
+(`pull_request`, PR #39 head `25f9ef0`, checked-out merge ref `6fbdd21`). The
+job took 6 minutes. The push run skipped this job, as gated. Host: macOS 15.8.2
+(24H232), arm64 VM, image macos15 20261104.0514.1, Rust 1.90.0. `csrutil
+status` reported SIP **disabled** on this runner (only read, never changed).
+Tool SHA-256s are in the artifact's `host.txt`.
+
+All five sessions (pre-download smoke plus the four registered sessions) met
+every validity gate. fs_usage reported no overrun, the parser left 0 lines
+unparsed, and both ordinary controls were traced in every session, matching
+the listener's ground truth.
+
+### Real worker, `native_speech.py` lifecycle (both runs passed it)
+
+| Worker chain (fs_usage unless noted) | Required | Disabled |
+| --- | --- | --- |
+| Processes | 3 × `sandbox-exec` → `hagig-worker` → `hagig-inference-worker` | 3 × `hagig-worker` → `hagig-inference-worker` |
+| Network-class syscalls (socket, connect, bind, listen, accept, send*, recv*, socketpair) | **0** | **0** |
+| Writable opens | 9, all `/dev/dtracehelper` | 6, all `/dev/dtracehelper` |
+| Regular files opened writable; mutating syscalls (rename, unlink, mkdir, truncate, chmod, xattr, …) | **0; 0** | **0; 0** |
+| `write`-family calls | 8, all fd 1 (3 bootstrap ACKs + 5 worker replies) | 8, all fd 1 |
+| Real model load seen | `encoder.int8.onnx` opened 6× (hash check + ORT load per worker) | same |
+| lsof, 79 samples | no IPv4/IPv6/unix/NECP/nexus descriptors; no writable regular descriptors | same |
+| Seatbelt reports in unified log | 0, but the observer is **unproven** (see below) | n/a |
+| Unified-log entries attributed to worker processes | 3 without messageType + 3 Info | 3 without messageType |
+
+`/dev/dtracehelper` is dyld's DTrace helper device: every launched image opens
+it read-write, including each control process, so it is not a file write.
+Read-only opens beyond libraries and model assets included
+`.CFUserTextEncoding`, `com.apple.diagnosticd.filter.plist` and `Info.plist`
+metadata.
+
+### Positive controls
+
+- **Ordinary children** (`hg6-lead` and `hg6-trail`, every session): connect,
+  bind and sendto returned errno 0, and the writable open plus write were
+  traced. lsof saw their IPv4 descriptors and nettop saw their loopback flows.
+- **Required, same launch path** (probe as the helper, through `sandbox-exec`
+  and the real bootstrap): `socket` ×2 succeeded and `connect` and `bind`
+  returned errno 1, all traced. The probe recorded
+  `tcp_connect=os_error_1 udp_bind=os_error_1 udp_send=not_attempted`; the
+  listener got 0 connections. The probe's new file and its 7 writes were
+  traced, the CLI returned `worker_failed`, and the helper was restored
+  byte-identical. Seatbelt denies at connect/bind, not at socket creation.
+- **Disabled, same launch path:** `connect`, `bind` and `sendto` returned
+  errno 0, all traced; the listener got 1 TCP connection and 1 datagram. The
+  file write was traced. lsof saw the IPv4 descriptors and the writable file,
+  and nettop listed `hagig-inference` with a flow.
+- **Not proven:** no Seatbelt denial report reached the unified-log query,
+  even for the denied Required control. The real session's zero Seatbelt
+  reports are therefore not evidence. nettop's subject-line counts in the
+  real sessions (Required 4, Disabled 2) match the bracketing controls, but
+  the bounded excerpt cannot attribute every line, so nettop is not
+  established as a per-worker observer for those sessions. The lsof control
+  only applies where the probe holds sockets, which happened in Disabled.
+
+Afterwards the native helpers, libraries and all five model assets matched
+their recorded SHA-256s. The cleanup marker was present, and the assets,
+archive and raw traces were disposed. The artifact (233 KB) contains only
+bounded text summaries.
+
+### Interpretation and remaining limits
+
+In this finite run, the built-in tracer saw the real worker chain make no
+network-class syscall and no regular-file write attempt in either mode, and
+write only to its private stdout pipe. That matches the Linux strace
+observation. It is evidence level 2 only, not proof that no attempt can occur.
+
+Still unobserved: `connectx`, NECP/Skywalk and Mach IPC (including networking
+delegated over XPC), mmap-based writes, and other processes acting for the
+worker. The worker processes also emitted a few unified-log entries
+(persistence through `logd`, not a worker file write). By design their
+content and sender library were not captured.

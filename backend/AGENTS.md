@@ -184,6 +184,8 @@ cancellation/reap and warm recovery; it does NOT load a native model. Tests use
 explicit Disabled for this portable controlled peer, not Required enforcement.
 Actual model success, separate runtime networking/write observation and blocked-
 network operation must be reported independently, preserving silence failures.
+The finite #6 macOS worker network/write observation (PR #39 only, D6) and its
+limits are in `spikes/inference-s1/MACOS-OBSERVATION.md`; its job never runs on main.
 
 ## Controlled lifecycle service (#7 baseline; explicit exerciser retained)
 
