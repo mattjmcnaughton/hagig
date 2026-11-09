@@ -73,8 +73,8 @@ control, the workload and the trail control, waits 2 s, then stops tracers.
 
 ## Exact commands (job `macos-runtime-observation` in `rust-checks.yml`)
 
-Runs only for `pull_request` events of this PR's same-repository head branch
-`user/issue-6-macos-runtime-observation`; skipped on every other branch and on
+Runs only for `pull_request` events of PR #39 (same-repository head branch
+`user/issue-6-macos-runtime-observation`); skipped on every other branch and on
 main. `macos-15`, Xcode 16.4, pinned Rust 1.90.0, 20-minute hard timeout,
 read-only token, SHA-pinned actions. From `backend/`:
 

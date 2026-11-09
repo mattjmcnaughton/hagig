@@ -179,3 +179,132 @@ jobs:
           path: ${{ runner.temp }}/hagig-issue9-native/evidence/
           if-no-files-found: error
           retention-days: 7
+
+  # D6 authorizes this one finite #6 observation on PR 39 only: runtime
+  # observation (evidence level 2), not a privacy certificate or adoption.
+  # Skipped on every other PR/branch and on main. See
+  # spikes/inference-s1/MACOS-OBSERVATION.md for the preregistered plan.
+  macos-runtime-observation:
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.number == 39 && github.head_ref == 'user/issue-6-macos-runtime-observation' && github.event.pull_request.head.repo.full_name == github.repository }}
+    name: Finite arm64 worker network/write observation (#6; not a privacy certificate)
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    defaults:
+      run:
+        shell: bash
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Record host and built-in tracers (read-only)
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/hagig-issue6-evidence"
+          mkdir "$evidence"
+          {
+            git rev-parse HEAD
+            sw_vers
+            uname -a
+            printf 'Runner image: %s %s\n' "${ImageOS:-unavailable}" "${ImageVersion:-unavailable}"
+            csrutil status || printf 'csrutil status unavailable\n'
+            rustc --version --verbose
+            sudo -n true && printf 'sudo -n available\n'
+            shasum -a 256 /usr/bin/fs_usage /usr/bin/nettop /usr/sbin/lsof /usr/bin/log /usr/bin/sandbox-exec
+            shasum -a 256 tests/observe_macos_runtime.py tests/fixtures/observation_probe.rs tests/native_speech.py tests/fixtures/speech.wav
+          } 2>&1 | tee "$evidence/host.txt"
+      - name: Tracer positive-control smoke before any asset acquisition
+        run: |
+          python3 tests/observe_macos_runtime.py --smoke \
+            --trace "$RUNNER_TEMP/hagig-issue6-trace-smoke" --evidence "$RUNNER_TEMP/hagig-issue6-evidence"
+      - name: Prepare pinned native candidate without implicit downloads
+        run: bash tests/prepare_macos_candidate.sh
+      - name: Explicit pinned model install and independent hash verification
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/hagig-issue9-native"
+          XDG_DATA_HOME="$root/data" XDG_CONFIG_HOME="$root/install-config" \
+            "$root/Contents/Helpers/hagig" model install parakeet-tdt-0.6b-v2-int8-v1
+          python3 - "$root" model-digests.txt <<'PY'
+          import hashlib, json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          manifest = json.loads(pathlib.Path("model-manifest.json").read_text())
+          models = root / "data/hagig/models"
+          assert {p.name for p in models.iterdir()} == {manifest["id"], ".install-lock"}
+          model = models / manifest["id"]
+          assert {p.name for p in model.iterdir()} == {a["name"] for a in manifest["assets"]}
+          with (root / "evidence" / sys.argv[2]).open("w") as report:
+              for asset in manifest["assets"]:
+                  path = model / asset["name"]
+                  assert path.stat().st_size == asset["bytes"]
+                  checksum = hashlib.sha256()
+                  with path.open("rb") as source:
+                      for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                          checksum.update(chunk)
+                  assert checksum.hexdigest() == asset["sha256"]
+                  report.write(f'{asset["name"]} {asset["bytes"]} {checksum.hexdigest()}\n')
+          print("FIVE PINNED ASSETS VERIFIED; no archive/stage retained; no bytes published")
+          PY
+      - name: Observe real worker in Required and Disabled with bracketing controls
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/hagig-issue9-native"
+          python3 tests/observe_macos_runtime.py --root "$root" \
+            --trace "$RUNNER_TEMP/hagig-issue6-trace" --evidence "$RUNNER_TEMP/hagig-issue6-evidence"
+      - name: Re-verify installed model and native helper hashes after observation
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/hagig-issue9-native"
+          shasum -a 256 -c "$root/evidence/native-sha256.txt"
+          python3 - "$root" <<'PY'
+          import hashlib, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          model = root / "data/hagig/models/parakeet-tdt-0.6b-v2-int8-v1"
+          for line in (root / "evidence/model-digests.txt").read_text().splitlines():
+              name, size, expected = line.split()
+              checksum = hashlib.sha256()
+              with (model / name).open("rb") as source:
+                  for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                      checksum.update(chunk)
+              assert (model / name).stat().st_size == int(size) and checksum.hexdigest() == expected
+          assert sorted(p.name for p in model.iterdir()) == sorted(
+              l.split()[0] for l in (root / "evidence/model-digests.txt").read_text().splitlines())
+          print("INSTALLED MODEL UNCHANGED AFTER OBSERVATION")
+          PY
+      - name: Cleanup gate, then dispose acquired assets and raw traces
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/hagig-issue9-native"
+          evidence="$RUNNER_TEMP/hagig-issue6-evidence"
+          sudo -n /usr/bin/pkill -INT -x fs_usage || true
+          # Never delete app/model bytes beneath a service whose stop is unproven.
+          if test -f "$evidence/observation.command"; then
+            grep -Fx OBSERVATION_CLEANUP_COMPLETE "$evidence/observation-cleanup.txt" || {
+              printf 'Cleanup unproven; retaining owned assets until runner disposal\n' >&2
+              exit 1
+            }
+          fi
+          if test -d "$root/Contents" && pgrep -f "$root/Contents/Helpers/"; then
+            printf 'Live helper process; retaining owned assets until runner disposal\n' >&2
+            exit 1
+          fi
+          rm -rf "$root/data" "$root/Contents" "$root/libraries" "$root/target" "$root/install-config" \
+            "$RUNNER_TEMP/hagig-issue6-trace" "$RUNNER_TEMP/hagig-issue6-trace-smoke"
+          rm -f "$root/native.tar.bz2"
+          test ! -e "$root/data"
+          test ! -e "$root/native.tar.bz2"
+          test ! -e "$RUNNER_TEMP/hagig-issue6-trace"
+          printf 'DISPOSED: model data, native files, archive and raw traces\n'
+      - name: Upload bounded content-free summaries only
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: issue6-macos-observation-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/hagig-issue6-evidence/
+            ${{ runner.temp }}/hagig-issue9-native/evidence/
+          if-no-files-found: error
+          retention-days: 7
