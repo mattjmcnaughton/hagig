@@ -30,9 +30,11 @@ jobs:
           - engine: qwen-0.6b
             script: qwen_asr.py
             args: --variant 0.6b
+          # The runner's paravirtual GPU breaks torch 2.12 MPS (garbage text, then
+          # an out-of-bounds crash); torch 2.15 refuses it. Keep PyTorch on CPU here.
           - engine: nemo-parakeet
             script: nemo_parakeet.py
-            args: ''
+            args: --device cpu
           - engine: mlx-whisper-turbo
             script: mlx_whisper_turbo.py
             args: ''
