@@ -16,8 +16,9 @@ document does not certify dependency privacy or model performance.
 Swift macOS app ── HTTP/1.1 over Unix socket ──┐
                                                ├── Python server ── private pipes ── Python worker
 Python CLI ────── HTTP/1.1 over Unix socket ──┘   (FastAPI, uvicorn)                    │
-                                                                     transformers on PyTorch
-                                                                     Qwen3-ASR
+                                                                      one engine per configured model (§2):
+                                                                      Qwen3-ASR via transformers/PyTorch, or
+                                                                      Whisper via mlx-whisper/MLX
 ```
 
 - **Swift app:** AppKit menu-bar Record/Stop lifecycle, permissions, microphone
@@ -25,8 +26,8 @@ Python CLI ────── HTTP/1.1 over Unix socket ──┘   (FastAPI, uv
 - **Python server:** single-request admission, authoritative backend request state,
   configuration/model validation, audio buffering, worker supervision, and cancellation.
   It never imports the inference engine, PyTorch or model code.
-- **Python worker:** inference only. Native crashes remain outside the server and
-  app. No networking, microphone, clipboard, or UI ownership.
+- **Python worker:** inference only, through one of two engines behind a shared
+  interface (§2). Native crashes remain outside the server and app. No networking, microphone, clipboard, or UI ownership.
 - **Python CLI:** explicit model installation, file transcription, start, status,
   and stop. It is a sibling client, not an automation interface into the Swift app.
 
@@ -71,7 +72,7 @@ In both modes, the worker communicates through private pipes, not the server's
 Unix socket. Launch it with an environment allowlist (offline and telemetry
 settings below, no inherited proxies or credentials), `close_fds`, working
 directory `/`, and stderr discarded. It writes a fixed ready acknowledgment before
-importing the engine. Explicit model installation remains a separate operation
+importing an engine (worker protocol in §6). Explicit model installation remains a separate operation
 outside this boundary. A network sandbox alone does not restrict filesystem access
 or prove absence of network attempts, diagnostic leakage, or other privacy violations.
 
@@ -86,30 +87,47 @@ runtime enforcement.
 
 ## 2. Inference adoption gate
 
-First candidate: Qwen3-ASR (`Qwen/Qwen3-ASR-0.6B-hf` or `Qwen/Qwen3-ASR-1.7B-hf`)
-through Hugging Face transformers on PyTorch. Vocabulary biasing passes configured
-terms through the model's documented free-form context prompt. This is an evaluation
-target, not an adopted, benchmarked, or privacy-cleared dependency. mlx-whisper is
-a comparison only. No other engine or plugin boundary is planned.
+Owner decision, 2026-11-10: the first draft ships two engines behind one
+interface, so the boundary is shown with real implementations. Both are evaluation
+targets, not adopted, benchmarked, or privacy-cleared dependencies.
+
+- **`qwen3-asr`:** Qwen3-ASR (`Qwen/Qwen3-ASR-0.6B-hf` or `Qwen/Qwen3-ASR-1.7B-hf`)
+  through Hugging Face transformers on PyTorch. Vocabulary biasing passes the
+  configured terms through the model's documented free-form context prompt.
+- **`mlx-whisper`:** OpenAI Whisper large-v3-turbo through Apple's mlx-whisper on
+  MLX (Metal). Vocabulary biasing uses Whisper's `initial_prompt`. Apple Silicon
+  macOS only; on other platforms configuration validation rejects its model IDs.
+
+The interface is a `typing.Protocol` in the worker: load a model from a local
+directory, then transcribe canonical float32 PCM with a vocabulary list into
+text. Each model manifest names its engine. The worker maps that name to a
+constructor through a fixed table and imports only the selected engine's module,
+so the other stack never loads. The test fake implements the same Protocol. This
+is a closed set of in-tree engines, not a plugin framework: no entry points,
+dynamic discovery or user-supplied engines (constitution §7). The server never
+imports either engine.
 
 Hosted macOS evidence ([run 42636236736](https://github.com/mattjmcnaughton/hagig/actions/runs/42636236736),
-Apple M1 virtual machine, CPU only, transformers 5.22.2, torch 2.15.0): both sizes
-recovered 9 of 9 vocabulary terms with the prompt and 2–3 without, with no control
-regressions. With a vocabulary prompt, both echo the prompt on digital silence,
-an open risk for PRD AC9; the owner chose not to run a further silence check in
-the spike (2026-11-10). PyTorch could not use the
-virtual GPU, so these latencies are not representative. A physical-Mac run chooses
-the size.
+Apple M1 virtual machine): Qwen3-ASR ran on CPU (transformers 5.22.2, torch
+2.15.0), because PyTorch could not use the virtual GPU, so its latencies are not
+representative. Both sizes recovered 9 of 9 vocabulary terms with the prompt and
+2–3 without, with no control regressions. mlx-whisper 0.4.3 ran on Metal at about
+1.5–2 seconds per clip and recovered 6 of 9 terms with the prompt and 3 without.
+Both engines produced text on digital silence (biased Qwen echoes its prompt), an
+open risk for PRD AC9; the owner chose not to run a further silence check in the
+spike (2026-11-10). A physical-Mac run chooses the Qwen size and the default engine.
 
 The adoption spike must establish:
 
 1. A reproducible locked uv environment on Apple Silicon and Linux.
-2. Actual Qwen3-ASR decoding with vocabulary biasing and paired non-vocabulary
-   controls.
+2. Actual decoding with each engine, with vocabulary biasing and paired
+   non-vocabulary controls.
 3. Accuracy, release-to-text latency, cold load time, resident/peak memory, and
-   behavior up to the five-minute input cap, on MPS where available.
+   behavior up to the five-minute input cap, on MPS or Metal where available.
 4. Loading from a relocated app bundle without checkout paths.
 5. Source, runtime-network/write, and blocked-network evidence as separate records.
+6. Each engine's GPU path (MPS for PyTorch, Metal for MLX) under `seatbelt-v1.sb`,
+   or a record of exactly what the policy must additionally allow.
 
 Model-file hardening:
 
@@ -118,12 +136,18 @@ Model-file hardening:
   processor and chat template), plus licenses and download sources.
 - Load from local paths only with `use_safetensors=True`; never set
   `trust_remote_code`. Refuse repositories that offer only pickle formats.
+- MLX uses only weights `hagig model install` converts itself: OpenAI's
+  safetensors at a pinned revision, converted with Apple's `convert.py` pinned by
+  `ml-explore/mlx-examples` commit and SHA-256, in the CLI process. Record the
+  converted files' SHA-256 at install and verify them at load. No community
+  conversions.
 - Set `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `HF_HUB_DISABLE_TELEMETRY=1`
   and `DO_NOT_TRACK=1` before import; Seatbelt is the backstop if a library ignores them.
-- Accept only official publishers. Safetensors prevents code execution on load,
+- Accept only official publishers (Qwen, OpenAI, Apple). Safetensors prevents code execution on load,
   not a backdoored model.
 
-Pin transformers, PyTorch and every transitive wheel in `uv.lock`. No dtype,
+Pin transformers, PyTorch, MLX, mlx-whisper and every transitive wheel in
+`uv.lock`; mlx-whisper itself also pulls in PyTorch, numba, scipy and tiktoken. No dtype,
 thread count, quantization or device policy is settled here. Do not claim MPS or
 Neural Engine acceleration without observing the actual path.
 
@@ -138,7 +162,7 @@ Use TOML only for the alpha. Proposed schema (not implemented yet):
 mode = "standard" # Default. Optional "vim" selects the bounded table in §8.
 
 [model]
-id = "qwen3-asr-0.6b" # Alias resolved by the pinned manifest; size not yet chosen.
+id = "qwen3-asr-0.6b" # Or "whisper-large-v3-turbo" (Apple Silicon only). Manifest alias.
 
 [inference]
 network_isolation = "required" # Default. "disabled" is an explicit opt-out; required on Linux.
@@ -305,6 +329,36 @@ Model errors never trigger acquisition. Contract fixtures (request and response
 bytes, expected client outcomes) are shared by pytest and Swift tests; they prove
 codec and state expectations only.
 
+### Worker protocol
+
+The server sends work to the worker over two anonymous pipes, the worker's stdin
+and stdout, created by `asyncio.create_subprocess_exec`. There are no sockets, so
+the Seatbelt policy can deny all networking, including Unix sockets. Do not use
+`multiprocessing`: it exchanges pickles, so a compromised worker could execute
+code in the server, and its spawn method cannot start a child under `sandbox-exec`.
+
+Frames are `kind:u8 | length:u32 big-endian | payload`: kind 1 is a JSON object of
+at most 64 KiB, kind 2 is canonical PCM of at most 19,200,000 bytes. Both sides
+validate the header before allocating and read fully across partial reads.
+
+1. The worker starts and writes the fixed line `HAGIG-WORKER-READY-v1` before
+   importing any engine.
+2. The server sends `load` with `version`, `generation`, `engine`, model
+   directory and vocabulary. Vocabulary never travels in arguments or
+   environment, which other local users can read with `ps`. The worker imports
+   only that engine, loads the model and replies `loaded` or an error code.
+3. For each request the server sends `transcribe` with `generation`, `request_id`
+   and `sample_count`, then one PCM frame. The worker replies `result` with text,
+   or `error` with a stable code, echoing `generation` and `request_id`.
+
+One request is in flight at a time, and the worker stays warm between requests.
+The server accepts only a reply whose generation and request ID match exactly;
+any mismatch, malformed or oversized frame, or stray stdout byte fails the request
+and retires the worker. There is no in-band cancel, because inference cannot be
+interrupted safely: the server invalidates the request, then terminates and reaps
+the worker (§7), and the next request starts a fresh one. The server enforces the
+120-second computation deadline on the reply.
+
 ## 7. State machine and cancellation
 
 Server request lifecycle:
@@ -468,7 +522,7 @@ to the milestone, not an additional grant:
 | --- | --- |
 | Python runtime | uv-managed CPython (python-build-standalone), pinned in the project; `uv.lock` committed |
 | Server/CLI starting set | fastapi, uvicorn, pydantic, typer, httpx, numpy; stdlib `tomllib`; structlog from the template, configured for content-free fields only. No OpenTelemetry or pydantic-settings |
-| Inference | transformers and PyTorch with their locked transitives (huggingface_hub, tokenizers, safetensors) for Qwen3-ASR, subject to the §2 adoption gate; no new engine/plugin framework |
+| Inference | transformers and PyTorch with their locked transitives (huggingface_hub, tokenizers, safetensors) for Qwen3-ASR; mlx and mlx-whisper (Apple Silicon only) for Whisper. Both subject to the §2 adoption gate; two in-tree engines behind one Protocol, no plugin framework |
 | Swift client | swift-server AsyncHTTPClient for HTTP over the Unix socket; review its SwiftNIO transitives, including vendored BoringSSL, before adoption |
 | Native editor/UI | Existing Swift/AppKit/SwiftUI and shared render harness; no external editor, Vim dependency or new tool |
 | Build/test | uv, ruff, ty, pytest and just; copier for generating `backend/` from the template; existing Swift/Xcode commands; GitHub-hosted native CI; ask before any manual workflow dispatch |
@@ -486,7 +540,7 @@ private call order or decorative formatting.
 | Layer | Evidence |
 | --- | --- |
 | Portable Python (pytest unit/integration/e2e) | Request limits, busy admission, upload-start and reservation deadlines, chunk-boundary validation, startup contention, configuration validation, malformed audio, upload disconnect, cancellation/late results, worker crash/deadline recovery, CLI stdout/errors/input preservation, Linux required-mode refusal |
-| Inference integration | Actual pinned model; paired biased/unbiased fixtures and controls, supported WAV variants, long audio, cold/warm latency and memory; silence and noise outcomes for AC9, including the known prompt echo |
+| Inference integration | Each engine's actual pinned model through the same worker protocol; paired biased/unbiased fixtures and controls, supported WAV variants, long audio, cold/warm latency and memory; silence and noise outcomes for AC9, including the known prompt echo |
 | macOS isolation | Real worker under `seatbelt-v1.sb`: outbound IPv4/IPv6/DNS denied while pipe IPC and inference work, with an unsandboxed connectivity control |
 | macOS build | Swift target and the bundled interpreter/environment, signing and loading on macOS; Linux success is not a macOS build |
 | Physical Mac | Record/Stop, permissions, microphone/device loss, native editor/keyboard routing, cancel/Copy races, second-device clipboard control, relocated local app and human usefulness; owner final tests deferred |
@@ -511,7 +565,7 @@ owns the AC-to-ticket/environment evidence matrix; do not duplicate it here.
 
 | Risk investigation | Question, evidence, and exit decision | Unblocks |
 | --- | --- | --- |
-| Inference (S2 spike, `spike/inference-s2` branch) | Hosted macOS runs are done (§2). Remaining: a physical-Mac run of both Qwen3-ASR sizes for MPS latency and memory, which picks the size. | Model manifest, worker |
+| Inference (S2 spike, `spike/inference-s2` branch) | Hosted macOS runs are done (§2). Remaining: a physical-Mac run of both Qwen3-ASR sizes and mlx-whisper for MPS/Metal latency and memory, which picks the Qwen size and the default engine. | Model manifest, worker |
 | Native copy-only path (#21/#22) | Validate Record/Stop/cap/Cancel, editable Standard/Vim review, all currentHostOnly cut/copy routes and keyboard/accessibility behavior. No destination-identity or automatic-paste work in this milestone. | Usable capture/review/Copy, final platform acceptance |
 | Packaging and privacy (#10/#23) | Can the bundled interpreter, environment and model run from a relocatable bundle without forbidden runtime behavior? Produce loader/install evidence plus separate source/network/write/blocked-network findings. Proceed, patch dependencies, or reject adoption. | Distribution layout, alpha installation |
 
@@ -545,7 +599,8 @@ distribution, required-default/explicit-disabled isolation, functionality-first
 numeric measurements, and (2026-11-10) a Python backend managed with uv and
 generated from the owner's template, REST over the private Unix socket with no
 TCP, Swift AsyncHTTPClient, no Linux required-mode implementation initially,
-and Qwen3-ASR through transformers as the first candidate. Do not
+and two engines behind one worker Protocol (Qwen3-ASR through transformers,
+Whisper through mlx-whisper). Do not
 reopen these as unanswered gates. Streamed uploads owning the request (§6),
 WAV formats, restart-to-apply configuration, remaining resource caps and hard
 deadlines retain their proposed status until implementation evidence validates
@@ -554,7 +609,9 @@ alter safety/privacy commitments.
 
 No review can substitute for these still-unverified facts:
 
-- Qwen3-ASR size, MPS latency, memory and long-input behavior on a physical Mac.
+- Qwen3-ASR size, the default engine, and each engine's latency, memory and
+  long-input behavior on a physical Mac.
+- MPS and Metal access from the worker under `seatbelt-v1.sb`.
 - Silence/noise behavior for AC9: the biased model echoes its prompt on silence.
 - Seatbelt enforcement for the Python worker, and Hugging Face/transformers
   offline behavior under it.
