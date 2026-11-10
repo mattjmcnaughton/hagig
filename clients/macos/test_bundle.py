@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parent
-SYNC = "sync --frozen --no-dev --no-editable --managed-python"
+SYNC = "sync --frozen --no-dev --no-editable"
 
 
 class BundleContracts(unittest.TestCase):
@@ -39,6 +39,8 @@ class BundleContracts(unittest.TestCase):
             "HOME": str(self.root),
             "CALLS": str(self.log),
             "MANAGED": str(self.managed),
+            # A caller's preference never reaches the bundled sync.
+            "UV_PYTHON_PREFERENCE": "system",
         }
         self.stub("uname", 'if [ "$1" = -m ]; then echo arm64; else echo Darwin; fi')
         self.stub("xcodebuild", 'echo "Xcode 16.4"')
@@ -50,21 +52,23 @@ esac""")
         # A uv environment: packages in a venv whose python links to the managed one.
         self.stub("uv", """
 case "$1" in
-  python) [ "$2" = dir ] && printf '%s\\n' "${UV_DIR:-$MANAGED}" ;;
   sync)
+    printf 'preference=%s\\n' "$UV_PYTHON_PREFERENCE" >> "$CALLS"
     env=$UV_PROJECT_ENVIRONMENT
     site=$env/lib/python3.12/site-packages
-    mkdir -p "$env/bin" "$site/hagig" "$site/launcher" "$site/hagig-0.1.0.dist-info" "$site/__pycache__"
+    mkdir -p "$env/bin" "$site/hagig" "$site/hagig-0.1.0.dist-info" "$site/__pycache__"
     ln -s "$MANAGED/cpython-3.12.14-macos-aarch64-none/bin/python3.12" "$env/bin/python"
     printf 'pkg' > "$site/hagig/__init__.py"
-    [ -n "$NO_PROFILE" ] || printf '(version 1)' > "$site/launcher/seatbelt-v1.sb"
+    [ -n "$NO_PROFILE" ] || printf '(version 1)' > "$site/hagig/seatbelt-v1.sb"
     printf 'MACHO ext' > "$site/hagig/_native.cpython-312-darwin.so"
     printf '{"url":"file://checkout"}' > "$site/hagig-0.1.0.dist-info/direct_url.json"
     printf 'meta' > "$site/hagig-0.1.0.dist-info/METADATA"
     printf 'import _virtualenv' > "$site/_virtualenv.pth"
+    printf 'import _distutils_hack' > "$site/distutils-precedence.pth"
     printf 'shim' > "$site/_virtualenv.py"
     printf 'pyc' > "$site/__pycache__/_virtualenv.cpython-312.pyc"
-    [ -z "$EXTRA_PTH" ] || printf '/somewhere\\n' > "$site/extra.pth" ;;
+    [ -z "$EXTRA_PTH" ] || printf '/somewhere\\n' > "$site/extra.pth"
+    [ -z "$SITECUSTOMIZE" ] || printf 'import os' > "$site/sitecustomize.py" ;;
 esac""")
         self.stub("file", 'if grep -q MACHO "${!#}"; then echo "Mach-O 64-bit arm64"; else echo "ASCII text"; fi')
         self.stub("codesign", ":")
@@ -88,7 +92,7 @@ case "$*" in
   *version_info*) echo 3.12 ;;
   *base_prefix*) printf '%s\\n' "$here" ;;
   *compileall*) : ;;
-  *SEATBELT_PROFILE*) [ -f "$here/lib/python3.12/site-packages/launcher/seatbelt-v1.sb" ] ;;
+  *SEATBELT_PROFILE*) [ -f "$here/lib/python3.12/site-packages/hagig/seatbelt-v1.sb" ] ;;
 esac
 """)
         python.chmod(0o755)
@@ -146,10 +150,10 @@ esac
             "Resources/python/lib/python3.12/os.py",
             "Resources/python/lib/python3.12/lib-dynload/_ssl.cpython-312-darwin.so",
             f"{site}/hagig/__init__.py", f"{site}/hagig/_native.cpython-312-darwin.so",
-            f"{site}/hagig-0.1.0.dist-info/METADATA", f"{site}/launcher/seatbelt-v1.sb",
+            f"{site}/hagig-0.1.0.dist-info/METADATA", f"{site}/hagig/seatbelt-v1.sb",
         ]))
         self.assertEqual((contents / "Resources/LICENSE").read_text(), "MIT License (stand-in)\n")
-        self.assertIn(f"uv {SYNC}\n", self.calls())
+        self.assertIn(f"uv {SYNC}\npreference=only-managed\n", self.calls())
         # The build never edits the developer's managed interpreter.
         self.assertTrue((self.base / "bin/pip").exists())
         self.assertTrue((self.base / "lib/python3.12/site-packages/pip").is_dir())
@@ -172,8 +176,8 @@ esac
         self.assertTrue(calls[signs[2] + 1].startswith("codesign --verify --deep --strict"))
         self.assertTrue(all(str(self.managed) not in calls[i] for i in signs))
 
-    def test_unreviewed_pth_missing_profile_or_unmanaged_python_never_publish(self):
-        for name, value in (("EXTRA_PTH", "1"), ("NO_PROFILE", "1"), ("UV_DIR", "/usr")):
+    def test_startup_code_or_missing_profile_never_publish(self):
+        for name, value in (("EXTRA_PTH", "1"), ("SITECUSTOMIZE", "1"), ("NO_PROFILE", "1")):
             with self.subTest(variable=name):
                 self.env[name] = value
                 self.assertNotEqual(self.run_bundle("run").returncode, 0)

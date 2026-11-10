@@ -16,11 +16,22 @@ from hagig.config import NetworkIsolation
 from hagig.framing import OFFLINE_ENV
 
 SANDBOX_EXEC = Path("/usr/bin/sandbox-exec")
-# backend/src/launcher/seatbelt-v1.sb beside the package. #48 must ship it at
-# the same place relative to the installed package.
-SEATBELT_PROFILE = (
-    Path(__file__).resolve().parent.parent / "launcher" / "seatbelt-v1.sb"
-)
+
+
+def _seatbelt_profile() -> Path:
+    """The policy shipped in the installed package (the app bundle), else the
+    source tree's backend/src/launcher/seatbelt-v1.sb. Neither existing leaves
+    a missing path, so required mode refuses with isolation_unavailable."""
+    package = Path(__file__).resolve().parent
+    installed = package / "seatbelt-v1.sb"
+    return (
+        installed
+        if installed.is_file()
+        else package.parent / "launcher" / "seatbelt-v1.sb"
+    )
+
+
+SEATBELT_PROFILE = _seatbelt_profile()
 WORKER_COMMAND = (sys.executable, "-I", "-m", "hagig.worker")
 
 # The worker inherits nothing else: no proxies, credentials or Python settings.

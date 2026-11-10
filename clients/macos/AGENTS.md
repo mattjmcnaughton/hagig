@@ -141,7 +141,8 @@ Prerequisites, from the clone root on an Apple Silicon Mac (native arm64 shell):
 Xcode 16.4 (Apple supports it on macOS 15.3 through 26.1.x; on a newer macOS stop
 rather than edit the version check) and uv (the version `python-backend.yml`
 pins, 0.12.9). uv downloads the locked wheels and, when absent, the uv-managed
-Python 3.12; that `uv sync` is the build's only network step. No Homebrew,
+Python 3.12; that `uv sync` is the build's only network step. The 3.12 patch
+release bundled is the one that uv version selects (the smoke prints it). No Homebrew,
 `/Applications` copy, certificates or notarization credentials are needed.
 
 ```sh
@@ -160,14 +161,15 @@ Hagig.app/Contents/Resources/LICENSE                  # root LICENSE (the packag
 Hagig.app/Contents/Resources/python/bin/python3.12    # uv-managed python-build-standalone
 Hagig.app/Contents/Resources/python/lib/python3.12/   # stdlib, precompiled
 Hagig.app/Contents/Resources/python/lib/python3.12/site-packages/   # the locked environment
-    hagig/ ...  launcher/seatbelt-v1.sb  (fastapi, uvicorn, numpy, ...)
+    hagig/ (with hagig/seatbelt-v1.sb)  fastapi/ uvicorn/ numpy/ ...
 ```
 
 How it is built, and why:
 
 - `sync_backend` in `bundle.sh` is the one place that picks the environment:
-  `uv sync --frozen --no-dev --no-editable --managed-python` into a staging
-  directory. When #47 adds engine groups or extras, change that one command.
+  `UV_PYTHON_PREFERENCE=only-managed uv sync --frozen --no-dev --no-editable`
+  into a staging directory. When #47 adds engine groups or extras, change that
+  one command.
 - uv environments are not relocatable: a venv's `pyvenv.cfg` records its
   interpreter's absolute path, uv adds a `_virtualenv` shim, and the project's
   `direct_url.json` names the checkout. So the bundle does not ship the venv.
@@ -176,25 +178,29 @@ How it is built, and why:
   interpreter's own `site-packages`, minus the shim and `direct_url.json`. Every
   Hagig process runs `python -I` (`cli.SERVER_COMMAND`, `launcher.WORKER_COMMAND`),
   which ignores `PYTHON*` variables and the user site and sees exactly those
-  packages. A `.pth` file other than the shim is refused, so nothing extends
-  `sys.path`. Headers, docs, build configuration, pip/ensurepip, IDLE, Tcl/Tk and
+  packages. `-I` still runs `.pth` files and `sitecustomize`/`usercustomize`, so
+  the build refuses any of them, after removing uv's shim and setuptools'
+  build-time `distutils-precedence.pth`.
+  Headers, docs, build configuration, pip/ensurepip, IDLE, Tcl/Tk and
   the other `bin/` scripts (build-host shebangs) are left out.
-- The non-editable install puts the Seatbelt profile at
-  `site-packages/launcher/seatbelt-v1.sb` through a hatch wheel `force-include`
-  in `backend/pyproject.toml`, so `launcher.SEATBELT_PROFILE`
-  (`<package parent>/launcher/seatbelt-v1.sb`) resolves inside the bundle with no
-  code change; the source stays at `backend/src/launcher/`. `bundle.sh` refuses
-  to publish when the profile is absent, and required mode still fails closed
-  with `isolation_unavailable` if it goes missing later.
+- The non-editable install puts the Seatbelt profile inside the package, at
+  `site-packages/hagig/seatbelt-v1.sb`, through a hatch wheel `force-include` in
+  `backend/pyproject.toml` (a Hagig-owned path, not a generic top-level
+  directory). `launcher.SEATBELT_PROFILE` uses that installed copy first and
+  falls back to the source tree's `backend/src/launcher/seatbelt-v1.sb`, where
+  the file stays, for checkouts. `bundle.sh` refuses to publish without the
+  profile, and required mode still fails closed with `isolation_unavailable` if
+  neither exists.
 - `compileall` with `unchecked-hash` precompiles the stdlib and packages, so no
-  process writes `__pycache__` into the signed bundle; the smoke checks the bundle
-  is byte-identical after a run. Recorded source names use a neutral prefix.
+  process writes `__pycache__` into the signed bundle (the smoke re-verifies the
+  seal after a run). Recorded source names use a neutral prefix.
 - Signing is local and ad hoc, inside out: every Mach-O file under
   `Resources/python` (the interpreter, `.so` and `.dylib`), then the helper and
   `HagigShell`, then the app, then `codesign --verify --deep --strict`.
   `install_name_tool` removes SwiftPM's `@loader_path` rpath from the shell only.
   Ad-hoc signing is not Developer ID, notarization, Gatekeeper approval, a TCC
-  grant or permission stability across rebuilds.
+  grant or permission stability across rebuilds, and without the hardened
+  runtime it gives no resistance to same-user dyld injection.
 - `Contents/Helpers/hagig` resolves `Contents` from its own path (not a symlink
   to it), sets `UV_OFFLINE=1` and `UV_PYTHON_DOWNLOADS=never` defensively and
   execs `python3.12 -I -B` on `hagig.cli`. It uses no uv, PATH, PYTHONPATH or
@@ -238,47 +244,41 @@ bash clients/macos/smoke-bundle.sh /abs/moved/Hagig.app   # macOS, bundle outsid
 bash clients/macos/bundle-proof.sh /abs/moved/Hagig.app /abs/new/evidence
 ```
 
-`smoke-bundle.sh` refuses a bundle inside the checkout. It verifies the plist
-and signatures, checks every Mach-O is signed, arm64 and links only system or
-bundle-relative paths, and rejects any `Resources` or `Helpers` file naming the
-checkout (the Swift shell may embed source paths as diagnostic strings). Under
-`env -i` with private XDG paths (no PATH, uv or PYTHONPATH) it runs the helper's
-`start`, reads `GET /v1/status` through the CLI and with `curl --unix-socket`
-(`network_isolation: required`), checks the server process is the bundled
-interpreter and maps no code outside the bundle and the system, and expects
-`transcribe backend/tests/fixtures/speech.wav` to print `model_missing` and exit
-1. Without a model the server never launches a worker (`model_missing` comes
-first), so the smoke then runs the server's own `Launcher().argv("required")`
-with the bundled interpreter: `/usr/bin/sandbox-exec -f` the profile inside the
-bundle, then the bundled worker, which must write its ready line and exit 0 at
-EOF. That shows the profile resolves and the worker starts under it; it is not
-network-denial or inference evidence. It then stops the server, briefly runs the
-relocated `HagigShell` and checks the bundle files are unchanged.
-`bundle-proof.sh` copies the relocated bundle three times and breaks one property
-in each: a `.pth` link to the checkout replacing the packaged `hagig` (the CLI
-still runs, so runtime success alone would miss it), a missing Seatbelt profile
-(`isolation_unavailable`) and an unsigned `pydantic_core` extension. The smoke
-must refuse each for that reason, and the original must pass again afterwards.
+What each check proves (the scripts own the mechanics):
 
-`BundledBackendTests` (opt-in: absolute `HAGIG_BUNDLED_APP` and
-`HAGIG_INTEGRATION_WAV`; both unset skips, one set fails) is the app against the
-bundled server. With a private short runtime and config setting `model.id`, it
-drives `DictationController` and the real `SocketRequest`, whose helper start
-launches the server through `Contents/Helpers/hagig`. A file capture streams
-`speech.wav` through the production converter into the open upload (not a
-microphone), and the test expects the `.issue(.modelMissing)` state with no
-transcript. A second test omits `model.id` and expects the helper's exit 2 to
-show `.issue(.configuration)` without starting a server. Each stops its own
-server and prints `BUNDLED_BACKEND_CLEANUP_COMPLETE`; a failed stop keeps the
-runtime directory.
+- `smoke-bundle.sh`, on a bundle moved outside the checkout, under `env -i` with
+  private XDG paths and a config setting `model.id`: every Mach-O is signed,
+  arm64 and loads only system or bundle-relative paths; no `Resources` or
+  `Helpers` file names the checkout (the Swift shell may embed source paths as
+  diagnostic strings); the helper starts a server that is the bundled
+  interpreter and maps no code from elsewhere; `GET /v1/status` answers over the
+  socket with `network_isolation: required`; `transcribe speech.wav` answers
+  `model_missing`; `stop` works; the seal still verifies afterwards; and it
+  prints the interpreter version and sizes. Without a model the server never
+  launches a worker (`model_missing` is checked first), so the smoke runs the
+  server's own `Launcher().argv("required")` and `worker_env` with the bundled
+  interpreter: `sandbox-exec -f` the in-bundle profile, then the bundled worker,
+  which must write its ready line. That shows the profile resolves and the
+  worker starts under it, not network denial or inference.
+- `bundle-proof.sh` breaks one property per copy and requires the right refusal:
+  a `.pth` link to the checkout (the CLI still runs, so runtime success alone
+  would miss it), a missing profile (`isolation_unavailable`), an unsigned
+  `pydantic_core` extension, and no `hagig` package for the app test
+  (`serverUnavailable`). The original then passes both checks again.
+- `BundledBackendTests` (opt-in: absolute `HAGIG_BUNDLED_APP` and
+  `HAGIG_INTEGRATION_WAV`; both unset skips, one set fails) is the app against
+  the bundled server: `DictationController` and the real `SocketRequest` start it
+  through `Contents/Helpers/hagig`, a file capture streams `speech.wav` through
+  the production converter (not a microphone), and the result is the
+  `.issue(.modelMissing)` state with no transcript. Without `model.id`, the
+  helper's exit 2 shows `.issue(.configuration)` and starts no server. Each test
+  stops only its own server and prints `BUNDLED_BACKEND_CLEANUP_COMPLETE`.
 
-`macos-build.yml`'s `bundle-smoke` job runs all of this on macos-15: stand-ins,
-build, relocation to `$RUNNER_TEMP/relocated app`, hiding uv's private
-interpreter and cache directories, the smoke, the app integration (two tests,
-none skipped, two cleanup markers), an app counterfactual against a copy without
-the `hagig` package (must fail with `serverUnavailable`) and `bundle-proof.sh`.
-It uploads text logs only, never bundle bytes. Hosted runs are not physical-Mac
-launch, LaunchServices, TCC, microphone or rebuild-permission acceptance.
+`macos-build.yml`'s `bundle-smoke` job runs them all on macos-15 after moving the
+bundle to `$RUNNER_TEMP/relocated app` and hiding uv's private interpreter and
+cache directories. It uploads text logs only, never bundle bytes. Hosted runs are
+not physical-Mac launch, LaunchServices, TCC, microphone or rebuild-permission
+acceptance.
 
 `bash clients/macos/client-proof.sh /absolute/new/evidence` runs preregistered
 client-only candidate/mutant/restoration in a disposable worktree with unchanged

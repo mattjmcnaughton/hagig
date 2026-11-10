@@ -35,13 +35,15 @@ private final class FileCapture: NativeCapture {
 final class BundledBackendTests: XCTestCase {
     private struct Setup {
         let helper: URL
-        let wav: URL
-        let root: URL
         let environment: [String: String]
+        let controller: DictationController
     }
 
+    /// A private short runtime and config for one test, and a controller whose
+    /// requests use the bundled helper. Teardown stops only this test's server,
+    /// also after a failure, and keeps the runtime directory if stop fails.
     @MainActor
-    private func prepare(config: String) throws -> Setup {
+    private func prepare(config: String, presentation: Presentation) throws -> Setup {
         let supplied = ProcessInfo.processInfo.environment
         let app = supplied["HAGIG_BUNDLED_APP"], wav = supplied["HAGIG_INTEGRATION_WAV"]
         if app == nil, wav == nil { throw XCTSkip("Requires a built, relocated Hagig.app and a WAV") }
@@ -61,73 +63,60 @@ final class BundledBackendTests: XCTestCase {
                            "XDG_RUNTIME_DIR": root.path,
                            "XDG_CONFIG_HOME": root.appendingPathComponent("config").path,
                            "XDG_DATA_HOME": root.appendingPathComponent("data").path]
-        return Setup(helper: URL(fileURLWithPath: appPath).appendingPathComponent("Contents/Helpers/hagig"),
-                     wav: URL(fileURLWithPath: wavPath), root: root, environment: environment)
+        let helper = URL(fileURLWithPath: appPath).appendingPathComponent("Contents/Helpers/hagig")
+        let wavURL = URL(fileURLWithPath: wavPath)
+        let controller = DictationController(presentation: presentation,
+            makeRequest: { SocketRequest(helper: helper, environment: environment) },
+            permission: { true }, makeCapture: { sink, _ in FileCapture(url: wavURL, sink: sink) })
+        addTeardownBlock { @MainActor in
+            controller.cancel()
+            let stopped = try await Self.call(helper, ["stop"], environment)
+            XCTAssertEqual(stopped.status, 0, "owned service cleanup must complete")
+            guard stopped.status == 0 else { return }
+            try FileManager.default.removeItem(at: root)
+            print("BUNDLED_BACKEND_CLEANUP_COMPLETE")
+        }
+        return Setup(helper: helper, environment: environment, controller: controller)
     }
 
     @MainActor
     func testRecordingReachesTheBundledServerAndShowsModelMissing() async throws {
-        let setup = try prepare(config: "[model]\nid = \"qwen3-asr-0.6b\"\n")
-        let initial = try await call(setup.helper, ["status"], setup.environment)
+        let model = Presentation()
+        let setup = try prepare(config: "[model]\nid = \"qwen3-asr-0.6b\"\n", presentation: model)
+        let initial = try await Self.call(setup.helper, ["status"], setup.environment)
         XCTAssertEqual(initial.status, 0)
         XCTAssertEqual(initial.text, "stopped\n", "the app's helper start must launch the server")
-        let model = Presentation()
-        let controller = DictationController(presentation: model,
-            makeRequest: { SocketRequest(helper: setup.helper, environment: setup.environment) },
-            permission: { true }, makeCapture: { sink, _ in FileCapture(url: setup.wav, sink: sink) })
-        do {
-            controller.record()
-            try await wait(seconds: 10) { model.stage != .awaitingAdmission }
-            XCTAssertEqual(model.stage, .recording)
-            XCTAssertEqual(model.modelID, "qwen3-asr-0.6b")
-            let busy = try await statusJSON(setup)
-            XCTAssertEqual(busy["state"] as? String, "busy")
-            XCTAssertEqual(busy["network_isolation"] as? String, "required")
-            controller.stop()
-            try await wait(seconds: 30) { model.stage != .transcribing }
-            XCTAssertEqual(model.stage, .issue(.modelMissing))
-            XCTAssertNil(model.transcript)
-            XCTAssertFalse(model.copied)
-            let idle = try await statusJSON(setup)
-            XCTAssertEqual(idle["state"] as? String, "idle")
-            XCTAssertEqual(idle["worker"] as? String, "absent")
-        } catch {
-            controller.cancel()
-            try await stopAndClean(setup)
-            throw error
-        }
-        controller.cancel()
-        try await stopAndClean(setup)
+        setup.controller.record()
+        try await wait(seconds: 10) { model.stage != .awaitingAdmission }
+        XCTAssertEqual(model.stage, .recording)
+        XCTAssertEqual(model.modelID, "qwen3-asr-0.6b")
+        let busy = try await statusJSON(setup)
+        XCTAssertEqual(busy["state"] as? String, "busy")
+        XCTAssertEqual(busy["network_isolation"] as? String, "required")
+        setup.controller.stop()
+        try await wait(seconds: 30) { model.stage != .transcribing }
+        XCTAssertEqual(model.stage, .issue(.modelMissing))
+        XCTAssertNil(model.transcript)
+        XCTAssertFalse(model.copied)
+        let idle = try await statusJSON(setup)
+        XCTAssertEqual(idle["state"] as? String, "idle")
+        XCTAssertEqual(idle["worker"] as? String, "absent")
     }
 
     @MainActor
     func testMissingModelIDShowsConfigurationWithoutStartingAServer() async throws {
-        let setup = try prepare(config: "[editor]\nmode = \"standard\"\n")
         let model = Presentation()
-        let controller = DictationController(presentation: model,
-            makeRequest: { SocketRequest(helper: setup.helper, environment: setup.environment) },
-            permission: { true }, makeCapture: { sink, _ in FileCapture(url: setup.wav, sink: sink) })
-        controller.record()
+        let setup = try prepare(config: "[editor]\nmode = \"standard\"\n", presentation: model)
+        setup.controller.record()
         try await wait(seconds: 10) { model.stage != .awaitingAdmission }
         XCTAssertEqual(model.stage, .issue(.configuration), "helper exit 2 is a configuration issue")
-        let status = try await call(setup.helper, ["status"], setup.environment)
+        let status = try await Self.call(setup.helper, ["status"], setup.environment)
         XCTAssertEqual(status.text, "stopped\n")
-        try await stopAndClean(setup)
-    }
-
-    /// Stops only this test's server; keeps its runtime if stop fails.
-    @MainActor
-    private func stopAndClean(_ setup: Setup) async throws {
-        let stopped = try await call(setup.helper, ["stop"], setup.environment)
-        XCTAssertEqual(stopped.status, 0, "owned service cleanup must complete")
-        guard stopped.status == 0 else { return }
-        try FileManager.default.removeItem(at: setup.root)
-        print("BUNDLED_BACKEND_CLEANUP_COMPLETE")
     }
 
     @MainActor
     private func statusJSON(_ setup: Setup) async throws -> [String: Any] {
-        let result = try await call(setup.helper, ["status"], setup.environment)
+        let result = try await Self.call(setup.helper, ["status"], setup.environment)
         XCTAssertEqual(result.status, 0)
         return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.text.utf8)) as? [String: Any])
     }
@@ -141,9 +130,8 @@ final class BundledBackendTests: XCTestCase {
         }
     }
 
-    @MainActor
-    private func call(_ helper: URL, _ arguments: [String],
-                      _ environment: [String: String]) async throws -> (status: Int32, text: String) {
+    private static func call(_ helper: URL, _ arguments: [String],
+                             _ environment: [String: String]) async throws -> (status: Int32, text: String) {
         let process = Process()
         let output = Pipe()
         process.executableURL = helper
