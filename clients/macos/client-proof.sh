@@ -37,7 +37,7 @@ find Sources Tests -name '*.swift' -type f | LC_ALL=C sort | while read -r path;
     shasum -a 256 "$path"
 done > "$output/frozen.sha256"
 
-for experiment in admission late-result auto-stop cap warning compatibility exchange-deadline result-wait capture-failure late-admission cancel-body; do
+for experiment in admission late-result auto-stop cap warning compatibility exchange-deadline result-wait capture-failure late-admission cancel-body startup-poll; do
     directory="$output/$experiment"
     mkdir "$directory"
     echo UNPROVEN > "$directory/verdict.txt"
@@ -51,6 +51,7 @@ for experiment in admission late-result auto-stop cap warning compatibility exch
         capture-failure) test=CaptureTests.testCanonicalConversionAndFiniteValidation ;;
         late-admission) test=SocketTests.testAdmissionGrantedAfterCancelIsReleasedWithoutUploadOrCapture ;;
         cancel-body) test=SocketTests.testCancelWhileRecordingClosesTheUploadWithoutEndingTheBody ;;
+        startup-poll) test=SocketTests.testHelperStartsTheServerOnceThenStatusIsRead ;;
     esac
     for phase in candidate mutant restored; do
         if [ "$phase" = mutant ]; then
@@ -91,6 +92,9 @@ elif case == 'capture-failure':
             'if false { failed = true; closed = true }')
 elif case == 'late-admission':
     replace('SocketRequest.swift', '            Self.release(socket, admitted.request_id) // Granted after the user cancelled.\n', '')
+elif case == 'startup-poll':
+    replace('SocketRequest.swift', '                try await Task.sleep(for: .milliseconds(50))\n',
+            '                throw BackendFailure.generic\n')
 elif case == 'cancel-body':
     replace('SocketRequest.swift', '        feed.finish(throwing: CancellationError())\n        upload?.cancel()\n', '        feed.finish()\n')
 else:
@@ -115,7 +119,7 @@ PY
         if [ "$phase" = mutant ]; then
             [ "$result" -eq 1 ]
             case "$experiment" in
-                admission|late-result|cap|late-admission|cancel-body) grep -F 'XCTAssertEqual failed' "$directory/$phase.log" ;;
+                admission|late-result|cap|late-admission|cancel-body|startup-poll) grep -F 'XCTAssertEqual failed' "$directory/$phase.log" ;;
                 auto-stop|warning) grep -F 'XCTAssertTrue failed' "$directory/$phase.log" ;;
                 compatibility) grep 'XCTAssertEqual failed' "$directory/$phase.log" | grep -F 'status_api_version_2' ;;
                 exchange-deadline) grep -F 'XCTAssertLessThan failed' "$directory/$phase.log" ;;
