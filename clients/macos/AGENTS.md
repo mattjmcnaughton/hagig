@@ -263,7 +263,8 @@ What each check proves (the scripts own the mechanics):
 - `bundle-proof.sh` breaks one property per copy and requires the right refusal:
   a `.pth` link to the checkout (the CLI still runs, so runtime success alone
   would miss it), a missing profile (`isolation_unavailable`), an unsigned
-  `pydantic_core` extension, and no `hagig` package for the app test
+  `pydantic_core` extension (which macOS still loads in this unhardened process,
+  so only the build and the smoke enforce signing), and no `hagig` package for the app test
   (`serverUnavailable`). The original then passes both checks again.
 - `BundledBackendTests` (opt-in: absolute `HAGIG_BUNDLED_APP` and
   `HAGIG_INTEGRATION_WAV`; both unset skips, one set fails) is the app against
