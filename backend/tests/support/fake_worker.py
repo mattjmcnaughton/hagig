@@ -62,7 +62,7 @@ _LAUNCH = {
 }
 
 from hagig.framing import HEADER, READY_LINE, message_frame  # noqa: E402
-from hagig.worker import EngineError, main, run  # noqa: E402
+from hagig.worker import main, run  # noqa: E402
 
 PID = os.getpid()
 
@@ -84,10 +84,6 @@ class FakeEngine:
             f"load-{PID}.json",
             json.dumps({"model_dir": str(model_dir)}).encode(),
         )
-        if (model_dir / "CORRUPT").exists():
-            raise EngineError("model_invalid")
-        if not model_dir.is_dir():
-            raise EngineError("model_missing")
         self.loaded = True
 
     def transcribe(self, audio, vocabulary) -> str:

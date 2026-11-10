@@ -15,6 +15,9 @@ from pathlib import Path
 
 import httpx
 
+from hagig.manifest import parse_manifest
+from tests.support.models import FILES, synthetic_manifest, write_installation
+
 SUPPORT = Path(__file__).resolve().parent
 SERVE_FAKE = SUPPORT / "serve_fake.py"
 MODEL_ID = "qwen3-asr-0.6b"
@@ -68,6 +71,10 @@ class Home:
         self.models = root / "data" / "hagig" / "models"
         self.control = root / "control"
         self.control.mkdir()
+        # The server reads these synthetic manifests instead of the tracked ones.
+        self.manifests = root / "manifests"
+        self.manifests.mkdir()
+        (self.manifests / f"{MODEL_ID}.json").write_bytes(synthetic_manifest(MODEL_ID))
         self.runtime = runtime_base / "hagig"
         self.socket = self.runtime / "server.sock"
         self.servers: list[subprocess.Popen] = []
@@ -80,11 +87,16 @@ class Home:
             f"[vocabulary]\nterms = {json.dumps(terms)}\n"
         )
 
-    def install_model(self, model_id=MODEL_ID, corrupt=False):
-        path = self.models / model_id
-        path.mkdir(parents=True, exist_ok=True)
+    def install_model(self, model_id=MODEL_ID, corrupt=False, version="0" * 32):
+        """Publish an installation; `corrupt` flips a byte (same size)."""
+        manifest = parse_manifest((self.manifests / f"{model_id}.json").read_bytes())
+        version = write_installation(self.models, manifest, FILES, f"v-{version}")
         if corrupt:
-            (path / "CORRUPT").touch()
+            weights = version / "model.safetensors"
+            data = bytearray(weights.read_bytes())
+            data[0] ^= 1
+            weights.write_bytes(bytes(data))
+        return version
 
     def engine(self, **control):
         (self.control / "control.json").write_text(json.dumps(control))
@@ -108,6 +120,7 @@ class Home:
 
     def start_server(self, *, wait=True, **options):
         options.setdefault("control_dir", str(self.control))
+        options.setdefault("manifests", str(self.manifests))
         log = self.root / f"server-{len(self.servers)}.log"
         with open(log, "wb") as stderr:
             process = subprocess.Popen(

@@ -8,6 +8,7 @@ error, 3 busy, 130 interrupted.
 """
 
 import contextlib
+import importlib.util
 import os
 import signal
 import subprocess
@@ -17,16 +18,20 @@ from collections.abc import Generator, Mapping
 from pathlib import Path
 from typing import Any, NoReturn
 
+import httpx
 import typer
 
 from hagig.client import Client, Outcome, UnreachableError
-from hagig.config import ConfigError, load_config
+from hagig.config import ConfigError, is_apple_silicon, load_config
 from hagig.contract import EXCHANGE_SECONDS, encode_json
+from hagig.installer import InstallError, install
+from hagig.manifest import ManifestError, load_manifest
 from hagig.paths import (
     PathError,
     ServerLock,
     config_file,
     ensure_runtime_dir,
+    models_dir,
     socket_path,
 )
 from hagig.wav import WavError, read_wav
@@ -241,8 +246,61 @@ def stop() -> None:
     _fail("stop_timeout")
 
 
+# Generous per-read bound for multi-gigabyte downloads over slow links.
+_DOWNLOAD_TIMEOUT = httpx.Timeout(30.0, read=120.0)
+
+
 @model_app.command("install")
 def model_install(manifest_id: str) -> None:
-    """Explicitly download and verify a model."""
-    typer.echo("not_implemented", err=True)
-    raise typer.Exit(EXIT_FAILURE)
+    """Explicitly download, verify and publish a model (the only network step).
+
+    Prints `installed` or `already_installed`. stderr carries progress as
+    `<event> <manifest file>` and failures as stable codes. Exit 0 success,
+    1 failure (including `engine_not_installed`: Whisper's conversion needs the
+    `mlx-whisper` extra), 2 unknown or unsupported model, 130 interrupted.
+    """
+    env = os.environ
+    code = None
+    try:
+        manifest = load_manifest(manifest_id)
+        models = models_dir(env)
+    except (ManifestError, PathError) as error:
+        code = error.code
+    if code is not None:
+        _fail(code, EXIT_USAGE if code == "unknown_model" else EXIT_FAILURE)
+    apple_silicon = is_apple_silicon()
+    if manifest.apple_silicon_only and not apple_silicon:
+        _fail("model_unsupported_on_platform", EXIT_USAGE)
+    # The converter runs in this interpreter; refuse before downloading.
+    if manifest.conversion is not None and (
+        importlib.util.find_spec("mlx_whisper") is None
+        or importlib.util.find_spec("torch") is None
+    ):
+        _fail("engine_not_installed")
+
+    def progress(event: str, name: str | None) -> None:
+        typer.echo(event if name is None else f"{event} {name}", err=True)
+
+    interrupted = False
+    result = None
+    try:
+        with httpx.Client(
+            trust_env=False, follow_redirects=False, timeout=_DOWNLOAD_TIMEOUT
+        ) as client:
+            result = install(
+                manifest,
+                models,
+                client=client,
+                env=env,
+                apple_silicon=apple_silicon,
+                progress=progress,
+            )
+    except InstallError as error:
+        code = error.code if error.file is None else f"{error.code} {error.file}"
+    except KeyboardInterrupt:
+        interrupted = True
+    if interrupted:
+        _fail("interrupted", EXIT_INTERRUPTED)
+    if code is not None:
+        _fail(code)
+    typer.echo(result)

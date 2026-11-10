@@ -21,7 +21,7 @@ from typing import Any
 
 import structlog
 
-from hagig.config import ModelId, NetworkIsolation
+from hagig.config import NetworkIsolation
 from hagig.framing import (
     HEADER,
     KIND_JSON,
@@ -35,7 +35,8 @@ from hagig.framing import (
     parse_header,
 )
 from hagig.launcher import Launcher
-from hagig.models import ENGINE_BY_MODEL, installed_model_dir
+from hagig.manifest import Manifest
+from hagig.models import ModelError, installed_model, model_present
 
 log = structlog.get_logger()
 
@@ -60,7 +61,8 @@ class WorkerSettings:
     # The worker's whole environment (`launcher.worker_env`), not the server's.
     env: Mapping[str, str]
     models_root: Path
-    model_id: ModelId
+    # The configured model's tracked manifest (`hagig.manifest.load_manifest`).
+    manifest: Manifest
     vocabulary: tuple[str, ...]
     # Each step of the retirement escalation (TDD section 7).
     grace_seconds: float = 1.0
@@ -152,12 +154,20 @@ class Supervisor:
 
     async def _start(self) -> _Worker:
         settings = self._settings
-        model_dir = installed_model_dir(settings.models_root, settings.model_id)
-        if model_dir is None:
+        # PROTOCOL.md order: missing, then isolation, then the cheap file
+        # check (no hashing; the worker hashes every file at `load`).
+        if not model_present(settings.models_root, settings.manifest.id):
             raise WorkerError("model_missing")
         argv = settings.launcher.argv(settings.mode)
         if argv is None:
             raise WorkerError("isolation_unavailable")
+        model_dir = invalid = None
+        try:
+            model_dir = installed_model(settings.models_root, settings.manifest)
+        except ModelError as error:
+            invalid = error.code
+        if model_dir is None:
+            raise WorkerError(invalid or "model_invalid")
         process = None
         with contextlib.suppress(OSError):
             process = await asyncio.create_subprocess_exec(
@@ -208,7 +218,7 @@ class Supervisor:
                     "type": "load",
                     "version": PROTOCOL_VERSION,
                     "generation": worker.generation,
-                    "engine": ENGINE_BY_MODEL[settings.model_id],
+                    "engine": settings.manifest.engine,
                     "model_dir": str(model_dir),
                     "vocabulary": list(settings.vocabulary),
                 }

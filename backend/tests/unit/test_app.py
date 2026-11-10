@@ -5,6 +5,7 @@ from pathlib import Path
 from hagig.app import create_app
 from hagig.config import Config
 from hagig.launcher import Launcher
+from hagig.manifest import load_manifest
 from hagig.services.requests import Deadlines, RequestService
 from hagig.services.supervisor import Supervisor, WorkerSettings
 
@@ -16,7 +17,7 @@ def service():
         mode="disabled",
         env={},
         models_root=Path("/nonexistent"),
-        model_id="qwen3-asr-0.6b",
+        manifest=load_manifest("qwen3-asr-0.6b"),
         vocabulary=(),
     )
     return RequestService(config, Supervisor(settings), Deadlines())
