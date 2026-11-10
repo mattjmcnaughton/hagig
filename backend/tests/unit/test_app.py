@@ -1,7 +1,25 @@
 import asyncio
 import logging
+from pathlib import Path
 
 from hagig.app import create_app
+from hagig.config import Config
+from hagig.launcher import Launcher
+from hagig.services.requests import Deadlines, RequestService
+from hagig.services.supervisor import Supervisor, WorkerSettings
+
+
+def service():
+    config = Config.model_validate({"model": {"id": "qwen3-asr-0.6b"}})
+    settings = WorkerSettings(
+        launcher=Launcher(),
+        mode="disabled",
+        env={},
+        models_root=Path("/nonexistent"),
+        model_id="qwen3-asr-0.6b",
+        vocabulary=(),
+    )
+    return RequestService(config, Supervisor(settings), Deadlines())
 
 
 def run_lifespan(app):
@@ -23,6 +41,6 @@ def test_fastapi_telemetry_ignores_environment_auto_configuration(monkeypatch, c
     monkeypatch.setenv("FASTAPI_OTEL_AUTO_CONFIGURE", "true")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:9")
     with caplog.at_level(logging.DEBUG, logger="fastapi"):
-        sent = run_lifespan(create_app())
+        sent = run_lifespan(create_app(service()))
     assert sent == ["lifespan.startup.complete", "lifespan.shutdown.complete"]
     assert [r for r in caplog.records if r.name.startswith("fastapi")] == []
