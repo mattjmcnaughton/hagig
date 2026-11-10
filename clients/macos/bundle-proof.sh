@@ -44,10 +44,11 @@ missing_profile() {
 unsigned_extension() {
     set -- "$site"/pydantic_core/_pydantic_core.*.so
     codesign --remove-signature "$1"
+    # Recorded, not asserted: macOS loads it in this unhardened process (seen on
+    # macos-15), so the build and the smoke are what enforce signing.
     local code=0
     env -i HOME="$scratch" "$interpreter" -I -c 'import pydantic_core' > "$directory/import.log" 2>&1 || code=$?
     echo "import pydantic_core with the unsigned extension: exit $code" > "$directory/observation.txt"
-    [ "$code" != 0 ] || { echo 'unsigned extension loaded' >&2; exit 1; }
     check=smoke expected='_pydantic_core'
 }
 app_without_backend() {
