@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import threading
 
 import pytest
 
@@ -98,6 +99,11 @@ def rewrite_record(version, change):
         "record_other_digest",
         "record_other_hash",
         "record_extra_key",
+        "record_fifo",
+        "file_fifo",
+        "version_writable_by_others",
+        "id_writable_by_group",
+        "version_symlinked",
     ],
 )
 def test_the_cheap_check_refuses_damage_it_can_see(models, version, damage):
@@ -132,7 +138,39 @@ def test_the_cheap_check_refuses_damage_it_can_see(models, version, damage):
             rewrite_record(version, lambda r: r["files"][1].update(sha256="0" * 64))
         case "record_extra_key":
             rewrite_record(version, lambda r: r.update(extra=1))
-    assert error(installed_model, models, MANIFEST) == "model_invalid"
+        case "record_fifo":
+            record.unlink()
+            os.mkfifo(record)
+        case "file_fifo":
+            weights.unlink()
+            os.mkfifo(weights)
+        case "version_writable_by_others":
+            version.chmod(0o757)
+        case "id_writable_by_group":
+            version.parent.chmod(0o775)
+        case "version_symlinked":
+            real = models / "elsewhere"
+            version.rename(real)
+            os.symlink(real, version)
+    assert bounded(installed_model, models, MANIFEST) == "model_invalid"
+
+
+def bounded(check, *args):
+    """The check's error code; it must finish within 5 s (no blocking open)."""
+    result = []
+    thread = threading.Thread(target=lambda: result.append(error(check, *args)))
+    thread.daemon = True
+    thread.start()
+    thread.join(5)
+    assert not thread.is_alive(), "check blocked"
+    return result[0]
+
+
+def test_the_load_check_refuses_a_fifo_without_blocking(models, version):
+    weights = version / "model.safetensors"
+    weights.unlink()
+    os.mkfifo(weights)
+    assert bounded(verify_installation, version) == "model_invalid"
 
 
 def test_the_cheap_check_does_not_hash_but_the_load_check_does(models, version):

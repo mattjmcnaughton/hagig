@@ -208,9 +208,11 @@ before_exit)`):
   (plain name, size, SHA-256) for every file the engine reads. Whisper adds
   `conversion`: Apple's `ml-explore/mlx-examples` `whisper/convert.py` at a
   pinned commit with its size and SHA-256, its arguments (`--dtype float16`)
-  and its output names. Parsing is strict (`manifest_invalid`); pickle
-  suffixes, or no `.safetensors` among downloads or outputs, are
-  `manifest_pickle`. A manifest's identity is the SHA-256 of its bytes.
+  and its output names. Parsing is strict (`manifest_invalid`); a pickle
+  suffix is `manifest_pickle` and no `.safetensors` among downloads or
+  outputs is `manifest_no_safetensors`; missing package data is
+  `manifest_unavailable`. A manifest's identity is the SHA-256 of its bytes
+  (`Manifest.digest`, a private attribute only `parse_manifest` sets).
   Pins (2026-11-10): the spike's revisions and weight hashes, cross-checked
   against Hugging Face's LFS SHA-256; small files hashed from the pinned
   revisions. Repository `README.md` and `.gitattributes` are not installed.
@@ -219,13 +221,16 @@ before_exit)`):
   progress), `<id>/current` → `v-<32 hex>` (a relative symlink, replaced
   atomically) and `<id>/v-<hex>/`, the immutable installation: the engine's
   files, flat, plus `hagig-install.json` (manifest ID, manifest SHA-256, every
-  file's size and SHA-256). #49 loads `transformers` `from_pretrained(dir)`
+  file's size and SHA-256). The models directory, `<id>` and the version
+  must be real directories owned by the user and not group- or
+  other-writable (installer: `model_dir_unsafe`; load: `model_invalid`).
+  #49 loads `transformers` `from_pretrained(dir)`
   for Qwen and mlx-whisper's `load_model(dir)` (`config.json`,
   `weights.safetensors`) for Whisper from the directory the worker receives.
-- `hagig model install <id>` (CLI process only): refuses unknown IDs (exit 2),
-  Whisper off Apple Silicon (exit 2) and Whisper without the `mlx-whisper`
-  extra (`engine_not_installed`), then takes the lock (`install_in_progress`
-  when held). A valid installation is re-hashed and kept
+- `hagig model install <id>` (CLI process only). The CLI owns the preflight:
+  unknown IDs (exit 2), Whisper off Apple Silicon (exit 2) and Whisper
+  without the `mlx-whisper` extra (`engine_not_installed`, exit 1). The
+  installer then takes the lock (`install_in_progress` when held). A valid installation is re-hashed and kept
   (`already_installed`). Otherwise every manifest file is fetched with httpx
   (`trust_env=False`, no Hub client, cache or token, `Accept-Encoding:
   identity`) into a fresh staging directory, refusing a declared length other
@@ -235,21 +240,27 @@ before_exit)`):
   five. Whisper's `convert.py` is verified, then run as `<this python> -I`
   with the worker's offline environment and stdio to `/dev/null` (30 min
   bound); exactly the expected outputs must appear and are hashed into the
-  record. Publish: rename the staging content to `v-<hex>`, then replace
-  `current`; other versions are pruned. Failures leave the previous
-  `current` untouched; the next install removes leftovers. Codes:
+  record (written with one buffered write, so a short write raises). Publish:
+  rename the staging content to `v-<hex>`, then replace `current`; other
+  `v-<hex>` versions and temporary links are pruned, and anything else in
+  `<id>/` (for example a pre-#47 flat layout) is left alone. Failures leave
+  the previous `current` untouched; the next install removes leftovers. Codes:
   `download_origin_refused`, `download_redirect_refused`, `download_failed`,
   `download_size_mismatch`, `download_hash_mismatch` (each with the manifest
   file name), `conversion_failed`, `conversion_output_invalid`,
   `model_dir_unsafe`, `lock_file_unsafe`, `install_failed`, `interrupted`
-  (exit 130).
+  (exit 130). stderr prints `<code>` or `<code>: <file>`, and progress as
+  `<event> [<file>]`. Any filesystem error is `install_failed` (one boundary
+  in `install`), and any httpx failure, including invalid redirect URLs, is
+  `download_failed`.
 - Load time, never acquiring anything. Before launching a worker the server
   checks, in PROTOCOL.md's order: `<id>/current` exists (else
   `model_missing`), isolation, then `installed_model`: a `v-<hex>` link, a
   record of at most 64 KiB matching the tracked manifest (ID, digest, file
   set, and sizes and hashes for unconverted files) and a directory holding
   exactly the recorded regular files at their recorded sizes (else
-  `model_invalid`). It hashes nothing, so it costs one readlink, one small
+  `model_invalid`). Files are opened `O_NOFOLLOW | O_NONBLOCK`, so a planted
+  FIFO is refused rather than blocking. It hashes nothing, so it costs one readlink, one small
   read and one `lstat` per file per worker launch, never per warm request.
   The worker's `load` then hashes every recorded file (`verify_installation`)
   before constructing an engine: an absent file is `model_missing`, any other
@@ -388,8 +399,14 @@ Silicon also mlx-metal 0.32.4, numba 0.68.1, llvmlite 0.50.0, scipy 1.18.1,
 tiktoken 0.14.0, requests 2.34.2, urllib3 2.8.0, charset-normalizer 3.5.2 and
 more-itertools 11.2.1. huggingface-hub, hf-xet (native Xet client), requests
 and tiktoken contain network code: the worker sets the offline variables and
-Seatbelt is the backstop; `hagig model install` uses none of them. Not yet
-inspected beyond this inventory (constitution §6).
+Seatbelt is the backstop. The installer's own code uses only httpx. The
+converter it runs is not sandboxed: `convert.py` imports mlx_whisper, which
+imports huggingface-hub (`load_models.py`) and tiktoken (`tokenizer.py`), and
+it contains a named-model download, a Hub fallback and `upload_to_hub`. With
+a local `--torch-name-or-path` and no `--upload-name` none of them is
+reached (source inspection of the pinned file and mlx-whisper 0.4.3), and it
+runs with the offline variables set. Not yet inspected beyond this inventory
+(constitution §6).
 
 Locked transitives (see `uv tree --frozen`): annotated-doc, annotated-types,
 anyio, click, colorama (Windows only), h11, httptools, idna, markdown-it-py,

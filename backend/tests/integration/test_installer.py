@@ -10,9 +10,9 @@ import time
 import httpx
 import pytest
 
-from hagig.installer import InstallError, install
+from hagig.installer import InstallError, install, official_origin
 from hagig.models import (
-    LOCK_NAME,
+    INSTALL_LOCK_NAME,
     ModelError,
     current_version,
     installed_model,
@@ -60,7 +60,6 @@ def run(models, client, tmp_path):
     env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
 
     def run(manifest, **options):
-        options.setdefault("apple_silicon", True)
         options.setdefault("allow", allow_local)
         return install(manifest, models, client=client, env=env, **options)
 
@@ -73,6 +72,9 @@ def failure(run, manifest, **options) -> InstallError:
     error = caught.value
     # Content-free: the code and at most a manifest file name.
     assert error.__cause__ is None and error.__context__ is None
+    assert str(error) == (
+        error.code if error.file is None else f"{error.code}: {error.file}"
+    )
     return error
 
 
@@ -117,7 +119,7 @@ def test_install_downloads_only_the_allowlist_and_publishes(server, run, models)
         f"/test/model/resolve/{REVISION}/{name}" for name in FILES
     )
     assert leftovers(models) == []
-    assert (models / LOCK_NAME).is_file()
+    assert (models / INSTALL_LOCK_NAME).is_file()
 
 
 def test_a_valid_installation_is_not_downloaded_again(server, run, models):
@@ -253,6 +255,18 @@ def test_an_undeclared_oversize_stops_at_the_manifest_size(
     assert_existing_intact(models, existing)
 
 
+def test_a_short_body_without_a_declared_length_fails(server, run, models, existing):
+    manifest = serve(server, revision=OTHER_REVISION)
+    route = server.routes[f"/test/model/resolve/{OTHER_REVISION}/model.safetensors"]
+    route.content_length = -1
+    route.truncate = len(WEIGHTS) - 1
+
+    error = failure(run, manifest)
+
+    assert (error.code, error.file) == ("download_size_mismatch", "model.safetensors")
+    assert_existing_intact(models, existing)
+
+
 def test_http_errors_fail(server, run, models, existing):
     manifest = serve(server, revision=OTHER_REVISION)
     route = server.routes[f"/test/model/resolve/{OTHER_REVISION}/config.json"]
@@ -335,9 +349,9 @@ def test_a_killed_install_leaves_the_existing_one_and_is_cleaned_up(
         "from hagig.installer import install\n"
         "from hagig.manifest import Manifest\n"
         "m = Manifest.model_validate_json(pathlib.Path(sys.argv[1]).read_bytes())\n"
-        "m = m.model_copy(update={'digest': sys.argv[3]})\n"
+        "m._digest = sys.argv[3]\n"
         "install(m, pathlib.Path(sys.argv[2]), client=httpx.Client(trust_env=False),\n"
-        "        env={}, apple_silicon=True, allow=lambda url: True)\n"
+        "        env={}, allow=lambda url: True)\n"
     )
     child = subprocess.Popen(
         [sys.executable, "-c", script, str(manifest_file), str(models), manifest.digest]
@@ -381,19 +395,45 @@ def test_concurrent_installs_do_not_interleave(server, run, models):
     assert results == ["installed"]
     assert_published(models, manifest, FILES)
     assert leftovers(models) == []
-    assert (models / LOCK_NAME).is_file()
+    assert (models / INSTALL_LOCK_NAME).is_file()
 
 
 def test_an_unsafe_lock_file_is_refused(server, run, models):
     manifest = serve(server)
     models.mkdir(parents=True)
     (models / "elsewhere").write_text("")
-    os.symlink("elsewhere", models / LOCK_NAME)
+    os.symlink("elsewhere", models / INSTALL_LOCK_NAME)
 
     error = failure(run, manifest)
 
     assert error.code == "lock_file_unsafe"
     assert server.requests == []
+
+
+def test_a_models_directory_others_can_write_is_refused(server, run, models):
+    manifest = serve(server)
+    models.mkdir(parents=True)
+    models.chmod(0o777)
+
+    error = failure(run, manifest)
+
+    assert error.code == "model_dir_unsafe"
+    assert server.requests == []
+
+
+def test_entries_the_installer_did_not_create_are_left_alone(server, run, models):
+    manifest = serve(server)
+    legacy = models / manifest.id
+    (legacy / "spike").mkdir(parents=True)
+    (legacy / "spike" / "weights.safetensors").write_bytes(b"hand-converted")
+    (legacy / "model.safetensors").write_bytes(b"old flat layout")
+
+    assert run(manifest) == "installed"
+    run(manifest)  # Prunes again after a no-op install.
+
+    assert (legacy / "spike" / "weights.safetensors").read_bytes() == b"hand-converted"
+    assert (legacy / "model.safetensors").read_bytes() == b"old flat layout"
+    assert_published(models, manifest, FILES)
 
 
 def test_a_model_directory_that_is_not_a_directory_is_refused(server, run, models):
@@ -496,11 +536,22 @@ def test_conversion_failures_keep_the_existing_install(
     assert leftovers(models) == []
 
 
-def test_conversion_models_are_refused_off_apple_silicon(server, run, models):
-    manifest = serve(server, converter=CONVERTER)
-
-    error = failure(run, manifest, apple_silicon=False)
-
-    assert error.code == "model_unsupported_on_platform"
-    assert server.requests == []
-    assert not models.exists()
+@pytest.mark.parametrize(
+    ("url", "allowed"),
+    [
+        ("https://huggingface.co/Qwen/x/resolve/abc/config.json", True),
+        ("https://us.gcp.cdn.hf.co/xet-bridge-us/abc?sig=1", True),
+        ("https://cdn-lfs.huggingface.co/repos/x", True),
+        ("https://raw.githubusercontent.com/ml-explore/mlx-examples/c/w.py", True),
+        ("http://huggingface.co/x", False),
+        ("https://huggingface.co:8443/x", False),
+        ("https://evilhuggingface.co/x", False),
+        ("https://evilhf.co/x", False),
+        ("https://hf.co.example.com/x", False),
+        ("https://huggingface.co.example.com/x", False),
+        ("https://gist.githubusercontent.com/x", False),
+        ("https://127.0.0.1/x", False),
+    ],
+)
+def test_only_official_https_origins_are_allowed(url, allowed):
+    assert official_origin(httpx.URL(url)) is allowed

@@ -5,13 +5,15 @@ repository and revision and lists every file to download with its size and
 SHA-256. Whisper also pins Apple's `convert.py` and the files it produces;
 their hashes are recorded at install, because only the installer creates them.
 
-Parsing is strict: unknown keys, unsafe names and pickle formats are refused,
-and weights must be safetensors. A manifest's identity is the SHA-256 of its
-file bytes (`Manifest.digest`), which every installation records.
+Parsing is strict: unknown keys and unsafe names are `manifest_invalid`, any
+pickle format is `manifest_pickle`, and a manifest with no safetensors among
+its downloads or installed files is `manifest_no_safetensors`. A manifest's
+identity is the SHA-256 of its file bytes (`Manifest.digest`), which every
+installation records.
 """
 
+import contextlib
 import hashlib
-import json
 from functools import cache
 from importlib import resources
 from typing import Annotated, Literal, Self, get_args
@@ -20,23 +22,25 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     StringConstraints,
     ValidationError,
     model_validator,
 )
+from pydantic_core import PydanticCustomError
 
 from hagig.config import ModelId
-from hagig.models import RECORD_NAME
+from hagig.models import NAME_PATTERN, RECORD_NAME, SHA256_PATTERN
 
 # Formats that unpickle (execute code) on load. Never downloaded or loaded.
 PICKLE_SUFFIXES = (".bin", ".pt", ".pth", ".pkl", ".pickle", ".ckpt")
 
-Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+ManifestCode = Literal["manifest_pickle", "manifest_no_safetensors", "manifest_invalid"]
+_CODES = get_args(ManifestCode)
+Sha256 = Annotated[str, StringConstraints(pattern=SHA256_PATTERN)]
 Commit = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{40}$")]
 # Installed files sit directly in the installation directory: one plain name.
-FileName = Annotated[
-    str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-]
+FileName = Annotated[str, StringConstraints(pattern=NAME_PATTERN)]
 Repository = Annotated[
     str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+$")
 ]
@@ -96,24 +100,24 @@ class Manifest(_Strict):
     source: Source
     files: tuple[File, ...] = Field(min_length=1)
     conversion: Conversion | None
-    # SHA-256 of the manifest file; set by `parse_manifest`, not by the file.
-    digest: str = Field(default="", exclude=True)
+    # SHA-256 of the manifest file's bytes, set only by `parse_manifest`.
+    _digest: str = PrivateAttr(default="")
+
+    @property
+    def digest(self) -> str:
+        return self._digest
 
     @model_validator(mode="after")
     def _safe(self) -> Self:
-        downloaded = [f.path for f in self.files]
-        installed = (
-            list(self.conversion.outputs) if self.conversion else list(downloaded)
-        )
-        for names in (downloaded, installed):
+        for names in ([f.path for f in self.files], self.installed_files):
             if len(set(names)) != len(names) or RECORD_NAME in names:
-                raise ValueError("manifest_invalid")
+                raise _error("manifest_invalid")
             if any(name.endswith(PICKLE_SUFFIXES) for name in names):
-                raise ValueError("manifest_pickle")
+                raise _error("manifest_pickle")
             if not any(name.endswith(".safetensors") for name in names):
-                raise ValueError("manifest_pickle")
+                raise _error("manifest_no_safetensors")
         if not self.source.download.endswith("/"):
-            raise ValueError("manifest_invalid")
+            raise _error("manifest_invalid")
         return self
 
     @property
@@ -124,33 +128,39 @@ class Manifest(_Strict):
         return tuple(f.path for f in self.files)
 
 
+def _error(code: ManifestCode) -> PydanticCustomError:
+    return PydanticCustomError(code, code)
+
+
 def parse_manifest(data: bytes) -> Manifest:
     """Parse and validate manifest bytes; the digest is their SHA-256."""
     failure = "manifest_invalid"
     manifest = None
     try:
-        if "digest" not in json.loads(data):
-            manifest = Manifest.model_validate_json(data)
+        manifest = Manifest.model_validate_json(data)
     except ValidationError as error:
-        errors = [str(e.get("ctx", {}).get("error")) for e in error.errors()]
-        if "manifest_pickle" in errors:
-            failure = "manifest_pickle"
-    except (ValueError, TypeError):
-        pass
+        failure = next(
+            (e["type"] for e in error.errors() if e["type"] in _CODES), failure
+        )
     if manifest is None:
         raise ManifestError(failure)
-    return manifest.model_copy(update={"digest": hashlib.sha256(data).hexdigest()})
+    manifest._digest = hashlib.sha256(data).hexdigest()
+    return manifest
 
 
 @cache
 def load_manifest(model_id: str) -> Manifest:
     """The tracked manifest for a configured model alias."""
-    package = resources.files("hagig") / "manifests"
-    data = None
-    if model_id in get_args(ModelId):
-        data = (package / f"{model_id}.json").read_bytes()
-    if data is None:
+    if model_id not in get_args(ModelId):
         raise ManifestError("unknown_model")
+    data = None
+    with contextlib.suppress(OSError):
+        data = (
+            resources.files("hagig") / "manifests" / f"{model_id}.json"
+        ).read_bytes()
+    if data is None:
+        # The package data is missing from this environment.
+        raise ManifestError("manifest_unavailable")
     manifest = parse_manifest(data)
     if manifest.id != model_id:
         raise ManifestError("manifest_invalid")

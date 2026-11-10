@@ -12,6 +12,10 @@ The install record lists every installed file with its size and SHA-256 and
 the digest of the manifest it was installed from. Converted MLX files are
 hashed at install, so the record is where their hashes live.
 
+The models directory, each `<id>` and each version must be real directories
+owned by this user and not writable by group or others (TDD section 3's
+boundary is other OS users), else `model_invalid`.
+
 Two checks, both read-only and offline; neither ever acquires anything:
 
 - `installed_model` (server, before every worker launch): cheap and bounded.
@@ -38,14 +42,19 @@ if TYPE_CHECKING:
 
 RECORD_NAME = "hagig-install.json"
 CURRENT = "current"
-LOCK_NAME = ".install.lock"
+INSTALL_LOCK_NAME = ".install.lock"
 STAGING_PREFIX = ".staging-"
+CURRENT_TMP_PREFIX = ".current-"
 RECORD_FORMAT = 1
 MAX_RECORD_BYTES = 64 * 1024
-_VERSION = re.compile(r"v-[0-9a-f]{32}")
-_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
-_SHA256 = re.compile(r"[0-9a-f]{64}")
-_CHUNK = 1 << 20
+# Shared with the manifest schema, so manifests and records agree.
+NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+SHA256_PATTERN = r"^[0-9a-f]{64}$"
+VERSION_PATTERN = re.compile(r"v-[0-9a-f]{32}")
+_NAME = re.compile(NAME_PATTERN)
+_SHA256 = re.compile(SHA256_PATTERN)
+# O_NONBLOCK: opening a planted FIFO must not block; it is then refused.
+_OPEN_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 
 
 class ModelError(Exception):
@@ -77,8 +86,31 @@ class Record:
         return json.dumps(document, indent=2).encode() + b"\n"
 
 
-def is_version_name(name: str) -> bool:
-    return _VERSION.fullmatch(name) is not None
+def hash_file(path: Path) -> tuple[int, str] | None:
+    """(size, SHA-256) of a regular file, never following a symlink.
+
+    None when the path is not a regular file. Raises FileNotFoundError when
+    it is absent and OSError for other failures (a symlink is ELOOP).
+    """
+    fd = os.open(path, _OPEN_FLAGS)
+    with os.fdopen(fd, "rb") as file:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            return None
+        return info.st_size, hashlib.file_digest(file, "sha256").hexdigest()
+
+
+def private_dir(path: Path, uid: int | None = None) -> bool:
+    """A real directory owned by `uid`, not writable by group or others."""
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    return (
+        stat.S_ISDIR(info.st_mode)
+        and info.st_uid == (os.getuid() if uid is None else uid)
+        and not info.st_mode & 0o022
+    )
 
 
 def current_version(models_root: Path, model_id: str) -> Path | None:
@@ -95,7 +127,7 @@ def current_version(models_root: Path, model_id: str) -> Path | None:
     except OSError:
         # EINVAL (not a symlink), ENOTDIR (<id> is not a directory), EACCES.
         invalid = True
-    if invalid or (target is not None and not is_version_name(target)):
+    if invalid or (target is not None and not VERSION_PATTERN.fullmatch(target)):
         raise ModelError("model_invalid")
     if target is None:
         return None
@@ -120,34 +152,42 @@ def installed_model(models_root: Path, manifest: "Manifest") -> Path:
     """The configured model's published version directory, checked cheaply.
 
     `model_missing` when nothing is published for the alias; `model_invalid`
-    when the installation does not match the manifest, a file is absent, extra
-    or a different size. Bounded: one readlink, one record of at most 64 KiB,
-    one directory listing stopped after the expected count, one lstat per file.
+    when a directory is unsafe, or the installation does not match the
+    manifest, a file is absent, extra, not regular or a different size.
+    Bounded: one readlink, three lstats, one record of at most 64 KiB, one
+    directory listing that stops at the first unexpected entry, one lstat per
+    file. It never hashes.
     """
     version = current_version(models_root, manifest.id)
     if version is None:
         raise ModelError("model_missing")
-    record = read_record(version)
-    if not _matches_manifest(record, manifest):
+    if not all(map(private_dir, (models_root, version.parent, version))):
         raise ModelError("model_invalid")
-    expected = {*record.files, RECORD_NAME}
+    record = read_record(version)
+    if not _matches_manifest(record, manifest) or not _holds_exactly(version, record):
+        raise ModelError("model_invalid")
+    return version
+
+
+def _holds_exactly(version: Path, record: Record) -> bool:
+    """The directory holds the record and the recorded files at their sizes."""
     seen = set()
     try:
         with os.scandir(version) as entries:
             for entry in entries:
-                # Stops at the first unexpected entry, so the listing is bounded.
-                if entry.name not in expected:
-                    raise ModelError("model_invalid")
-                seen.add(entry.name)
                 info = entry.stat(follow_symlinks=False)
-                size = record.files.get(entry.name, (info.st_size, ""))[0]
-                if not stat.S_ISREG(info.st_mode) or info.st_size != size:
-                    raise ModelError("model_invalid")
+                if entry.name == RECORD_NAME:
+                    expected_size = info.st_size
+                elif entry.name in record.files:
+                    expected_size = record.files[entry.name][0]
+                else:
+                    return False
+                if not stat.S_ISREG(info.st_mode) or info.st_size != expected_size:
+                    return False
+                seen.add(entry.name)
     except OSError:
-        seen = set()
-    if seen != expected:
-        raise ModelError("model_invalid")
-    return version
+        return False
+    return seen == {*record.files, RECORD_NAME}
 
 
 def verify_installation(version: Path) -> None:
@@ -167,29 +207,12 @@ def verify_installation(version: Path) -> None:
 
 def _verify_file(path: Path, size: int, digest: str) -> str | None:
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        found = hash_file(path)
     except FileNotFoundError:
         return "model_missing"
     except OSError:
         return "model_invalid"
-    hasher = hashlib.sha256()
-    total = 0
-    try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_size != size:
-            return "model_invalid"
-        while chunk := os.read(fd, _CHUNK):
-            total += len(chunk)
-            if total > size:
-                return "model_invalid"
-            hasher.update(chunk)
-    except OSError:
-        return "model_invalid"
-    finally:
-        os.close(fd)
-    if total != size or hasher.hexdigest() != digest:
-        return "model_invalid"
-    return None
+    return None if found == (size, digest) else "model_invalid"
 
 
 def _matches_manifest(record: Record, manifest: "Manifest") -> bool:
@@ -205,7 +228,7 @@ def _matches_manifest(record: Record, manifest: "Manifest") -> bool:
 
 def _read_small(path: Path) -> bytes | None:
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        fd = os.open(path, _OPEN_FLAGS)
     except OSError:
         return None
     try:
