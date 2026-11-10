@@ -12,6 +12,11 @@ on:
 permissions:
   contents: read
 
+# Test on the uv-managed python-build-standalone interpreter the bundle ships,
+# not the runner's system Python.
+env:
+  UV_PYTHON_PREFERENCE: only-managed
+
 jobs:
   check:
     name: Python (${{ matrix.os }})
