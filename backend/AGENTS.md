@@ -2,25 +2,43 @@
 
 Read the root guidance, [constitution](../docs/CONSTITUTION.md) and
 [technical design](../docs/technical/tdds/01-mvp.md) (§1–§7 and §9–§13 are the
-contract) first. This directory is a scaffold: configuration, paths, the server
-lock and WAV decoding are implemented and tested; the server, worker, CLI
-commands, model installation and bundling are not (#45, #47, #48).
+contract) first. Configuration, paths, the server lock, WAV decoding, the REST
+server, the worker protocol and the CLI (`start`, `status`, `stop`,
+`transcribe`) are implemented and tested with a test-only fake engine (#45).
+Real engines (#49), model manifests and installation (#47) and bundling (#48)
+are not. Fake-engine success is not transcription evidence.
 
 ## Layout and boundaries
 
 - One uv project and one package, `hagig`, with two entry points: `hagig`
-  (`hagig.cli:app`, the CLI and later the internal server command) and
-  `hagig-worker` (`hagig.worker:main`, also run as `python -I -m hagig.worker`).
-  Do not split packages per process.
+  (`hagig.cli:app`, the CLI) and `hagig-worker` (`hagig.worker:main`). Clients
+  spawn the server as `python -I -m hagig.server` and the server launches the
+  worker as `python -I -m hagig.worker`. Do not split packages per process.
 - `config.py`: TOML configuration (§3). `paths.py`: XDG locations, private
   runtime directory, socket path and `ServerLock` (§3, §5). `wav.py`: bounded
   WAV decoding into canonical PCM (§9). `logging.py`: content-free structlog.
-- `app.py`: FastAPI factory with no routes or lifespan yet; docs, OpenAPI and
-  FastAPI's native OpenTelemetry are disabled. `cli.py` and `worker.py` are stubs: every
-  CLI command exits 1 with `not_implemented` on stderr, and the worker exits 1
-  without writing to stdout, which is reserved for the worker protocol.
-- `routers/`, `controllers/`, `services/` and `dtos/` are the template's
-  layering (routers -> controllers -> services), empty until #45.
+- `server.py`: the server process (lock, stale socket, 0600 bind, uvicorn,
+  stop and signal shutdown). `app.py`: FastAPI factory; docs, OpenAPI, redirects
+  and FastAPI's native OpenTelemetry are disabled, and FastAPI's input-echoing
+  error handlers are replaced. `routers/v1.py`: the five endpoints and the
+  `Precedence` middleware for the contract's routing and body rules, which
+  matches requests against the router's own routes.
+- `services/requests.py`: the single request slot, deadlines, streaming audio
+  validation and cancellation. `services/supervisor.py`: worker launch,
+  generations, reply matching and retirement/reaping.
+- `contract.py`: the fixed REST v1 values (limits, deadlines, error codes and
+  their statuses, the request-ID syntax and the JSON encoding), shared by the
+  server, the CLI and the worker pipe. `framing.py`: worker frames, message
+  schemas, `LOAD_CODES` and `OFFLINE_ENV`, shared by server and worker. Both
+  are stdlib only, because the worker imports them. `worker.py`: the engine `Protocol`, the fixed `ENGINES` table
+  and the worker loop. `launcher.py`: worker argv per isolation mode and the
+  environment allowlist. `models.py`: alias → engine and the installed-directory
+  check, a minimal seam #47 replaces with manifest validation.
+- `client.py`: the CLI's httpx client (`trust_env=False`), one method per
+  endpoint, each classifying its response into a PROTOCOL.md outcome. `cli.py`:
+  commands; `model install` is still a `not_implemented` stub (#47).
+- `controllers/` and `dtos/` from the template stay empty; the routers call
+  services directly.
 - `src/launcher/seatbelt-v1.sb` is the macOS worker policy, kept byte-identical
   from the Rust backend. `PROTOCOL.md` and `tests/fixtures/*-fixtures.json` are
   owned by #44.
@@ -126,6 +144,86 @@ other keys, exceptions and structured values are dropped. It does not inspect
 scalar values, so event names and codes must be fixed strings. Call it once at
 the process entry point; it only covers structlog, not stdlib loggers.
 
+**Server** (`hagig.server.run(env, *, launcher, deadlines, grace_seconds,
+before_exit)`):
+
+- Loads configuration, ensures the runtime directory and takes `ServerLock`;
+  a loser exits 0 so its client attaches to the winner. Only the holder removes
+  a stale socket, and only one that is a socket we own (else `socket_unsafe`).
+  It binds `server.sock` itself under umask 0177, checks it is 0600 and ours,
+  and passes it to uvicorn (`ws="none"`, `lifespan="off"`, `access_log=False`,
+  `log_config=None`, no server header). There is no TCP listener. uvicorn's,
+  asyncio's and FastAPI's stdlib loggers get a `NullHandler`.
+- `POST /v1/stop`, SIGTERM and SIGINT all stop: invalidate active work, answer
+  it, reap the worker, run `before_exit` (tests hold the stopping state with
+  it), remove only our socket inode, exit 0 and release the lock.
+- Everything else follows `PROTOCOL.md`; `tests/e2e/test_rest_fixtures.py`
+  replays every server exchange in the shared fixtures byte for byte.
+- Request IDs and `config_generation` are `secrets.token_urlsafe(24)` (192 bits).
+  Deadlines (`Deadlines`) and the retirement step (`grace_seconds`) are explicit
+  inputs so tests do not wait 330 or 120 s.
+- The audio buffer is held in memory once, validated per chunk as it arrives
+  in stream order (a bad sample before the cap byte is `400`, the first byte
+  over the cap `413`, whatever the chunking), and written to the worker; the request releases it and the slot in one
+  `finally`, after any retired worker is reaped.
+
+**Worker** (`hagig.worker.run(stdin, stdout, engines)`):
+
+- Writes `HAGIG-WORKER-READY-v1\n` before constructing any engine, then
+  `load` → `loaded`/`error`, then `transcribe` + one PCM frame → `result`/`error`.
+  An unsupported version or engine, an engine exception, a wrong generation or
+  sample count, or an unencodable result is `worker_failed`; a result envelope
+  over 64 KiB is `result_too_large`. Malformed input exits 1 without replying.
+  EOF at a frame boundary (the exit request) exits 0.
+- `main()` sets the offline variables, moves fd 1 to stderr so stray prints
+  cannot corrupt the protocol, and serves the real `ENGINES`. Its modules
+  (`hagig.engines.qwen3_asr`, `hagig.engines.mlx_whisper`) arrive with #49;
+  until then selecting one fails `load` with `worker_failed`.
+- The server launches it with `asyncio.create_subprocess_exec` in a new
+  session, `close_fds`, `cwd="/"`, stderr to `/dev/null` and an environment of
+  `HOME`, `TMPDIR`, `PATH=/usr/bin:/bin` and the four offline/telemetry
+  variables. Vocabulary travels only in `load`.
+- Isolation (`Launcher.argv`): disabled runs the command as is. Required on
+  macOS prefixes `/usr/bin/sandbox-exec -f <absolute src/launcher/seatbelt-v1.sb>`,
+  resolved relative to the package (#48 must ship the profile at the same
+  relative place); a missing `sandbox-exec` or profile, a failed launch or no
+  ready line (including part of one) is `isolation_unavailable`; in
+  disabled mode the same is `worker_failed`. Required anywhere else refuses before
+  launching. The model directory is checked first (`model_missing`).
+- Retirement: abort stdin (the exit request), wait 1 s, SIGTERM the process
+  group, wait 1 s, SIGKILL the group, poll until reaped, then drain stdout. Group
+  signals are sent only while unreaped. Any stdout byte or EOF while idle
+  retires the worker. There is no automatic retry; the next request launches
+  a fresh worker.
+
+**CLI** (`hagig start|status|stop|transcribe`):
+
+- `start` and `transcribe` attach to a compatible server, or spawn
+  `python -I -m hagig.server` once (new session, stdio to `/dev/null`) and poll
+  `GET /v1/status` for 5 s. Before spawning they validate configuration; a
+  missing `model.id` prints `config_invalid: model.id missing; set [model] id
+  in <path>` and exits 2.
+- `status` prints `stopped` or the status JSON and never spawns. `stop` sends
+  `POST /v1/stop` and waits up to 15 s for the socket to go and the lock to be
+  free (`stop_timeout`); on an absent server it exits 0. On `incompatible_api`
+  neither stops nor admits.
+- `transcribe`: status, admit (DELETE and `generic_failure` if the generation or
+  model changed), decode the WAV, upload with `Content-Length`, wait up to 125 s
+  for the response head. stdout is only the text plus a newline; `""` prints
+  nothing. Exit 0 text/empty, 1 failures, 2 configuration or WAV errors (the
+  reservation is cancelled first), 3 `busy`, 130 Ctrl-C (the upload connection
+  closes and a DELETE is sent). stderr carries stable codes only.
+- `tests/integration/test_client_fixtures.py` drives the client with every
+  client fixture exchange from a peer that serves the response bytes exactly.
+
+**Updating a checkout.** The server outlives the CLI and is reused by any
+client that sees `api_version` 1, and it launches each new worker from the
+current tree. Run `hagig stop` before pulling, rebasing or rebuilding, so the
+server and worker code never come from different revisions. If a client
+reports `incompatible_api`, `hagig stop` will not stop that server: stop it
+with the build that started it, or end the process holding
+`<runtime>/server.lock`.
+
 ## Developer commands
 
 Run from `backend/`. uv selects Python 3.12 from `.python-version` and
@@ -142,8 +240,14 @@ and pull requests, path-filtered) runs `uv sync --frozen` and the
 macos-15, with SHA-pinned checkout and `astral-sh/setup-uv` (uv 0.12.9).
 
 Tests: `tests/unit` for pure parsing and validation, `tests/integration` for
-real filesystem, lock and socket behavior. Add an e2e tier with the first
-end-to-end test. Tests never touch the network, the
+real filesystem, lock and socket behavior, `tests/e2e` for the real server and
+CLI over the real socket. `tests/support/` holds the test-only fake engine
+(`fake_worker.py`, the real `hagig.worker.main` with a fake table and a
+frame-tampering writer, scripted through a control directory),
+`harness.py` (isolated XDG users, raw socket requests) and
+`serve_fake.py`, which runs the real server with that worker command injected.
+Neither is importable from the package, configuration, the CLI or the
+environment. Tests never touch the network, the
 real `/tmp/hagig-<uid>` or user configuration; derive expected values
 independently (for example the stdlib `wave` module decodes `speech.wav`).
 
@@ -195,15 +299,17 @@ After generation:
 Ask the owner before adding anything outside the root `AGENTS.md` starting set.
 For this run the owner also approved the template's `uvicorn[standard]` and
 hatchling, Python 3.12 and SHA-pinned `astral-sh/setup-uv` and `actions/cache`.
-`httpx` is approved but not added until the CLI client needs it.
+`httpx` (starting set) was added by #45 for the CLI client.
 
 Direct runtime dependencies: fastapi, `uvicorn[standard]`, structlog, pydantic,
-typer, numpy. Development: pytest, ruff, ty. Build backend: hatchling
+typer, numpy, httpx. Development: pytest, ruff, ty. Build backend: hatchling
 (unpinned in `[build-system]`, resolved by uv when building the project).
 
 Locked transitives (see `uv tree --frozen`): annotated-doc, annotated-types,
 anyio, click, colorama (Windows only), h11, httptools, idna, markdown-it-py,
-mdurl, opentelemetry-api, pydantic-core, pygments, python-dotenv, pyyaml, rich,
+mdurl, opentelemetry-api, pydantic-core, httpcore and certifi (both pure
+Python, from httpx; certifi is a CA bundle, unused over the Unix socket, and
+`trust_env=False` keeps proxies and `.netrc` out), pygments, python-dotenv, pyyaml, rich,
 shellingham, starlette, typing-extensions, typing-inspection, uvloop,
 watchfiles, websockets; dev adds iniconfig, packaging and pluggy. Native wheels:
 numpy, pydantic-core, httptools, uvloop, watchfiles, pyyaml, ruff and ty.
@@ -217,11 +323,11 @@ Findings to carry forward (source inspection only, not runtime observation):
   Accepted as an inert transitive: API only. No OpenTelemetry SDK or exporter
   may enter the lock; if one does, revisit this decision (owner, 2026-11-10).
 - `uvicorn[standard]` installs websockets, watchfiles and python-dotenv; the
-  contract has no WebSockets, reload or env files, so #45 must run uvicorn with
-  WebSockets off, no reload, no env file, `access_log=False` and no default
-  `log_config` (its access and error loggers bypass the structlog allowlist).
-- FastAPI's default `RequestValidationError` handler echoes rejected input in
-  422 bodies; #45 must install a content-free handler before adding routes.
+  contract has no WebSockets, reload or env files, so the server runs uvicorn
+  with `ws="none"`, no reload, no env file, `access_log=False` and
+  `log_config=None`, and silences its stdlib loggers.
+- FastAPI's default `RequestValidationError` and `HTTPException` handlers echo
+  input; `create_app` replaces both with `400 invalid_request`.
 - `decode_wav` holds float64 working copies (about 4.5 times the input at the
   116 MB cap). Fine in the CLI; revisit if decoding moves into the server.
 - A grep of the installed runtime packages for `urllib.request`, `http.client`,
@@ -245,3 +351,10 @@ physical-Mac evidence separate. A workflow file is not evidence that a job ran.
   socket-bind boundary test skipped (runner temp path too long), so a real
   104-byte bind is unexercised. Portable checks only: not Seatbelt, inference
   or bundle evidence. Later heads: see the branch's runs.
+- 2026-11-10, Linux orb (Debian 12, x86_64, CPython 3.12.14 from uv 0.12.9),
+  #45 server, worker and CLI with the test-only fake engine: `just
+  gate-expensive` passed. Mutation proof: 20 lifecycle, framing, isolation and
+  CLI claims each failed under a recorded semantic mutation and passed again
+  when it was reversed. Fake-engine results are not transcription evidence; the
+  hosted macos-15 Seatbelt launch test shows only that the worker starts and
+  speaks over its pipes under `seatbelt-v1.sb`, not network denial (#49).
