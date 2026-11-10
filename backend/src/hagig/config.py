@@ -20,6 +20,7 @@ from pydantic import (
     ValidationError,
     ValidationInfo,
     field_validator,
+    model_validator,
 )
 from pydantic_core import PydanticCustomError
 
@@ -27,12 +28,10 @@ EditorMode = Literal["standard", "vim"]
 ModelId = Literal["qwen3-asr-0.6b", "qwen3-asr-1.7b", "whisper-large-v3-turbo"]
 NetworkIsolation = Literal["required", "disabled"]
 
-# PROVISIONAL, not a chosen default: TDD section 13 leaves the default engine
-# and Qwen3-ASR size to a physical-Mac run. Change it here only.
-PROVISIONAL_DEFAULT_MODEL_ID: ModelId = "qwen3-asr-0.6b"
 APPLE_SILICON_ONLY_MODEL_IDS = frozenset({"whisper-large-v3-turbo"})
 
 IssueCode = Literal[
+    "missing",
     "unknown_key",
     "invalid_value",
     "invalid_type",
@@ -87,7 +86,8 @@ class EditorConfig(BaseModel):
 
 class ModelConfig(BaseModel):
     model_config = _TABLE
-    id: ModelId = PROVISIONAL_DEFAULT_MODEL_ID
+    # Required, with no default model (owner decision, 2026-11-10).
+    id: ModelId
 
     @field_validator("id")
     @classmethod
@@ -114,9 +114,17 @@ class VocabularyConfig(BaseModel):
 class Config(BaseModel):
     model_config = _TABLE
     editor: EditorConfig = EditorConfig()
-    model: ModelConfig = ModelConfig()
+    model: ModelConfig
     inference: InferenceConfig = InferenceConfig()
     vocabulary: VocabularyConfig = VocabularyConfig()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _model_table(cls, data: Any) -> Any:
+        # A missing [model] table reports `model.id missing`, not `model missing`.
+        if isinstance(data, dict) and "model" not in data:
+            return {**data, "model": {}}
+        return data
 
 
 @dataclass(frozen=True)
@@ -144,7 +152,11 @@ class ConfigError(Exception):
 
 
 def load_config(path: Path, *, apple_silicon: bool | None = None) -> Config:
-    """Load and validate configuration. A missing file means all defaults."""
+    """Load and validate configuration.
+
+    A missing file is an empty configuration, which fails because `model.id`
+    is required; every other field has a default.
+    """
     if apple_silicon is None:
         apple_silicon = is_apple_silicon()
     data = _parse(_read(path))

@@ -39,16 +39,32 @@ commands, model installation and bundling are not (#45, #47, #48).
 **Configuration** (`load_config(path)`, path from `config_file(os.environ)`):
 
 - Read only from the file with `tomllib`; there are no environment-variable
-  overrides. A missing file or table means defaults: `editor.mode = "standard"`,
-  `inference.network_isolation = "required"`, `vocabulary.terms = []` and
-  `model.id = "qwen3-asr-0.6b"`.
-- The model default is PROVISIONAL, not a chosen default: §13 leaves the default
-  engine and Qwen size to a physical-Mac run. It lives only in
-  `config.PROVISIONAL_DEFAULT_MODEL_ID`.
+  overrides. `model.id` is required and has no default (owner decision,
+  2026-11-10): a missing file, `[model]` table or `id` fails with
+  `model.id missing`. Every other field defaults: `editor.mode = "standard"`,
+  `inference.network_isolation = "required"`, `vocabulary.terms = []`.
+- #45's CLI must turn `model.id missing` into an actionable stderr line that
+  says to set `[model] id` in the config file. It may name the config path but
+  never prints file content.
+
+  ```toml
+  # $XDG_CONFIG_HOME/hagig/config.toml (default ~/.config/hagig/config.toml)
+  [model]
+  id = "qwen3-asr-0.6b"  # or "qwen3-asr-1.7b"; "whisper-large-v3-turbo" on Apple Silicon
+
+  [editor]
+  mode = "standard"  # optional; "vim"
+
+  [inference]
+  network_isolation = "required"  # optional; "disabled" is an explicit opt-out
+
+  [vocabulary]
+  terms = ["Hagig", "Ghostty", "Qwen", "Amp"]  # optional
+  ```
 - Model aliases: `qwen3-asr-0.6b`, `qwen3-asr-1.7b`, `whisper-large-v3-turbo`
   (the #47 manifest IDs). Whisper is rejected unless the platform is Darwin on
   arm64 (`model.id model_unsupported_on_platform`).
-- Strict pydantic models with unknown keys forbidden. Codes: `unknown_key`
+- Strict pydantic models with unknown keys forbidden. Codes: `missing`, `unknown_key`
   (names the containing table, or `<root>`, never the key, which is user input),
   `invalid_value`, `invalid_type`, `too_many`, `too_long`, `too_large`,
   `model_unsupported_on_platform` (the `IssueCode` Literal). File-level codes
@@ -194,10 +210,12 @@ numpy, pydantic-core, httptools, uvloop, watchfiles, pyyaml, ruff and ty.
 
 Findings to carry forward (source inspection only, not runtime observation):
 
-- fastapi 0.162 requires `opentelemetry-api` and has native telemetry that turns
-  on when a global provider exists or `FASTAPI_OTEL_AUTO_CONFIGURE=true`.
-  No OpenTelemetry SDK or exporter is installed, and `create_app` disables all
-  native telemetry (tested with the auto-configure variables set).
+- fastapi 0.162 requires `opentelemetry-api` (since fastapi 0.142.0; 0.141.1 is
+  the last release without it) and has native telemetry that turns on when a
+  global provider exists or `FASTAPI_OTEL_AUTO_CONFIGURE=true`. `create_app`
+  disables all native telemetry (tested with the auto-configure variables set).
+  Accepted as an inert transitive: API only. No OpenTelemetry SDK or exporter
+  may enter the lock; if one does, revisit this decision (owner, 2026-11-10).
 - `uvicorn[standard]` installs websockets, watchfiles and python-dotenv; the
   contract has no WebSockets, reload or env files, so #45 must run uvicorn with
   WebSockets off, no reload, no env file, `access_log=False` and no default
@@ -218,5 +236,12 @@ physical-Mac evidence separate. A workflow file is not evidence that a job ran.
 
 - 2026-11-10, Linux orb (Debian 12, x86_64, CPython 3.12.14 from uv 0.12.9),
   #43 scaffold: `just gate-expensive` passed (ruff format, ruff check, ty, pytest
-  with the macOS-only temp-dir test skipped). Hosted ubuntu-24.04 and macos-15
-  results are the exact-head `python-backend.yml` runs on the #43 branch and PR.
+  with the macOS-only temp-dir test skipped).
+- 2026-11-10, hosted `python-backend.yml`
+  [run 42837802389](https://github.com/mattjmcnaughton/hagig/actions/runs/42837802389)
+  at `4451e63`: ubuntu-24.04 (x86_64, system CPython 3.12.3) and macos-15
+  (arm64 VM, macOS 15.8.2, system CPython 3.12.10) each passed ruff, ty and
+  155 tests with 1 skip. On macOS the real per-user temp-dir test ran; the
+  socket-bind boundary test skipped (runner temp path too long), so a real
+  104-byte bind is unexercised. Portable checks only: not Seatbelt, inference
+  or bundle evidence. Later heads: see the branch's runs.
