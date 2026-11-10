@@ -6,6 +6,7 @@ stop, recovery on the next request and verified reaping.
 """
 
 import os
+import shutil
 import signal
 import struct
 import sys
@@ -292,8 +293,9 @@ def test_launch_hygiene(server):
     for term in VOCABULARY:
         assert term not in exposed
     assert server.record("vocabulary", pid) == VOCABULARY
+    # The resolved, immutable version, never the swappable `current` link.
     assert server.record("load", pid)["model_dir"] == str(
-        server.models / "qwen3-asr-0.6b"
+        server.models / "qwen3-asr-0.6b" / ("v-" + "0" * 32)
     )
 
 
@@ -328,6 +330,63 @@ def test_model_missing_is_checked_before_isolation_and_launch(home):
     home.start_server(platform="linux")
     assert code(home.transcribe(AUDIO)) == (503, {"code": "model_missing"})
     assert home.pids() == []
+
+
+def test_isolation_is_checked_before_the_installation_contents(home):
+    home.write_config(isolation="required")
+    version = home.install_model()
+    (version / "config.json").unlink()
+    home.start_server(platform="linux")
+    assert code(home.transcribe(AUDIO)) == (503, {"code": "isolation_unavailable"})
+    assert home.pids() == []
+
+
+@pytest.mark.parametrize("damage", ["extra_file", "short_file", "record"])
+def test_the_server_refuses_an_invalid_installation_before_launch(home, damage):
+    home.write_config()
+    version = home.install_model()
+    if damage == "extra_file":
+        (version / "pytorch_model.bin").write_bytes(b"pickle")
+    elif damage == "short_file":
+        weights = version / "model.safetensors"
+        weights.write_bytes(weights.read_bytes()[:-1])
+    else:
+        (version / "hagig-install.json").write_text("{}")
+    home.start_server()
+    assert code(home.transcribe(AUDIO)) == (503, {"code": "model_invalid"})
+    assert home.pids() == []
+
+
+def test_a_same_size_corruption_is_caught_by_the_worker_at_load(home):
+    home.write_config()
+    home.install_model(corrupt=True)
+    home.start_server()
+    assert code(home.transcribe(AUDIO)) == (503, {"code": "model_invalid"})
+    # The worker launched, hashed the files and refused before any engine load.
+    pid = home.pids()[-1]
+    assert not (home.control / f"load-{pid}.json").exists()
+
+
+def test_a_new_install_never_changes_a_warm_workers_model(home):
+    home.write_config()
+    first = home.install_model()
+    home.start_server()
+    assert code(home.transcribe(AUDIO))[0] == 200
+    warm = home.pids()[-1]
+
+    # Publish another version and remove the first, as the installer does.
+    second = home.install_model(version="1" * 32)
+    shutil.rmtree(first)
+    assert code(home.transcribe(AUDIO))[0] == 200
+    assert home.pids() == [warm]
+    assert home.record("load", warm)["model_dir"] == str(first)
+
+    # Only a newly launched worker loads the new version.
+    home.engine(behavior="crash")
+    assert code(home.transcribe(AUDIO)) == (500, {"code": "worker_failed"})
+    home.engine()
+    assert code(home.transcribe(AUDIO))[0] == 200
+    assert home.record("load", home.pids()[-1])["model_dir"] == str(second)
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Seatbelt is macOS only")

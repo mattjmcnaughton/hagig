@@ -9,8 +9,10 @@ import sys
 import pytest
 
 from hagig.launcher import Launcher
+from hagig.manifest import parse_manifest
 from hagig.services.supervisor import Supervisor, WorkerSettings
 from tests.support.harness import SUPPORT
+from tests.support.models import FILES, synthetic_manifest, write_installation
 
 AUDIO = struct.pack("<2f", 0.0, 0.5)
 
@@ -19,14 +21,15 @@ def supervisor(tmp_path):
     control = tmp_path / "control"
     control.mkdir()
     models = tmp_path / "models"
-    (models / "qwen3-asr-0.6b").mkdir(parents=True)
+    manifest = parse_manifest(synthetic_manifest("qwen3-asr-0.6b"))
+    write_installation(models, manifest, FILES, "v-" + "0" * 32)
     command = (sys.executable, "-I", str(SUPPORT / "fake_worker.py"), str(control))
     settings = WorkerSettings(
         launcher=Launcher(command=command),
         mode="disabled",
         env={"PATH": "/usr/bin:/bin"},
         models_root=models,
-        model_id="qwen3-asr-0.6b",
+        manifest=manifest,
         vocabulary=(),
     )
     return Supervisor(settings), control

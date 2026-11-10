@@ -1,0 +1,45 @@
+{
+  "format": 1,
+  "id": "whisper-large-v3-turbo",
+  "engine": "mlx-whisper",
+  "apple_silicon_only": true,
+  "source": {
+    "publisher": "OpenAI",
+    "repository": "openai/whisper-large-v3-turbo",
+    "revision": "41f01f3fe87f28c78e2fbf8b568835947dd65ed9",
+    "license": "MIT",
+    "license_url": "https://huggingface.co/openai/whisper-large-v3-turbo/blob/41f01f3fe87f28c78e2fbf8b568835947dd65ed9/README.md",
+    "download": "https://huggingface.co/openai/whisper-large-v3-turbo/resolve/41f01f3fe87f28c78e2fbf8b568835947dd65ed9/"
+  },
+  "files": [
+    {
+      "path": "config.json",
+      "size": 1256,
+      "sha256": "c5b526b3e3cd64cd8940dabb45e8ba726629e22d8ed389c29b552f9140daf04a"
+    },
+    {
+      "path": "model.safetensors",
+      "size": 1617824864,
+      "sha256": "542566a422ae4f3fd23f1ba11add198fca01bbf82e66e6a2857b3f608b1eb9d1"
+    }
+  ],
+  "conversion": {
+    "publisher": "Apple",
+    "repository": "ml-explore/mlx-examples",
+    "commit": "c1af8c46bd4c4704cff1561736a634cee38efc6c",
+    "path": "whisper/convert.py",
+    "license": "MIT",
+    "license_url": "https://github.com/ml-explore/mlx-examples/blob/c1af8c46bd4c4704cff1561736a634cee38efc6c/LICENSE",
+    "url": "https://raw.githubusercontent.com/ml-explore/mlx-examples/c1af8c46bd4c4704cff1561736a634cee38efc6c/whisper/convert.py",
+    "size": 13934,
+    "sha256": "9d5a03b60843e89512d1f825a6a6ee662fa2d17af347220c5e6a8b69af7574aa",
+    "arguments": [
+      "--dtype",
+      "float16"
+    ],
+    "outputs": [
+      "config.json",
+      "weights.safetensors"
+    ]
+  }
+}

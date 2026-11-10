@@ -1,0 +1,144 @@
+name: Model install
+
+# One real `hagig model install` per manifest on a hosted Apple Silicon Mac
+# (#47): pinned downloads from Hugging Face, every SHA-256 verified, and the
+# Whisper MLX conversion with Apple's pinned convert.py. This is the only CI
+# job that touches the network for models; it runs no inference.
+on:
+  push:
+    branches: ['py/**']
+    paths:
+      - 'backend/src/hagig/manifests/**'
+      - 'backend/src/hagig/manifest.py'
+      - 'backend/src/hagig/models.py'
+      - 'backend/src/hagig/installer.py'
+      - 'backend/src/hagig/cli.py'
+      - 'backend/pyproject.toml'
+      - 'backend/uv.lock'
+      - '.github/workflows/model-install.yml'
+  pull_request:
+    paths:
+      - 'backend/src/hagig/manifests/**'
+      - 'backend/src/hagig/manifest.py'
+      - 'backend/src/hagig/models.py'
+      - 'backend/src/hagig/installer.py'
+      - 'backend/src/hagig/cli.py'
+      - 'backend/pyproject.toml'
+      - 'backend/uv.lock'
+      - '.github/workflows/model-install.yml'
+
+permissions:
+  contents: read
+
+env:
+  UV_PYTHON_PREFERENCE: only-managed
+
+jobs:
+  install:
+    name: Model install (macos-15)
+    runs-on: macos-15
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: backend
+    env:
+      # The cached models root holds qwen3-asr-0.6b and the converted Whisper
+      # (about 3.2 GB). qwen3-asr-1.7b (4 GB) installs into an uncached root
+      # every run and is removed afterwards, to stay within the cache budget.
+      CACHED_DATA: ${{ runner.temp }}/cached-data
+      FRESH_DATA: ${{ runner.temp }}/fresh-data
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.12.9'
+          enable-cache: false
+      - name: Sync the bundle's environment (both engines)
+        run: uv sync --frozen --no-dev --extra qwen3-asr --extra mlx-whisper
+      - name: Record environment
+        run: |
+          uname -a
+          sw_vers
+          df -h "$RUNNER_TEMP"
+          uv run --frozen --no-dev python -c 'import platform, sys; print(sys.version); print(platform.platform(), platform.machine())'
+          git rev-parse HEAD
+          shasum -a 256 src/hagig/manifests/*.json
+      - name: Restore installed models
+        id: cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/cached-data
+          key: models-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/src/hagig/manifests/*.json') }}
+      - name: Install qwen3-asr-0.6b and whisper-large-v3-turbo (with MLX conversion)
+        run: |
+          echo "cache-hit=${{ steps.cache.outputs.cache-hit }}"
+          for id in qwen3-asr-0.6b whisper-large-v3-turbo; do
+            start=$SECONDS
+            XDG_DATA_HOME="$CACHED_DATA" uv run --frozen --no-dev hagig model install "$id"
+            echo "$id: $((SECONDS - start)) s"
+          done
+      - name: Install qwen3-asr-1.7b
+        run: |
+          start=$SECONDS
+          XDG_DATA_HOME="$FRESH_DATA" uv run --frozen --no-dev hagig model install qwen3-asr-1.7b
+          echo "qwen3-asr-1.7b: $((SECONDS - start)) s"
+      - name: Verify every installation as the server and worker do
+        run: |
+          uv run --frozen --no-dev python - <<'EOF'
+          import os, time
+          from pathlib import Path
+          from hagig.manifest import load_manifest
+          from hagig.models import RECORD_NAME, installed_model, verify_installation
+          roots = {
+              "qwen3-asr-0.6b": os.environ["CACHED_DATA"],
+              "whisper-large-v3-turbo": os.environ["CACHED_DATA"],
+              "qwen3-asr-1.7b": os.environ["FRESH_DATA"],
+          }
+          for model_id, data in roots.items():
+              manifest = load_manifest(model_id)
+              start = time.monotonic()
+              version = installed_model(Path(data) / "hagig" / "models", manifest)
+              cheap = time.monotonic() - start
+              start = time.monotonic()
+              verify_installation(version)
+              deep = time.monotonic() - start
+              sizes = {p.name: p.stat().st_size for p in sorted(version.iterdir())}
+              print(f"{model_id}: cheap {cheap * 1000:.1f} ms, hashed {deep:.1f} s")
+              print(f"  {sum(sizes.values())} bytes: {sizes}")
+              print((version / RECORD_NAME).read_text())
+          EOF
+      - name: Load each installation's layout offline (no inference)
+        env:
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
+          HF_HUB_DISABLE_TELEMETRY: '1'
+          DO_NOT_TRACK: '1'
+        run: |
+          uv run --frozen --no-dev python - <<'EOF'
+          import os
+          from pathlib import Path
+          import mlx.core as mx
+          from mlx_whisper.load_models import load_model
+          from transformers import AutoConfig, AutoProcessor
+          from hagig.manifest import load_manifest
+          from hagig.models import installed_model
+          cached = Path(os.environ["CACHED_DATA"]) / "hagig" / "models"
+          fresh = Path(os.environ["FRESH_DATA"]) / "hagig" / "models"
+          for root, model_id in [(cached, "qwen3-asr-0.6b"), (fresh, "qwen3-asr-1.7b")]:
+              path = installed_model(root, load_manifest(model_id))
+              config = AutoConfig.from_pretrained(path, local_files_only=True)
+              processor = AutoProcessor.from_pretrained(path, local_files_only=True)
+              print(model_id, config.model_type, type(processor).__name__)
+          path = installed_model(cached, load_manifest("whisper-large-v3-turbo"))
+          model = load_model(str(path), dtype=mx.float16)
+          print("whisper-large-v3-turbo", type(model).__name__, model.dims)
+          EOF
+      - name: Remove the uncached installation
+        if: always()
+        run: |
+          du -sh "$CACHED_DATA" "$FRESH_DATA" || true
+          rm -rf "$FRESH_DATA"
+          df -h "$RUNNER_TEMP"

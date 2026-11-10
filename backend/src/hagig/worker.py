@@ -26,6 +26,7 @@ from hagig.framing import (
     message_frame,
     parse_header,
 )
+from hagig.models import ModelError, verify_installation
 
 if TYPE_CHECKING:
     import numpy as np
@@ -98,18 +99,29 @@ class _Pipe:
 
 
 def run(
-    stdin: BinaryIO, stdout: BinaryIO, engines: Mapping[str, Callable[[], Engine]]
+    stdin: BinaryIO,
+    stdout: BinaryIO,
+    engines: Mapping[str, Callable[[], Engine]],
+    verify: Callable[[Path], None] = verify_installation,
 ) -> int:
-    """Serve one worker lifetime. Returns the exit status."""
+    """Serve one worker lifetime. Returns the exit status.
+
+    `verify` hashes the installation against its install record before any
+    engine is constructed (`hagig.models.verify_installation`).
+    """
     stdout.write(READY_LINE)
     stdout.flush()
     try:
-        return _serve(_Pipe(stdin, stdout), engines)
+        return _serve(_Pipe(stdin, stdout), engines, verify)
     except ProtocolError:
         return 1
 
 
-def _serve(pipe: _Pipe, engines: Mapping[str, Callable[[], Engine]]) -> int:
+def _serve(
+    pipe: _Pipe,
+    engines: Mapping[str, Callable[[], Engine]],
+    verify: Callable[[Path], None],
+) -> int:
     load = pipe.read_message("load")
     if load is None:
         return 0
@@ -130,9 +142,10 @@ def _serve(pipe: _Pipe, engines: Mapping[str, Callable[[], Engine]]) -> int:
         return fail("worker_failed", None)
     code = None
     try:
+        verify(Path(load["model_dir"]))
         engine = engines[load["engine"]]()
         engine.load(Path(load["model_dir"]))
-    except EngineError as error:
+    except (EngineError, ModelError) as error:
         code = error.code if error.code in LOAD_CODES else "worker_failed"
     except Exception:
         code = "worker_failed"
