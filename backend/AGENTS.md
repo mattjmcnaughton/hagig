@@ -6,8 +6,9 @@ contract) first. Configuration, paths, the server lock, WAV decoding, the REST
 server, the worker protocol and the CLI (`start`, `status`, `stop`,
 `transcribe`) are implemented and tested with a test-only fake engine (#45).
 Model manifests, `hagig model install` and load-time model checks are
-implemented (#47). Real engines (#49) and bundling (#48) are not. Fake-engine
-success is not transcription evidence.
+implemented (#47). Real engines (#49) are not. The app bundle (#48), which
+syncs both engine extras, is described in `clients/macos/AGENTS.md`.
+Fake-engine success is not transcription evidence.
 
 ## Layout and boundaries
 

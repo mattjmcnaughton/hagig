@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parent
-SYNC = "sync --frozen --no-dev --no-editable"
+SYNC = "sync --frozen --no-dev --no-editable --extra qwen3-asr --extra mlx-whisper"
 
 
 class BundleContracts(unittest.TestCase):
