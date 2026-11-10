@@ -212,7 +212,10 @@ before_exit)`):
   for the response head. stdout is only the text plus a newline; `""` prints
   nothing. Exit 0 text/empty, 1 failures, 2 configuration or WAV errors (the
   reservation is cancelled first), 3 `busy`, 130 Ctrl-C (the upload connection
-  closes and a DELETE is sent). stderr carries stable codes only.
+  closes and a DELETE is sent). Ctrl-C during the admission exchange is held
+  until the 201 is read (at most its 5 s timeout), because the server is busy
+  from its 201 on and only the ID lets the CLI cancel at once. stderr carries
+  stable codes only.
 - `tests/integration/test_client_fixtures.py` drives the client with every
   client fixture exchange from a peer that serves the response bytes exactly.
 

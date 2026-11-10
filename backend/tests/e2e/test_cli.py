@@ -105,12 +105,15 @@ def test_ctrl_c_before_the_upload_releases_the_reservation_at_once(server):
     fifo = server.root / "input.wav"
     os.mkfifo(fifo)
     process = interruptible(server, "transcribe", str(fifo))
+    # Busy as soon as the server admits, which may be before the CLI has read
+    # the 201; the CLI must cancel either way.
     wait_for(lambda: server.status()["state"] == "busy")
     process.send_signal(signal.SIGINT)
     stdout, stderr = process.communicate(timeout=30)
     assert (process.returncode, stdout, stderr) == (130, b"", b"")
-    # Well inside the 5 s upload-start deadline.
-    server.wait_idle(timeout=1)
+    # The CLI exits only after its DELETE is answered, so the slot is already
+    # free: no wait, and nowhere near the 5 s upload-start deadline.
+    assert server.status()["state"] == "idle"
     assert server.pids() == []
 
 
