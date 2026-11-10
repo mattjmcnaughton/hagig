@@ -10,3 +10,8 @@ No secrets, write token permissions, arbitrary shell
 inputs, `pull_request_target`, automatic deployment, or user transcript fixtures.
 Owner permission is required before pushes and manual remote dispatches. New
 manual workflows must exist on the default branch before GitHub can dispatch them.
+
+`python-backend.yml` runs the backend's locked ruff, ty and pytest checks on
+ubuntu-24.04 and macos-15; follow `backend/AGENTS.md` for its commands and
+evidence rules. Hosted macOS results there are portable checks, not Seatbelt,
+inference or bundle evidence.

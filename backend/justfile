@@ -1,22 +1,37 @@
-default:
-    @just --list
-
-build:
-    cargo build --locked --all-targets
-
+# Check formatting
 fmt:
-    cargo fmt --all
-    rustfmt --edition 2024 tests/fixtures/linux_worker.rs tests/fixtures/inference_peer.rs
+    uv run --frozen ruff format --check .
 
-fmt-check:
-    cargo fmt --all -- --check
-    rustfmt --edition 2024 --check tests/fixtures/linux_worker.rs tests/fixtures/inference_peer.rs
+# Fix formatting
+fmt-fix:
+    uv run --frozen ruff format .
 
+# Check linting
 lint:
-    cargo clippy --locked --all-targets -- -D warnings
+    uv run --frozen ruff check .
 
-test:
-    cargo test --locked --all-targets
-    cargo test --locked --doc
+# Fix linting
+lint-fix:
+    uv run --frozen ruff check --fix .
 
-ci: fmt-check lint test
+# Run type checker
+typecheck:
+    uv run --frozen ty check
+
+# Run all tests (one pytest run, so an empty suite directory is not an error)
+test-all:
+    uv run --frozen pytest -v -ra
+
+# Run unit tests
+test-unit:
+    uv run --frozen pytest tests/unit
+
+# Run integration tests
+test-integration:
+    uv run --frozen pytest tests/integration
+
+# Fast pre-push check
+gate: fmt lint typecheck test-unit
+
+# Full check; the same commands CI runs
+gate-expensive: fmt lint typecheck test-all

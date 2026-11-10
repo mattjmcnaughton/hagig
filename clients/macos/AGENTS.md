@@ -64,7 +64,7 @@ This is an experimental real-client candidate, not an accepted installed alpha.
   system Reduce Motion setting; the shell always respects that setting.
   Its Copy effect is inert. The copied
   image is a presentation fixture, not evidence of a clipboard operation.
-- Swift will own macOS interaction; Rust owns server, inference/worker and CLI.
+- Swift will own macOS interaction; Python owns server, inference/worker and CLI.
   Do not recreate another thread's uncommitted inference experiments here.
 
 Do not add real user text/audio to fixtures, logs or screenshot artifacts. This is
@@ -269,9 +269,8 @@ owned PID. Its cleanup stops only its isolated service and preserves scratch on
 stop failure. It does not touch the user's live runtime. It is not a terminal
 LaunchServices interaction test or runtime-free physical-Mac installation proof.
 `macos-build.yml` keeps the packaging stand-in contracts always on. Its finite
-real-backend job is bound to PR32's source repo/branch with a twenty-minute hard
-timeout and skips elsewhere (including main), so main runs do not claim native
-smoke or real-backend evidence. D27 permitted only that PR32 run to reuse the
+PR32 real-backend job was removed with the Rust backend (#43); #48 restores
+backend bundle checks, so no run claims native smoke or real-backend evidence. D27 permitted only that PR32 run to reuse the
 pinned native/model/tokenizer acquisition (about 3.15 GB), hash verification and
 disposal; it is not permission for downloads on other PR or main builds. Running
 it for another branch needs a new explicit owner grant. Linux stand-ins are not

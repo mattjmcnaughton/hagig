@@ -1,0 +1,17 @@
+# Written by hand: templates/python-service ships no answers-file template, so
+# copier does not write this file and `copier update` is not wired up. See
+# AGENTS.md "Template provenance" for the exact generation command and the
+# files removed or rewritten after generation.
+# Template subdirectory: templates/python-service. Generated with copier 9.19.1.
+_commit: 72a28b9be899c6ccd39f06f8482d55e460556acd
+_src_path: https://github.com/mattjmcnaughton/templates.git
+author_email: me@mattjmcnaughton.com
+author_name: mattjmcnaughton
+enable_otel: false
+include_clients: false
+include_database: false
+include_product_docs: false
+include_technical_docs: false
+license: MIT
+project_description: Privacy-first local voice-to-text server, worker and CLI
+project_name: hagig
