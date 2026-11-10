@@ -65,8 +65,10 @@ install_name_tool -delete_rpath '@loader_path' "$app/Contents/MacOS/HagigShell"
 env_dir="$stage/env"
 sync_backend "$env_dir"
 version=$("$env_dir/bin/python" -I -c 'import sys; print("%d.%d" % sys.version_info[:2])')
-# only-managed guarantees this is uv's python-build-standalone install.
 base=$("$env_dir/bin/python" -I -c 'import os, sys; print(os.path.realpath(sys.base_prefix))')
+# only-managed alone is not enough: an explicit UV_PYTHON path bypasses it.
+managed=$(cd -P -- "$(uv python dir)" && pwd -P)
+case "$base" in "$managed"/*) ;; *) fail 'The environment does not use a uv-managed interpreter.' ;; esac
 python="$app/Contents/Resources/python"
 cp -R "$base" "$python"
 # Runtime only: no headers, docs, build configuration, pip or its bundled wheels,
