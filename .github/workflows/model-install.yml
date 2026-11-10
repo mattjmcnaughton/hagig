@@ -42,12 +42,6 @@ jobs:
       run:
         shell: bash
         working-directory: backend
-    env:
-      # The cached models root holds qwen3-asr-0.6b and the converted Whisper
-      # (about 3.2 GB). qwen3-asr-1.7b (4 GB) installs into an uncached root
-      # every run and is removed afterwards, to stay within the cache budget.
-      CACHED_DATA: ${{ runner.temp }}/cached-data
-      FRESH_DATA: ${{ runner.temp }}/fresh-data
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -56,6 +50,13 @@ jobs:
         with:
           version: '0.12.9'
           enable-cache: false
+      # The cached models root holds qwen3-asr-0.6b and the converted Whisper
+      # (about 3.2 GB). qwen3-asr-1.7b (4 GB) installs into an uncached root
+      # every run and is removed afterwards, to stay within the cache budget.
+      - name: Set model roots
+        run: |
+          echo "CACHED_DATA=$RUNNER_TEMP/cached-data" >> "$GITHUB_ENV"
+          echo "FRESH_DATA=$RUNNER_TEMP/fresh-data" >> "$GITHUB_ENV"
       - name: Sync the bundle's environment (both engines)
         run: uv sync --frozen --no-dev --extra qwen3-asr --extra mlx-whisper
       - name: Record environment
@@ -63,7 +64,7 @@ jobs:
           uname -a
           sw_vers
           df -h "$RUNNER_TEMP"
-          uv run --frozen --no-dev python -c 'import platform, sys; print(sys.version); print(platform.platform(), platform.machine())'
+          .venv/bin/python -c 'import platform, sys; print(sys.version); print(platform.platform(), platform.machine())'
           git rev-parse HEAD
           shasum -a 256 src/hagig/manifests/*.json
       - name: Restore installed models
@@ -77,17 +78,17 @@ jobs:
           echo "cache-hit=${{ steps.cache.outputs.cache-hit }}"
           for id in qwen3-asr-0.6b whisper-large-v3-turbo; do
             start=$SECONDS
-            XDG_DATA_HOME="$CACHED_DATA" uv run --frozen --no-dev hagig model install "$id"
+            XDG_DATA_HOME="$CACHED_DATA" .venv/bin/hagig model install "$id"
             echo "$id: $((SECONDS - start)) s"
           done
       - name: Install qwen3-asr-1.7b
         run: |
           start=$SECONDS
-          XDG_DATA_HOME="$FRESH_DATA" uv run --frozen --no-dev hagig model install qwen3-asr-1.7b
+          XDG_DATA_HOME="$FRESH_DATA" .venv/bin/hagig model install qwen3-asr-1.7b
           echo "qwen3-asr-1.7b: $((SECONDS - start)) s"
       - name: Verify every installation as the server and worker do
         run: |
-          uv run --frozen --no-dev python - <<'EOF'
+          .venv/bin/python - <<'EOF'
           import os, time
           from pathlib import Path
           from hagig.manifest import load_manifest
@@ -117,7 +118,7 @@ jobs:
           HF_HUB_DISABLE_TELEMETRY: '1'
           DO_NOT_TRACK: '1'
         run: |
-          uv run --frozen --no-dev python - <<'EOF'
+          .venv/bin/python - <<'EOF'
           import os
           from pathlib import Path
           import mlx.core as mx
