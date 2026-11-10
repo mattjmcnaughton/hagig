@@ -1,5 +1,5 @@
 #!/bin/bash
-# Native semantic evidence only. CI supplies the five-minute hard deadline.
+# Native semantic evidence only. CI supplies the hard deadline.
 set -euo pipefail
 
 root=$(git rev-parse --show-toplevel)

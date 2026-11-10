@@ -5,17 +5,20 @@ enum CaptureFailure: Error {
     case permission, device, invalidAudio
 }
 
-/// Owns one bounded recording and converter. The engine callback and Stop may
-/// race; finishing atomically closes the buffer before returning its contents.
+/// Owns one bounded recording and converter. Each converted chunk goes to `sink`
+/// (the open upload) as capture produces it; no recording buffer is kept. The
+/// engine callback and Stop may race; finishing atomically closes the recording.
 final class PCMRecording {
     private let lock = NSLock()
     private let converter: AVAudioConverter
     private let outputFormat: AVAudioFormat
-    private var bytes = Data()
+    private let sink: (Data) -> Void
+    private var sent = 0
+    private var failed = false
     private var closed = false
     private static let maximumBytes = 19_200_000
 
-    init(format: AVAudioFormat) throws {
+    init(format: AVAudioFormat, sink: @escaping (Data) -> Void) throws {
         guard format.sampleRate.isFinite, format.sampleRate > 0, format.channelCount > 0,
               let output = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                          sampleRate: 16_000, channels: 1, interleaved: false),
@@ -24,16 +27,17 @@ final class PCMRecording {
         }
         self.converter = converter
         outputFormat = output
+        self.sink = sink
     }
 
     var nearLimit: Bool {
         lock.lock(); defer { lock.unlock() }
-        return bytes.count >= 285 * 16_000 * 4
+        return sent >= 285 * 16_000 * 4
     }
 
     var atLimit: Bool {
         lock.lock(); defer { lock.unlock() }
-        return bytes.count == Self.maximumBytes
+        return sent == Self.maximumBytes
     }
 
     func append(_ input: AVAudioPCMBuffer) throws {
@@ -41,11 +45,11 @@ final class PCMRecording {
         var accepted = false
         defer {
             // Invalidate before releasing the lock, not in the later UI event:
-            // Stop must never recover a prefix from a failed capture.
-            if !accepted { bytes.removeAll(); closed = true }
+            // Stop must never end an upload whose capture failed.
+            if !accepted { failed = true; closed = true }
         }
         guard !closed else { throw CaptureFailure.invalidAudio }
-        guard bytes.count < Self.maximumBytes else { accepted = true; return }
+        guard sent < Self.maximumBytes else { accepted = true; return }
         // Bound converter allocation independently of a changing input device.
         guard input.frameLength > 0, input.frameLength <= 16_384,
               input.format == converter.inputFormat else { throw CaptureFailure.device }
@@ -70,20 +74,22 @@ final class PCMRecording {
         for index in 0..<Int(output.frameLength) where !samples[index].isFinite || abs(samples[index]) > 1 {
             throw CaptureFailure.invalidAudio
         }
-        let count = min(Int(output.frameLength), (Self.maximumBytes - bytes.count) / 4)
+        let count = min(Int(output.frameLength), (Self.maximumBytes - sent) / 4)
+        var chunk = Data(capacity: count * 4)
         for index in 0..<count {
             var value = samples[index].bitPattern.littleEndian
-            withUnsafeBytes(of: &value) { bytes.append(contentsOf: $0) }
+            withUnsafeBytes(of: &value) { chunk.append(contentsOf: $0) }
         }
+        if !chunk.isEmpty { sink(chunk) }
+        sent += chunk.count
         accepted = true
     }
 
-    func finish() -> Data {
+    /// Closes the recording and returns the bytes streamed, or 0 after a failure.
+    func finish() -> Int {
         lock.lock(); defer { lock.unlock() }
         closed = true
-        let result = bytes
-        bytes = Data()
-        return result
+        return failed ? 0 : sent
     }
 }
 
@@ -97,9 +103,13 @@ final class MicrophoneCapture {
     private var observer: NSObjectProtocol?
     private var tapped = false
     private var timer: Timer?
+    private let sink: @Sendable (Data) -> Void
     private let event: (Event) -> Void
 
-    init(event: @escaping (Event) -> Void) { self.event = event }
+    init(sink: @escaping @Sendable (Data) -> Void, event: @escaping (Event) -> Void) {
+        self.sink = sink
+        self.event = event
+    }
 
     static func requestPermission() async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
@@ -118,7 +128,7 @@ final class MicrophoneCapture {
         }
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
-        let buffer = try PCMRecording(format: format)
+        let buffer = try PCMRecording(format: format, sink: sink)
         recording = buffer
         input.installTap(onBus: 0, bufferSize: 4_096, format: format) { [weak self] pcm, _ in
             do {
@@ -158,7 +168,8 @@ final class MicrophoneCapture {
         RunLoop.main.add(timer, forMode: .common)
     }
 
-    func stop() -> Data {
+    /// True only when the recording streamed audio and did not fail.
+    @discardableResult func stop() -> Bool {
         let buffer = recording
         recording = nil
         timer?.invalidate(); timer = nil
@@ -166,6 +177,6 @@ final class MicrophoneCapture {
         observer = nil
         engine.stop()
         if tapped { engine.inputNode.removeTap(onBus: 0); tapped = false }
-        return buffer?.finish() ?? Data()
+        return (buffer?.finish() ?? 0) > 0
     }
 }

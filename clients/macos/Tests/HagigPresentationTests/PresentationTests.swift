@@ -88,7 +88,7 @@ final class PresentationTests: XCTestCase {
             model.complete(requestID: id, text: "Premature result")
             XCTAssertEqual(model.stage, .recording)
             model.release()
-            model.complete(requestID: id, text: " \t\n")
+            model.complete(requestID: id, text: "") // The server maps whitespace-only text to "".
             XCTAssertEqual(model.stage, .noSpeech)
             XCTAssertNil(model.transcript)
             model.begin()

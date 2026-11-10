@@ -49,6 +49,8 @@ public final class Presentation: ObservableObject {
     @Published public private(set) var editorLabel: String
     @Published public private(set) var editorID = UUID()
     @Published public private(set) var nearLimit = false
+    /// The server's configured model alias from the last admission's status.
+    @Published public private(set) var modelID: String?
     public private(set) var requestID: UUID?
     private var discardEditor: (() -> Void)?
 
@@ -66,9 +68,10 @@ public final class Presentation: ObservableObject {
         return id
     }
 
-    public func admit(requestID: UUID, editorMode: EditorMode) -> Bool {
+    public func admit(requestID: UUID, editorMode: EditorMode, modelID: String? = nil) -> Bool {
         guard self.requestID == requestID, stage == .awaitingAdmission else { return false }
         self.editorMode = editorMode
+        if let modelID { self.modelID = modelID }
         editorLabel = editorMode == .vim ? "Vim · Normal" : "Standard"
         stage = .recording
         return true
@@ -95,7 +98,8 @@ public final class Presentation: ObservableObject {
     public func complete(requestID: UUID, text: String) {
         guard self.requestID == requestID, stage == .transcribing else { return }
         self.requestID = nil
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        // The server already maps whitespace-only text to ""; never normalize again.
+        guard !text.isEmpty else {
             stage = .noSpeech
             return
         }
