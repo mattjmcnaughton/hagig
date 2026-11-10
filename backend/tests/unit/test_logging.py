@@ -1,5 +1,6 @@
 import json
 
+import pytest
 import structlog
 
 from hagig.logging import configure_logging
@@ -7,6 +8,16 @@ from hagig.logging import configure_logging
 SENTINEL = "SENTINEL-vocabulary-Ghostty"
 
 
+@pytest.fixture
+def restore_structlog():
+    """configure_logging binds the stream it is given (here capsys's, closed
+    after the test); restore structlog's defaults so later in-process tests
+    never log to it."""
+    yield
+    structlog.reset_defaults()
+
+
+@pytest.mark.usefixtures("restore_structlog")
 def test_logs_are_json_on_stderr_with_only_content_free_fields(capsys):
     configure_logging()
     log = structlog.get_logger()
