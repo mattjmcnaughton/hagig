@@ -51,12 +51,19 @@ unsigned_extension() {
     echo "import pydantic_core with the unsigned extension: exit $code" > "$directory/observation.txt"
     check=smoke expected='_pydantic_core'
 }
+build_host_rpath() {
+    # What scipy's wheel shipped: a search path into a build machine's Homebrew.
+    set -- "$site"/pydantic_core/_pydantic_core.*.so
+    install_name_tool -add_rpath /opt/homebrew/lib "$1"
+    codesign --force --sign - --timestamp=none "$1"
+    check=smoke expected='loader search path /opt/homebrew/lib'
+}
 app_without_backend() {
     rm -rf "$site/hagig"
     check=app expected='serverUnavailable'
 }
 
-for experiment in checkout_link missing_profile unsigned_extension app_without_backend; do
+for experiment in checkout_link missing_profile unsigned_extension build_host_rpath app_without_backend; do
     directory="$output/$experiment"
     mkdir "$directory"
     echo UNPROVEN > "$directory/verdict.txt"
