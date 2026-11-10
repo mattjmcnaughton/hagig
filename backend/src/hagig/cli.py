@@ -7,12 +7,13 @@ codes: 0 success (including no speech), 1 failure, 2 usage or configuration
 error, 3 busy, 130 interrupted.
 """
 
+import contextlib
 import os
 import signal
 import subprocess
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -122,6 +123,34 @@ def start() -> None:
     _ensure_server(os.environ)
 
 
+@contextlib.contextmanager
+def _holding_interrupts() -> Generator[None]:
+    """Defer Ctrl-C to the end of the block, then raise it there.
+
+    The server is busy from the moment it admits, but the client only learns
+    the request ID from the 201. Holding the interrupt over the admission
+    exchange (bounded by its 5 s timeout) means a Ctrl-C always ends with a
+    known ID to DELETE, instead of a reservation left to the upload-start
+    deadline. An inherited SIG_IGN stays in force.
+    """
+    if signal.getsignal(signal.SIGINT) is not signal.default_int_handler:
+        yield
+        return
+    interrupted = False
+
+    def note(_signum: int, _frame: object) -> None:
+        nonlocal interrupted
+        interrupted = True
+
+    signal.signal(signal.SIGINT, note)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+    if interrupted:
+        raise KeyboardInterrupt
+
+
 @app.command()
 def transcribe(audio: Path) -> None:
     """Transcribe a WAV file and print the text."""
@@ -130,10 +159,12 @@ def transcribe(audio: Path) -> None:
     try:
         sock, status_data = _ensure_server(os.environ)
         with Client(sock) as client:
-            admitted = client.admit()
-            if admitted.kind != "admitted":
+            with _holding_interrupts():
+                admitted = client.admit()
+                if admitted.kind == "admitted":
+                    admitted_id = admitted.data["request_id"]
+            if admitted_id is None:
                 _report(admitted)
-            admitted_id = admitted.data["request_id"]
             if (
                 admitted.data["config_generation"] != status_data["config_generation"]
                 or admitted.data["model_id"] != status_data["settings"]["model_id"]

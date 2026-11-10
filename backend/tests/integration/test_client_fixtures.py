@@ -6,10 +6,12 @@ the CLI's `Content-Length` framing, then sends the fixture response verbatim.
 
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -36,8 +38,11 @@ def response_bytes(exchange):
 class Peer:
     """Serves one fixture response per connection, in order, on a Unix socket."""
 
-    def __init__(self, path, exchanges):
+    def __init__(self, path, exchanges, hold=None):
         self.exchanges = list(exchanges)
+        # (exchange name, Event): read that request, then wait before answering.
+        self.hold = hold
+        self.holding = threading.Event()
         self.requests = []
         self.errors = []
         self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -80,6 +85,9 @@ class Peer:
             if not request["body"].get("open"):
                 while len(body) < length:
                     body += connection.recv(65536)
+        if self.hold is not None and self.hold[0] == exchange["name"]:
+            self.holding.set()
+            self.hold[1].wait(timeout=30)
         connection.sendall(response_bytes(exchange))
 
     def close(self):
@@ -160,6 +168,51 @@ def test_cli_cancels_an_admission_from_a_restarted_server(runtime, tmp_path):
         b"",
         b"generic_failure\n",
     )
+    assert peer.requests == [
+        ("GET", "/v1/status"),
+        ("POST", "/v1/requests"),
+        ("DELETE", "/v1/requests/fixture-request-1"),
+    ]
+
+
+def test_ctrl_c_while_the_admission_is_in_flight_still_cancels_it(runtime, tmp_path):
+    # The server is busy from its 201 on, but the CLI only learns the request
+    # ID when it reads that 201. A Ctrl-C in between must still end with a
+    # DELETE, or the reservation lingers until the upload-start deadline.
+    (runtime / "hagig").mkdir(mode=0o700)
+    release = threading.Event()
+    exchanges = [BY_NAME["status_idle"], BY_NAME["admit"], BY_NAME["cancel_reserved"]]
+    peer = Peer(runtime / "hagig" / "server.sock", exchanges, hold=("admit", release))
+    env = {
+        "HOME": str(tmp_path),
+        "XDG_RUNTIME_DIR": str(runtime),
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    }
+    # If the interrupt lands only after admission, a FIFO blocks the WAV read.
+    fifo = tmp_path / "input.wav"
+    os.mkfifo(fifo)
+    process = subprocess.Popen(
+        [HAGIG, "transcribe", str(fifo)],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        # The caller's shell may ignore SIGINT, which the child would inherit.
+        preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL),
+    )
+    try:
+        assert peer.holding.wait(timeout=30)
+        process.send_signal(signal.SIGINT)
+        time.sleep(0.5)
+        release.set()
+        stdout, stderr = process.communicate(timeout=30)
+        peer.thread.join(timeout=10)
+    finally:
+        release.set()
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        peer.close()
+    assert (process.returncode, stdout, stderr) == (130, b"", b"")
     assert peer.requests == [
         ("GET", "/v1/status"),
         ("POST", "/v1/requests"),
