@@ -161,13 +161,13 @@ class Supervisor:
         argv = settings.launcher.argv(settings.mode)
         if argv is None:
             raise WorkerError("isolation_unavailable")
-        model_dir = invalid = None
+        model_dir, code = None, ""
         try:
             model_dir = installed_model(settings.models_root, settings.manifest)
         except ModelError as error:
-            invalid = error.code
+            code = error.code
         if model_dir is None:
-            raise WorkerError(invalid or "model_invalid")
+            raise WorkerError(code)
         process = None
         with contextlib.suppress(OSError):
             process = await asyncio.create_subprocess_exec(

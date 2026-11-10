@@ -1,5 +1,6 @@
 """The real `hagig` CLI against the test server, and against the real server."""
 
+import importlib.util
 import os
 import platform
 import shutil
@@ -162,7 +163,47 @@ def test_model_install_refuses_before_any_download(home, model, stderr):
     assert not (home.root / "data").exists()
 
 
-def test_real_server_spawn_attach_worker_restart_and_stop(home):
+def test_model_install_failures_are_stable_codes_before_any_download(home):
+    models = home.root / "data" / "hagig" / "models"
+    models.mkdir(parents=True)
+    # Another install holds the persistent lock.
+    lock = ServerLock.acquire(models, name=".install.lock")
+    assert lock is not None
+    try:
+        held = hagig(home, "model", "install", "qwen3-asr-0.6b")
+    finally:
+        lock.release()
+    assert (held.returncode, held.stdout, held.stderr) == (
+        1,
+        b"",
+        b"install_in_progress\n",
+    )
+    models.chmod(0o777)
+    unsafe = hagig(home, "model", "install", "qwen3-asr-0.6b")
+    assert (unsafe.returncode, unsafe.stdout, unsafe.stderr) == (
+        1,
+        b"",
+        b"model_dir_unsafe\n",
+    )
+    assert sorted(p.name for p in models.iterdir()) == [".install.lock"]
+
+
+@pytest.mark.skipif(
+    not (sys.platform == "darwin" and platform.machine() == "arm64")
+    or importlib.util.find_spec("mlx_whisper") is not None,
+    reason="needs Apple Silicon without the mlx-whisper extra",
+)
+def test_whisper_install_without_the_engine_refuses_before_downloading(home):
+    result = hagig(home, "model", "install", "whisper-large-v3-turbo")
+    assert (result.returncode, result.stdout, result.stderr) == (
+        1,
+        b"",
+        b"engine_not_installed\n",
+    )
+    assert not (home.root / "data").exists()
+
+
+def test_real_server_refuses_an_unmatched_installation_then_stops(home):
     home.write_config()
     home.install_model()
     starts = [

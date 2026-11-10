@@ -10,11 +10,44 @@ import pytest
 
 from hagig.launcher import Launcher
 from hagig.manifest import parse_manifest
-from hagig.services.supervisor import Supervisor, WorkerSettings
+from hagig.services.supervisor import Supervisor, WorkerError, WorkerSettings
 from tests.support.harness import SUPPORT
 from tests.support.models import FILES, synthetic_manifest, write_installation
 
 AUDIO = struct.pack("<2f", 0.0, 0.5)
+
+
+def test_the_real_worker_command_verifies_the_installation_at_load(tmp_path):
+    """The production `python -I -m hagig.worker` and its real ENGINES table."""
+    models = tmp_path / "models"
+    manifest = parse_manifest(synthetic_manifest("qwen3-asr-0.6b"))
+    version = write_installation(models, manifest, FILES, "v-" + "0" * 32)
+    settings = WorkerSettings(
+        launcher=Launcher(),
+        mode="disabled",
+        env={"PATH": "/usr/bin:/bin"},
+        models_root=models,
+        manifest=manifest,
+        vocabulary=(),
+    )
+
+    async def attempt():
+        sup = Supervisor(settings)
+        try:
+            await sup.transcribe("a", AUDIO)
+        except WorkerError as error:
+            return error.code
+        finally:
+            await sup.wait_reaped()
+
+    # Valid files: the real worker loads past verification to the engine
+    # import, which fails until #49 adds the engines.
+    assert asyncio.run(attempt()) == "worker_failed"
+    weights = version / "model.safetensors"
+    data = bytearray(weights.read_bytes())
+    data[0] ^= 1
+    weights.write_bytes(bytes(data))
+    assert asyncio.run(attempt()) == "model_invalid"
 
 
 def supervisor(tmp_path):

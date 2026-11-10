@@ -107,8 +107,8 @@ def edit(change, converter=None):
             lambda d: d["files"].__setitem__(1, {**d["files"][1], "path": "m.pt"}),
             "pickle",
         ),
-        # Pickle only: the safetensors weights are absent.
-        (lambda d: d["files"].pop(1), "pickle"),
+        # Pickle only, or nothing safe: the safetensors weights are absent.
+        (lambda d: d["files"].pop(1), "no_safetensors"),
         (lambda d: d["files"].append(dict(d["files"][0])), "invalid"),
         (lambda d: d["files"][0].update(path="../config.json"), "invalid"),
         (lambda d: d["files"][0].update(path="sub/config.json"), "invalid"),
@@ -133,7 +133,7 @@ def test_converter_outputs_must_include_safetensors_and_no_pickle():
         return lambda d: d["conversion"].update(outputs=names)
 
     for names, code in [
-        (["config.json", "weights.npz"], "manifest_pickle"),
+        (["config.json", "weights.npz"], "manifest_no_safetensors"),
         (["config.json", "weights.safetensors", "w.pkl"], "manifest_pickle"),
         (["weights.safetensors", "weights.safetensors"], "manifest_invalid"),
     ]:
