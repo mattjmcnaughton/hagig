@@ -354,8 +354,9 @@ tests/digests and identical commands. Existing Xcode/Swift/Python only, no asset
 CI provides the hard timeout. Compile/setup/zero-test failures do not count.
 Coverage: admission/late-result guards, auto-stop, PCM cap/warning, failed-capture
 discard, status compatibility, the 5 s exchange bound, the 125 s result wait,
-DELETE for a late admission and Cancel closing the upload without ending its
-body; not every protocol claim.
+DELETE for a late admission, Cancel closing the upload without ending its body
+and the first-launch status poll after the helper starts the server; not every
+protocol claim.
 
 Native evidence: [run 40509803030](https://github.com/mattjmcnaughton/hagig/actions/runs/40509803030)
 executed build, three passing presentation tests, two Ready renders and 26 state

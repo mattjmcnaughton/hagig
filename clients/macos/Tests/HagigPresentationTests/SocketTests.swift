@@ -16,7 +16,8 @@ private final class StreamingCapture: NativeCapture {
 private struct TimedOut: Error {}
 
 final class SocketTests: XCTestCase {
-    /// Never started: every test socket exists, so the launch seam is not reached.
+    /// Runs only when no server answers on the socket, and then fails (exit 1).
+    /// The launch tests use marker helpers to observe that seam.
     private let noHelper = URL(fileURLWithPath: "/usr/bin/false")
     /// Synthetic canonical samples 0.125 and -0.75, not recorded audio.
     private let chunk = Data([0, 0, 0, 0x3e, 0, 0, 0x40, 0xbf])
@@ -182,11 +183,16 @@ final class SocketTests: XCTestCase {
                        Peer.Step(exchange: upload, respond: false, early: true)]] {
             let base = try Base()
             let peer = try Peer(directory: try base.directory())
+            let helper = try base.helper(exit: 1)
             peer.serve(steps)
-            let request = SocketRequest(helper: noHelper, environment: ["XDG_RUNTIME_DIR": base.path])
+            let request = SocketRequest(helper: helper.url, environment: ["XDG_RUNTIME_DIR": base.path])
             let (outcome, _) = await run(request, early: true)
             XCTAssertEqual(outcome, Outcome(outcome: "generic_failure"))
             try await finished(peer)
+            // A status connection closed without a response means no server
+            // answered, so the helper is asked once; a lost upload never starts it.
+            let started = try? String(contentsOfFile: helper.marker, encoding: .utf8)
+            XCTAssertEqual(started, steps.count == 1 ? "start\n" : nil)
         }
     }
 
@@ -364,14 +370,14 @@ final class SocketTests: XCTestCase {
         let configuration = try base.helper(exit: 2)
         let (absent, _) = await run(SocketRequest(helper: configuration.url, environment: environment))
         XCTAssertEqual(absent, Outcome(outcome: "failure", code: "configuration"))
-        XCTAssertEqual(try String(contentsOfFile: configuration.marker, encoding: .utf8), "start")
+        XCTAssertEqual(try String(contentsOfFile: configuration.marker, encoding: .utf8), "start\n")
         // A stale socket left by a crashed server refuses connections; the helper
         // (whose server lock owns stale-socket cleanup) is asked to start again.
         let failing = try base.helper(exit: 1)
         let stale = try Peer.stale(directory: runtime)
         let (refused, _) = await run(SocketRequest(helper: failing.url, environment: environment))
         XCTAssertEqual(refused, Outcome(outcome: "generic_failure"))
-        XCTAssertEqual(try String(contentsOfFile: failing.marker, encoding: .utf8), "start")
+        XCTAssertEqual(try String(contentsOfFile: failing.marker, encoding: .utf8), "start\n")
         XCTAssertEqual(unlink(stale), 0)
         try FileManager.default.removeItem(atPath: failing.marker)
         // A live server answers: the helper never runs.
@@ -382,6 +388,44 @@ final class SocketTests: XCTestCase {
         XCTAssertEqual(present, expected(stopping))
         try await finished(peer)
         XCTAssertFalse(FileManager.default.fileExists(atPath: failing.marker))
+    }
+
+    /// First launch (TDD §5): the helper starts the server and exits 0; the client
+    /// keeps reading status within the startup bound and never spawns again.
+    @MainActor
+    func testHelperStartsTheServerOnceThenStatusIsRead() async throws {
+        let base = try Base()
+        let runtime = try base.directory()
+        let helper = try base.helper(exit: 0)
+        let stopping = try Fixtures["status_stopping"]
+        let path = base.path
+        let pending = Task { @MainActor in
+            await self.run(SocketRequest(helper: helper.url, environment: ["XDG_RUNTIME_DIR": path])).0
+        }
+        try await wait("helper start") { FileManager.default.fileExists(atPath: helper.marker) }
+        // The server binds a little after its starter exits.
+        try await Task.sleep(for: .milliseconds(300))
+        let peer = try Peer(directory: runtime)
+        peer.serve([Peer.Step(exchange: stopping)])
+        let outcome = await pending.value
+        XCTAssertEqual(outcome, expected(stopping))
+        try await finished(peer)
+        XCTAssertEqual(try String(contentsOfFile: helper.marker, encoding: .utf8), "start\n", "no spawn loop")
+    }
+
+    /// A starter that never exits is stopped at the 5 s startup bound.
+    @MainActor
+    func testHelperThatNeverExitsFailsAtTheStartupBound() async throws {
+        let base = try Base()
+        _ = try base.directory()
+        let helper = try base.helper(exit: 0, after: 30)
+        let started = ContinuousClock.now
+        let (outcome, _) = await run(SocketRequest(helper: helper.url, environment: ["XDG_RUNTIME_DIR": base.path]))
+        let elapsed = started.duration(to: .now)
+        XCTAssertEqual(outcome, Outcome(outcome: "generic_failure"))
+        XCTAssertGreaterThan(elapsed, .milliseconds(4_500))
+        XCTAssertLessThan(elapsed, .milliseconds(6_500))
+        XCTAssertEqual(try String(contentsOfFile: helper.marker, encoding: .utf8), "start\n")
     }
 
     // MARK: Controller flow and cancellation at the delivery boundary (TDD §7)
