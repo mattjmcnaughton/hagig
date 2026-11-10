@@ -354,9 +354,11 @@ tests/digests and identical commands. Existing Xcode/Swift/Python only, no asset
 CI provides the hard timeout. Compile/setup/zero-test failures do not count.
 Coverage: admission/late-result guards, auto-stop, PCM cap/warning, failed-capture
 discard, status compatibility, the 5 s exchange bound, the 125 s result wait,
-DELETE for a late admission, Cancel closing the upload without ending its body
-and the first-launch status poll after the helper starts the server; not every
-protocol claim.
+DELETE for a late admission, Cancel closing the upload without ending its body,
+the first-launch status poll, the upload opening before the permission prompt,
+the per-user temp-dir fallback (not `$TMPDIR`), the helper start on a stale
+socket, the result wait anchored at the end of the body and unknown codes as
+generic failures; not every protocol claim.
 
 Native evidence: [run 40509803030](https://github.com/mattjmcnaughton/hagig/actions/runs/40509803030)
 executed build, three passing presentation tests, two Ready renders and 26 state
@@ -421,7 +423,7 @@ Both workflows select `macos-15` and the installed `/Applications/Xcode_16.4.app
 explicitly; neither follows `macos-latest`. GitHub's image itself is mutable: record
 the environment, do not claim an immutable OS pin or Apple Silicon acceptance.
 Actions are SHA-pinned, credentials are not persisted, permissions are read-only,
-`macos-build.yml` jobs time out after 20 minutes (40 for client semantics, which
+`macos-build.yml` jobs time out after 20 minutes (60 for client semantics, which
 rebuilds per experiment), and artifact retention is three days. Its build-test job
 fails if `swift package resolve` would change the committed `Package.resolved`.
 The manual `macos-screenshots.yml` still allows ten minutes, which may be too
