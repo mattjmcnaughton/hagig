@@ -33,7 +33,7 @@ struct Screenshots {
                 }
                 if !["recording", "nearLimit"].contains(name) { presentation.release() }
                 if ["fallback", "copied", "noSpeech"].contains(name), let id = presentation.requestID {
-                    presentation.complete(requestID: id, text: name == "noSpeech" ? " \n" : Presentation.fixture)
+                    presentation.complete(requestID: id, text: name == "noSpeech" ? "" : Presentation.fixture)
                 }
                 if name == "copied" {
                     presentation.edit("Synthetic edited review 😀\nCover cancellation and e\u{301} / 日本語 bounds.",
