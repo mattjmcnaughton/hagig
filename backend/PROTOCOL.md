@@ -396,9 +396,12 @@ Worker error codes:
 Any other code is treated as `worker_failed`.
 
 Before it launches a worker, the server checks, in order: that the configured
-model's installation directory exists (else `503 model_missing`), then
-isolation as above (else `503 isolation_unavailable`). The worker's `load`
-validates the files themselves. After any `error` reply the server retires the
+model has a published installation (`<id>/current`, else `503 model_missing`),
+then isolation as above (else `503 isolation_unavailable`), then that the
+installation matches its install record: a private versioned directory holding
+exactly the recorded files at their recorded sizes (else `503 model_invalid`).
+These checks run once per worker launch and hash nothing. The worker's `load`
+hashes every recorded file before it constructs an engine. After any `error` reply the server retires the
 worker. A worker stays warm only after `loaded` and `result`.
 
 Lifetime: one request is in flight at a time. The server enforces the
