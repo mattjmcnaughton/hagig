@@ -301,6 +301,8 @@ def test_read_wav_never_modifies_the_input(tmp_path):
     bad.write_bytes(wav(PCM, 1, 22050, 16, pcm16(1, 2)))
     for path in (good, bad):
         path.chmod(0o400)
+        # A fixed old timestamp, so any touch is visible even on coarse clocks.
+        os.utime(path, ns=(1_000_000_000, 1_000_000_000))
     before = {
         p: (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat()) for p in (good, bad)
     }
