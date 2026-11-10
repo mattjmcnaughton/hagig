@@ -3,7 +3,6 @@ from pydantic import ValidationError
 
 from hagig.config import (
     MAX_CONFIG_BYTES,
-    PROVISIONAL_DEFAULT_MODEL_ID,
     Config,
     ConfigError,
     ConfigIssue,
@@ -11,9 +10,13 @@ from hagig.config import (
 )
 
 SENTINEL = "SENTINEL-Ghostty"
+MODEL = '[model]\nid = "qwen3-asr-0.6b"\n'
 
 
 def write(tmp_path, text):
+    # model.id is required; tests about other fields get a valid one appended.
+    if "[model]" not in text:
+        text += "\n" + MODEL
     path = tmp_path / "config.toml"
     path.write_text(text, encoding="utf-8")
     return path
@@ -33,18 +36,28 @@ def issues(tmp_path, text, *, apple_silicon=False):
 # Defaults and valid files
 
 
-def test_missing_file_uses_defaults(tmp_path):
-    config = load_config(tmp_path / "absent.toml", apple_silicon=False)
-    assert config == Config()
+@pytest.mark.parametrize(
+    "text",
+    [None, "", '[editor]\nmode = "vim"\n', "[model]\n", "[model]\n[editor]\n"],
+    ids=["missing file", "empty file", "no model table", "empty model", "no id"],
+)
+def test_model_id_is_required(tmp_path, text):
+    path = tmp_path / "config.toml"
+    if text is not None:
+        path.write_text(text, encoding="utf-8")
+    with pytest.raises(ConfigError) as error:
+        load_config(path, apple_silicon=False)
+    assert error.value.code == "config_invalid"
+    assert error.value.issues == (ConfigIssue("model.id", "missing"),)
+
+
+def test_other_fields_default_when_only_model_id_is_set(tmp_path):
+    config = load(tmp_path, MODEL)
+    assert config.model.id == "qwen3-asr-0.6b"
     assert config.editor.mode == "standard"
-    assert config.model.id == PROVISIONAL_DEFAULT_MODEL_ID == "qwen3-asr-0.6b"
     assert config.inference.network_isolation == "required"
     assert config.vocabulary.terms == []
-
-
-def test_empty_file_and_empty_tables_use_defaults(tmp_path):
-    assert load(tmp_path, "") == Config()
-    assert load(tmp_path, "[editor]\n[model]\n[inference]\n[vocabulary]\n") == Config()
+    assert load(tmp_path, "[editor]\n[inference]\n[vocabulary]\n" + MODEL) == config
 
 
 def test_full_valid_file(tmp_path):
@@ -86,7 +99,7 @@ def test_environment_does_not_override_the_file(tmp_path, monkeypatch):
     for name in ("HAGIG_NETWORK_ISOLATION", "HAGIG_INFERENCE__NETWORK_ISOLATION"):
         monkeypatch.setenv(name, "disabled")
     monkeypatch.setenv("HAGIG_MODEL_ID", "qwen3-asr-1.7b")
-    config = load(tmp_path, "")
+    config = load(tmp_path, MODEL)
     assert config.inference.network_isolation == "required"
     assert config.model.id == "qwen3-asr-0.6b"
 
