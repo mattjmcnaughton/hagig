@@ -252,7 +252,8 @@ What each check proves (the scripts own the mechanics):
 
 - `smoke-bundle.sh`, on a bundle moved outside the checkout, under `env -i` with
   private XDG paths and a config setting `model.id`: every Mach-O is signed,
-  arm64 and loads only system or bundle-relative paths; no `Resources` or
+  arm64 and loads only system or bundle-relative paths (search paths may also
+  name the sealed system volume, as `llvmlite` does with `/usr/lib`); no `Resources` or
   `Helpers` file names the checkout (the Swift shell may embed source paths as
   diagnostic strings); the helper starts a server that is the bundled
   interpreter and maps no code from elsewhere; `GET /v1/status` answers over the

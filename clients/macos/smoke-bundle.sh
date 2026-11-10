@@ -30,29 +30,37 @@ machos=$(find "$app" -type f -exec file {} + | sed -n 's/:[[:space:]].*Mach-O.*$
     sed 's/ (for architecture [^)]*)$//' | LC_ALL=C sort -u)
 [ -n "$machos" ] || fail 'no Mach-O files found'
 count=0
+# Collect every violation across all files, then fail once with the full list.
+problems=()
 while IFS= read -r binary; do
     count=$((count + 1))
-    codesign --verify --strict "$binary" 2>/dev/null || fail "unsigned or invalid code: ${binary#"$app"/}"
-    case " $(lipo -archs "$binary") " in *' arm64 '*) ;; *) fail "not arm64: ${binary#"$app"/}" ;; esac
+    name=${binary#"$app"/}
+    codesign --verify --strict "$binary" 2>/dev/null || problems+=("unsigned or invalid code: $name")
+    case " $(lipo -archs "$binary") " in *' arm64 '*) ;; *) problems+=("not arm64: $name") ;; esac
     # Only system libraries and loader-relative paths inside the bundle.
-    # Process substitution keeps these loops, and so `fail`, in this shell.
+    # Process substitution keeps these loops, and so `problems`, in this shell.
     # -arch arm64: one slice of a universal binary; dependency lines start with a tab.
     own=$(otool -D -arch arm64 "$binary" | tail -n +2)
     while read -r dependency; do
         [ "$dependency" != "$own" ] || continue
         case "$dependency" in
             /usr/lib/*|/System/Library/*|@rpath/*|@loader_path/*|@executable_path/*) ;;
-            *) fail "absolute loader dependency $dependency in ${binary#"$app"/}" ;;
+            *) problems+=("absolute loader dependency $dependency in $name") ;;
         esac
     done < <(otool -L -arch arm64 "$binary" | awk '/^\t/ { print $1 }')
+    # Search paths: bundle-relative, or the sealed read-only system volume
+    # (llvmlite carries /usr/lib), where nothing can be planted.
     while read -r rpath; do
         case "$rpath" in
-            @loader_path*|@executable_path*) ;;
-            /usr/lib/swift) [ "$binary" = "$contents/MacOS/HagigShell" ] || fail "rpath $rpath in ${binary#"$app"/}" ;;
-            *) fail "loader search path $rpath in ${binary#"$app"/}" ;;
+            @loader_path*|@executable_path*|/usr/lib|/usr/lib/*|/System/Library/*) ;;
+            *) problems+=("loader search path $rpath in $name") ;;
         esac
     done < <(otool -l -arch arm64 "$binary" | awk '/cmd LC_RPATH/ { path = 1; next } path && $1 == "path" { print $2; path = 0 }')
 done <<< "$machos"
+if [ "${#problems[@]}" -gt 0 ]; then
+    printf 'SMOKE FAILED: %s\n' "${problems[@]}" >&2
+    exit 1
+fi
 echo "Verified $count Mach-O files: signed, arm64, system or bundle-relative loader paths."
 # Where a checkout path could steer imports or execution. (The Swift shell may
 # embed source paths as diagnostic strings; that is not a runtime dependency.)
