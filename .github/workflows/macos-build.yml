@@ -133,8 +133,8 @@ jobs:
 
   client-semantics:
     runs-on: macos-15
-    # Eleven candidate/mutant/restored experiments, each an incremental rebuild.
-    timeout-minutes: 40
+    # Seventeen candidate/mutant/restored experiments, each two incremental rebuilds.
+    timeout-minutes: 60
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     steps:
