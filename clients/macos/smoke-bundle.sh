@@ -163,10 +163,14 @@ for _ in $(seq 40); do kill -0 "$server" 2>/dev/null || break; sleep 0.05; done
 
 # Launch the relocated real shell executable, observe liveness, stop only our PID.
 # This is not LaunchServices/menu/keyboard/TCC/physical-Mac acceptance.
-run "$contents/MacOS/HagigShell" &
+# Not through `run`: a backgrounded function is a subshell, so $! would not be
+# the shell's PID, and the shell would outlive the kill holding stdout open.
+env -i HOME="$scratch/home" XDG_RUNTIME_DIR="$scratch/run" XDG_CONFIG_HOME="$scratch/config" \
+    XDG_DATA_HOME="$scratch/data" "$contents/MacOS/HagigShell" > /dev/null 2>&1 &
 shell_pid=$!
 sleep 2
 kill -0 "$shell_pid" || fail 'relocated shell exited'
+[ "$(ps -ww -o command= -p "$shell_pid")" = "$contents/MacOS/HagigShell" ] || fail 'shell PID is not HagigShell'
 kill "$shell_pid"; wait "$shell_pid" 2>/dev/null || true
 shell_pid=
 
