@@ -26,6 +26,7 @@ from tests.support.models import (
     WEIGHTS,
     FixtureServer,
     Route,
+    private_models_dir,
     serve,
     sha256,
 )
@@ -246,12 +247,28 @@ def test_an_undeclared_oversize_stops_at_the_manifest_size(
 ):
     manifest = serve(server, revision=OTHER_REVISION)
     route = server.routes[f"/test/model/resolve/{OTHER_REVISION}/model.safetensors"]
-    route.body = WEIGHTS + b"x" * (4 << 20)
+    # No length and no end: the server sends one byte too many, then stalls.
+    route.body = WEIGHTS + b"x"
     route.content_length = -1
+    route.hold, route.hold_after = threading.Event(), len(WEIGHTS) + 1
+    errors: list[InstallError] = []
 
-    error = failure(run, manifest)
+    def attempt():
+        try:
+            run(manifest)
+        except InstallError as error:
+            errors.append(error)
 
-    assert (error.code, error.file) == ("download_size_mismatch", "model.safetensors")
+    thread = threading.Thread(target=attempt, daemon=True)
+    thread.start()
+    thread.join(3)
+
+    # Refused at the first byte past the manifest size, without waiting for
+    # the stream to end.
+    assert not thread.is_alive()
+    assert [(e.code, e.file) for e in errors] == [
+        ("download_size_mismatch", "model.safetensors")
+    ]
     assert_existing_intact(models, existing)
 
 
@@ -400,7 +417,7 @@ def test_concurrent_installs_do_not_interleave(server, run, models):
 
 def test_an_unsafe_lock_file_is_refused(server, run, models):
     manifest = serve(server)
-    models.mkdir(parents=True)
+    private_models_dir(models)
     (models / "elsewhere").write_text("")
     os.symlink("elsewhere", models / INSTALL_LOCK_NAME)
 
@@ -412,7 +429,7 @@ def test_an_unsafe_lock_file_is_refused(server, run, models):
 
 def test_a_models_directory_others_can_write_is_refused(server, run, models):
     manifest = serve(server)
-    models.mkdir(parents=True)
+    private_models_dir(models)
     models.chmod(0o777)
 
     error = failure(run, manifest)
@@ -424,7 +441,9 @@ def test_a_models_directory_others_can_write_is_refused(server, run, models):
 def test_entries_the_installer_did_not_create_are_left_alone(server, run, models):
     manifest = serve(server)
     legacy = models / manifest.id
-    (legacy / "spike").mkdir(parents=True)
+    private_models_dir(models)
+    legacy.mkdir(mode=0o700)
+    (legacy / "spike").mkdir()
     (legacy / "spike" / "weights.safetensors").write_bytes(b"hand-converted")
     (legacy / "model.safetensors").write_bytes(b"old flat layout")
 
@@ -438,7 +457,7 @@ def test_entries_the_installer_did_not_create_are_left_alone(server, run, models
 
 def test_a_model_directory_that_is_not_a_directory_is_refused(server, run, models):
     manifest = serve(server)
-    models.mkdir(parents=True)
+    private_models_dir(models)
     (models / manifest.id).write_text("")
 
     error = failure(run, manifest)
@@ -474,6 +493,17 @@ def test_conversion_publishes_only_the_converted_files_with_their_hashes(
     assert sha256(b"float16" + WEIGHTS) in record
     assert sha256(WEIGHTS) not in record
     assert "/tools/convert.py" in server.requests
+
+
+def test_a_converted_version_is_private_whatever_the_umask(server, run, models):
+    manifest = serve(server, converter=CONVERTER)
+    previous = os.umask(0o002)
+    try:
+        assert run(manifest) == "installed"
+    finally:
+        os.umask(previous)
+
+    assert_published(models, manifest, converted())
 
 
 def test_converted_files_are_verified_at_load(server, run, models):

@@ -199,13 +199,23 @@ def serve(
     )
 
 
+def private_models_dir(models_root: Path) -> Path:
+    """Create the models directory as the installer does (0700)."""
+    models_root.parent.mkdir(parents=True, exist_ok=True)
+    models_root.mkdir(mode=0o700)
+    return models_root
+
+
 def write_installation(
     models_root: Path, manifest: Manifest, files: dict[str, bytes], version: str
 ) -> Path:
     """Publish an installation by hand, as the layout in `hagig.models` says."""
     base = models_root / manifest.id
     target = base / version
-    target.mkdir(parents=True)
+    models_root.parent.mkdir(parents=True, exist_ok=True)
+    for directory in (models_root, base, target):
+        # Private whatever the umask, as the installer creates them.
+        directory.mkdir(mode=0o700, exist_ok=True)
     for name, data in files.items():
         (target / name).write_bytes(data)
     record = {

@@ -14,6 +14,7 @@ import pytest
 from hagig.paths import ServerLock
 from hagig.wav import read_wav
 from tests.support.harness import pid_alive, wait_for
+from tests.support.models import private_models_dir
 
 HAGIG = str(Path(sys.executable).parent / "hagig")
 SPEECH = Path(__file__).parents[1] / "fixtures" / "speech.wav"
@@ -165,7 +166,7 @@ def test_model_install_refuses_before_any_download(home, model, stderr):
 
 def test_model_install_failures_are_stable_codes_before_any_download(home):
     models = home.root / "data" / "hagig" / "models"
-    models.mkdir(parents=True)
+    private_models_dir(models)
     # Another install holds the persistent lock.
     lock = ServerLock.acquire(models, name=".install.lock")
     assert lock is not None

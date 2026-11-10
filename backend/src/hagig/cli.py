@@ -270,6 +270,10 @@ def model_install(manifest_id: str) -> None:
         code = str(error)
     except KeyboardInterrupt:
         code = "interrupted"
+    except Exception:
+        # Anything unforeseen still prints a stable code, never a traceback
+        # with paths.
+        code = "install_failed"
     _fail(code, _INSTALL_EXITS.get(code, EXIT_FAILURE))
 
 

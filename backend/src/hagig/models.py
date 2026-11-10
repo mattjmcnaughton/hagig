@@ -93,10 +93,11 @@ def hash_file(path: Path) -> tuple[int, str] | None:
     it is absent and OSError for other failures (a symlink is ELOOP).
     """
     fd = os.open(path, _OPEN_FLAGS)
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode):
+        os.close(fd)
+        return None
     with os.fdopen(fd, "rb") as file:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode):
-            return None
         return info.st_size, hashlib.file_digest(file, "sha256").hexdigest()
 
 
