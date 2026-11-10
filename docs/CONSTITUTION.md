@@ -77,8 +77,9 @@ absolute privacy guarantees.
 ## 7. Native macOS first, credible Linux path
 
 Swift owns macOS interaction, including microphone capture and text delivery.
-Rust owns the server, inference worker, and CLI. The application and CLI are sibling
-clients of the server; inference uses an existing speech-recognition library.
+Python owns the server, inference worker, and CLI. The application and CLI are
+sibling clients of the server; inference uses an existing, maintained
+speech-recognition library.
 
 The MVP targets macOS on Apple Silicon. Preserve a credible Linux path for the
 non-macOS components without building a Linux desktop application or a general
@@ -105,6 +106,15 @@ This supersedes the unconditional enforcement requirement, not process separatio
 or the offline/no-upload/privacy commitments. Required mode still fails closed,
 and automatic fallback is prohibited. Mechanisms and verification belong in the
 technical design; this amendment does not establish their implementation.
+
+Amended 2026-11-10: the owner moved server, worker and CLI ownership from Rust to
+Python, managed with uv. Rationale: the trusted, maintained speech-recognition
+implementations (Hugging Face transformers on PyTorch, Apple MLX) are
+Python-first; a Python worker already requires a bundled interpreter, which
+removed Rust's single-binary advantage; and the owner's tooling and conventions
+are Python. Process separation, required-by-default isolation (section 5), the
+privacy adoption gate (section 6) and all other principles are unchanged. This
+records a decision, not evidence that the Python implementation satisfies them.
 
 Implementation plans and reviews must identify relevant principles and the
 evidence needed to check them. Document unverified behavior and platform-testing

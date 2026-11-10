@@ -1,13 +1,11 @@
 # Hagig private-alpha technical design
 
 Status: copy-only alpha implementation design, not a working alpha. The native
-synthetic shell and merged #7 controlled lifecycle/launch code exist; see
-[native guidance](../../../clients/macos/AGENTS.md) and
-[backend guidance](../../../backend/AGENTS.md) for implemented commands/evidence.
-Real transcription, TOML integration, editable review and local `.app` assembly
-remain planned. #6/PR18 is a blocked partial candidate, not inference adoption.
-Agreed scope is in the PRD; unimplemented protocol/configuration details below
-remain proposals unless explicitly identified as settled owner choices.
+synthetic shell exists; see [native guidance](../../../clients/macos/AGENTS.md).
+The Python backend, REST API, real transcription, TOML integration, editable
+review and local `.app` assembly described below are planned, not implemented.
+Agreed scope is in the PRD; unimplemented details below remain proposals unless
+explicitly identified as settled owner choices.
 
 Read the [constitution](../../CONSTITUTION.md) and [MVP PRD](../../product/prds/01-mvp.md) first. This
 document does not certify dependency privacy or model performance.
@@ -15,28 +13,30 @@ document does not certify dependency privacy or model performance.
 ## 1. Architecture and ownership
 
 ```text
-Swift macOS app ── Unix-domain socket ──┐
-                                      ├── Rust server ── private pipes ── Rust worker
-Rust CLI ──────── Unix-domain socket ──┘                                  │
-                                                                  sherpa-onnx
-                                                                  Parakeet TDT
+Swift macOS app ── HTTP/1.1 over Unix socket ──┐
+                                               ├── Python server ── private pipes ── Python worker
+Python CLI ────── HTTP/1.1 over Unix socket ──┘   (FastAPI, uvicorn)                    │
+                                                                     transformers on PyTorch
+                                                                     Qwen3-ASR
 ```
 
 - **Swift app:** AppKit menu-bar Record/Stop lifecycle, permissions, microphone
   capture/conversion, in-memory editor and explicit current-device-only Copy.
-- **Rust server:** single-request admission, authoritative backend request state,
+- **Python server:** single-request admission, authoritative backend request state,
   configuration/model validation, audio buffering, worker supervision, and cancellation.
-- **Rust worker:** native inference, plus any adopted native audio decoding. Native crashes remain
-  outside the server and app. No networking, microphone, clipboard, or UI ownership.
-- **Rust CLI:** explicit model installation, file transcription, status, and stop.
-  It is a sibling client, not an automation interface into the Swift app.
+  It never imports the inference engine, PyTorch or model code.
+- **Python worker:** inference only. Native crashes remain outside the server and
+  app. No networking, microphone, clipboard, or UI ownership.
+- **Python CLI:** explicit model installation, file transcription, start, status,
+  and stop. It is a sibling client, not an automation interface into the Swift app.
 
-Start with one Rust package containing shared protocol/state/configuration code
-and separate executable entry points. Do not create a crate per process merely
-because there are several executables. The Swift app lives in `clients/macos/`.
-The scaffold is implemented in `backend/`; use its guidance for current commands.
-Complete app build/terminal launch commands belong to #23 once validated; do not
-invent them as working instructions now.
+`backend/` is one uv project generated from the owner's
+[`python-service` template](https://github.com/mattjmcnaughton/templates) at a
+pinned commit, with OpenTelemetry, database and Docker files omitted and a typer
+CLI added. It has one package with `hagig` (CLI and internal server entry point)
+and `hagig-worker` entry points. Do not split packages per process. The Swift app
+lives in `clients/macos/`. Complete app build/terminal launch commands belong to
+#23 once validated; do not invent them as working instructions now.
 
 Keep portable backend code free of AppKit, Accessibility, and macOS permission
 logic. This preserves a credible Linux path without a Linux desktop implementation.
@@ -54,73 +54,82 @@ hygiene, but do not claim OS-enforced network blocking. Neither mode permits
 uploads, telemetry, automatic model downloads, or network-dependent inference.
 
 The boundary remains the inference worker, not the entire app/server/CLI.
-Required mode initially uses `sandbox-exec` on macOS. It is deprecated; treat
-availability and behavior on supported macOS versions as a validation gate, not
-a stable long-term platform guarantee. Disabling isolation is an intentional
-configuration choice, never an implicit retry after sandbox setup fails.
+On macOS, required mode launches the worker as
+`sandbox-exec -f seatbelt-v1.sb <bundled python> -I -m hagig.worker`, so the
+policy applies before the interpreter, PyTorch or model files load. `sandbox-exec`
+is deprecated; treat availability and behavior on supported macOS versions as a
+validation gate, not a stable long-term platform guarantee. Disabling isolation is
+an intentional configuration choice, never an implicit retry after setup fails.
 
-The implemented Linux launcher uses separate user/network namespaces.
-Unprivileged namespaces may be restricted by the host; enforcement or refusal
-evidence for the controlled worker is not real-inference privacy certification
-or a claim of portability to every Linux installation.
+Owner decision, 2026-11-10: Linux has no required-mode implementation initially.
+Required mode refuses worker startup there with `isolation_unavailable`, the same
+way any unsupported platform behaves; Linux users set `network_isolation =
+"disabled"` explicitly. Disabled Linux relies on offline settings and process
+separation only.
 
-In required mode, establish isolation before native loading. In both modes, the
-worker communicates through private pipes, not the server's Unix socket. Close
-unnecessary inherited descriptors and do not pass preconnected network sockets
-or network-capable proxies. Explicit model installation remains a separate
-operation outside this boundary. A network sandbox alone does not restrict
-filesystem access or prove absence of network attempts, diagnostic leakage,
-or other privacy violations.
+In both modes, the worker communicates through private pipes, not the server's
+Unix socket. Launch it with an environment allowlist (offline and telemetry
+settings below, no inherited proxies or credentials), `close_fds`, working
+directory `/`, and stderr discarded. It writes a fixed ready acknowledgment before
+importing the engine. Explicit model installation remains a separate operation
+outside this boundary. A network sandbox alone does not restrict filesystem access
+or prove absence of network attempts, diagnostic leakage, or other privacy violations.
 
 Before adoption, exercise the real worker under the policy: successful inference,
 missing/corrupt assets, worker restart, blocked outbound IPv4/IPv6 and DNS paths,
-and an independent connectivity control outside the sandbox. Verify required pipe
-IPC still works and denied networking cannot escape through inherited resources.
-Record the selected mode, policy, OS/tool versions, and observed denials separately
-from source inspection. Test required-mode failure without target execution or
-automatic fallback on restricted hosts; separately demonstrate explicit disabled
-mode can launch there without a network-blocking claim. Disabled-mode success
-must not count as required-mode enforcement evidence. Ubuntu support is not
-capped at 22.04: on hosts that reject required namespace setup, explicit disabled
-mode is the supported path while modern-host enforcement investigation is deferred.
-Neither these documents nor workflow definitions establish runtime enforcement.
+and an independent connectivity control outside the sandbox. Verify pipe IPC still
+works and denied networking cannot escape through inherited resources. Record the
+selected mode, policy, OS/tool versions, and observed denials separately from
+source inspection. Disabled-mode success must not count as required-mode
+enforcement evidence. Neither these documents nor workflow definitions establish
+runtime enforcement.
 
-## 2. Native inference adoption gate
+## 2. Inference adoption gate
 
-First candidate: sherpa-onnx with NVIDIA Parakeet TDT 0.6B v2, using modified beam
-search and its contextual-biasing/hotword support. This is an evaluation target,
-not an adopted, benchmarked, or privacy-cleared dependency.
+First candidate: Qwen3-ASR (`Qwen/Qwen3-ASR-0.6B-hf` or `Qwen/Qwen3-ASR-1.7B-hf`)
+through Hugging Face transformers on PyTorch. Vocabulary biasing passes configured
+terms through the model's documented free-form context prompt. This is an evaluation
+target, not an adopted, benchmarked, or privacy-cleared dependency. mlx-whisper is
+a comparison only. No other engine or plugin boundary is planned.
 
-Prior source inspection used sherpa-onnx revision
-`88204440c2ad19158fe77dbf470bb1fe7fdee613`. That revision is a research reference,
-not the final dependency pin. Do not assume current Rust bindings expose every
-required decoder/tokenizer option. Prefer the existing binding; if it is incomplete,
-evaluate the smallest C-API bridge or upstream binding change before introducing
-another backend architecture.
+Hosted macOS evidence ([run 42636236736](https://github.com/mattjmcnaughton/hagig/actions/runs/42636236736),
+Apple M1 virtual machine, CPU only, transformers 5.22.2, torch 2.15.0): both sizes
+recovered 9 of 9 vocabulary terms with the prompt and 2–3 without, with no control
+regressions. With a vocabulary prompt, both echo the prompt on digital silence,
+an open risk for PRD AC9; the owner chose not to run a further silence check in
+the spike (2026-11-10). PyTorch could not use the
+virtual GPU, so these latencies are not representative. A physical-Mac run chooses
+the size.
 
 The adoption spike must establish:
 
-1. A reproducible Apple Silicon build and portable Linux inference experiment.
-2. Actual Parakeet decoding from Rust with vocabulary boosting, necessary token/BPE
-   assets, and paired non-vocabulary controls.
+1. A reproducible locked uv environment on Apple Silicon and Linux.
+2. Actual Qwen3-ASR decoding with vocabulary biasing and paired non-vocabulary
+   controls.
 3. Accuracy, release-to-text latency, cold load time, resident/peak memory, and
-   behavior up to the five-minute input cap.
-4. Native dynamic-library loading from an app bundle without checkout paths.
+   behavior up to the five-minute input cap, on MPS where available.
+4. Loading from a relocated app bundle without checkout paths.
 5. Source, runtime-network/write, and blocked-network evidence as separate records.
 
-Pin the selected library, bindings, native dependencies, model revision, assets,
-licenses, download sources, and checksums in a tracked manifest before adoption.
-Do not invent artifact URLs or hashes before identifying the actual artifacts.
-If conversion is necessary, pin the conversion inputs/toolchain as well.
+Model-file hardening:
 
-No decoder beam width, hotword score, thread count, quantization, or acceleration
-provider is settled here. Measure the candidate defaults before adding knobs.
-Do not claim Core ML/Neural Engine acceleration without observing the actual path.
+- Track a manifest with the model repository, pinned revision, an allowlist of
+  files and SHA-256 for **every** file (weights, `config.json`, tokenizer,
+  processor and chat template), plus licenses and download sources.
+- Load from local paths only with `use_safetensors=True`; never set
+  `trust_remote_code`. Refuse repositories that offer only pickle formats.
+- Set `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `HF_HUB_DISABLE_TELEMETRY=1`
+  and `DO_NOT_TRACK=1` before import; Seatbelt is the backstop if a library ignores them.
+- Accept only official publishers. Safetensors prevents code execution on load,
+  not a backdoored model.
+
+Pin transformers, PyTorch and every transitive wheel in `uv.lock`. No dtype,
+thread count, quantization or device policy is settled here. Do not claim MPS or
+Neural Engine acceleration without observing the actual path.
 
 ## 3. Configuration and filesystem locations
 
-Use TOML only for the alpha. YAML in the prototype was an alternative representation,
-not another format to implement. Proposed schema (not parsed by the scaffold yet):
+Use TOML only for the alpha. Proposed schema (not implemented yet):
 
 ```toml
 # $XDG_CONFIG_HOME/hagig/config.toml
@@ -129,29 +138,30 @@ not another format to implement. Proposed schema (not parsed by the scaffold yet
 mode = "standard" # Default. Optional "vim" selects the bounded table in §8.
 
 [model]
-id = "parakeet-tdt-0.6b-v2" # Candidate alias resolved by the pinned manifest.
+id = "qwen3-asr-0.6b" # Alias resolved by the pinned manifest; size not yet chosen.
 
 [inference]
-network_isolation = "required" # Default. "disabled" is an explicit opt-out.
+network_isolation = "required" # Default. "disabled" is an explicit opt-out; required on Linux.
 
 [vocabulary]
-terms = ["Hagig", "Ghostty", "sherpa-onnx", "Parakeet", "Amp"]
+terms = ["Hagig", "Ghostty", "Qwen", "Amp"]
 ```
 
-The Rust server parses and validates configuration; Swift receives only its needed
-settings through the protocol, not the vocabulary. Reject unknown keys, unsupported
-model aliases, unknown editor modes, and invalid types with field names and error
-codes, not raw offending values. Read configuration at server startup. For the
-alpha, apply edits by quitting the app, running `hagig stop`, and relaunching the
-app. No file watcher or live reload command is needed; an active request's settings
-never change. Invalid startup configuration returns an actionable error instead
-of silently falling back to different settings.
+The Python server parses configuration with stdlib `tomllib` and validates it
+with pydantic; Swift receives only its needed settings through the API, not the
+vocabulary. Reject unknown keys, unsupported model aliases, unknown editor modes,
+and invalid types with field names and error codes, never raw offending values or
+pydantic's default messages, which echo input. Configuration comes only from this
+file, not environment variables. Read it at server startup. For the alpha, apply
+edits by quitting the app, running `hagig stop`, and relaunching the app. No file
+watcher or live reload command is needed; an active request's settings never
+change. Invalid startup configuration returns an actionable error instead of
+silently falling back to different settings.
 
-The proposed `inference.network_isolation` field selects the agreed mode contract
-above. Apply it at server/worker startup, not per audio chunk or an untrusted client
-request. Report the selected mode in content-free status so explicit opt-out cannot
-be mistaken for sandbox enforcement. The scaffold's launcher-mode API can precede
-TOML/server integration; documenting this field does not make it executable today.
+`inference.network_isolation` selects the mode contract above. Apply it at
+server/worker startup, not per request or from an untrusted client. Report the
+selected mode in content-free status so explicit opt-out cannot be mistaken for
+sandbox enforcement.
 
 The settled editor choices are Standard by default and explicit Vim opt-in.
 Reject unknown values; no global shortcut field or key-hook permission is needed
@@ -179,13 +189,13 @@ authentication against that process. Do not listen on TCP.
 ## 4. Installation and model acquisition
 
 Proposed command: `hagig model install <manifest-id>`. It is the explicit network
-action; starting the app or a transcription never downloads or repairs a model.
-Download into a model-only staging directory, enforce manifest checksums, then
-atomically publish the validated installation. Reject traversal/symlink entries
-if unpacking archives. A failed install must not replace a valid installation.
+action, run in the CLI process; starting the app, server or worker never downloads
+or repairs a model. Download only the manifest's allowlisted files at the pinned
+revision into a model-only staging directory, verify every SHA-256, then atomically
+publish the validated installation. A failed install must not replace a valid one.
 
 Normal loading resolves only installed manifest entries, validates the expected
-assets, and returns `model_missing` or `model_invalid` without attempting recovery
+files, and returns `model_missing` or `model_invalid` without attempting recovery
 networking. A versioned installation must not change beneath a warm worker.
 
 Local-first plan (#23), not an implemented build/install recipe: build from a
@@ -195,29 +205,35 @@ terminal launch command, explicit model install and stop/relaunch procedure.
 No `/Applications` placement, Homebrew or public release is required. #24 owns
 later distribution; it is not a prerequisite for this source-build workflow.
 
-Bundle the app, server, worker, CLI, and required native libraries together.
-Resolve helper paths relative to the installed bundle, not ambient PATH or the
-developer checkout. Model assets remain separate to make downloads explicit.
-Document the CLI invocation/path during alpha installation; no Homebrew cask is
-required. No login service or automatic updates for the alpha.
+The build runs `uv sync --frozen --no-dev`, the explicit build-time network step,
+then copies the uv-managed interpreter (python-build-standalone) and the locked
+environment into the bundle beside the app. Sign every bundled `.so` and `.dylib`.
+At runtime the app and CLI exec the bundled interpreter directly with
+`UV_OFFLINE=1` and `UV_PYTHON_DOWNLOADS=never`; launch never resolves, syncs or
+downloads anything. Resolve helper paths relative to the installed bundle, not
+ambient PATH or the developer checkout. Model files remain separate to keep
+downloads explicit. No login service or automatic updates for the alpha.
 
-The packaging spike must test relocation, architecture compatibility, native
-loader paths, required local signing, permission stability across rebuilds, and
-installation without developer runtimes. Public notarization remains deferred.
+The packaging spike must test relocation (uv environments are not relocatable by
+default), architecture compatibility, native loader paths, required local signing,
+permission stability across rebuilds, and installation without developer
+runtimes. Public notarization remains deferred.
 
 ## 5. Server startup and lifecycle
 
 On app launch or a CLI operation needing the server, try the private socket. If
-absent, spawn the bundled server and wait for readiness with a bounded deadline.
-Use an OS advisory lock held for the server's lifetime to arbitrate simultaneous
-startup. Only the lock holder may remove an owner-validated stale socket and bind
-a new one. A second startup must attach to the winner, not launch another worker.
-Never kill a PID just because it appears in a stale file.
+absent, spawn the bundled server and wait until `GET /v1/status` answers, with a
+bounded deadline. Use an OS advisory lock (`fcntl.flock` on a persistent 0600
+`server.lock`, never unlinked) held for the server's lifetime to arbitrate
+simultaneous startup. Only the lock holder may remove an owner-validated stale
+socket. The server binds the validated socket itself, 0600 from creation, and
+hands it to uvicorn. A second startup must attach to the winner, not launch
+another worker. Never kill a PID just because it appears in a stale file.
 
 Proposed startup/connect deadline: 5 seconds. This covers server readiness, not
 model loading. Return a clear startup error on timeout; no unbounded spawn loop.
-Version mismatch returns an explicit incompatibility error instead of restarting
-or killing an active server from another installation.
+API version mismatch returns an explicit incompatibility error instead of
+restarting or killing an active server from another installation.
 
 The server is per-user and on demand. It remains alive after clients exit. The
 worker loads on first transcription, stays warm with its validated configuration,
@@ -229,86 +245,94 @@ session; the server needs no login registration or durable recovery state.
 work, requests worker exit, escalates if necessary, cleans up its owned runtime
 socket, and exits. Closing a non-owning client must not cancel another client's work.
 
-## 6. Client protocol and request ownership
+## 6. Client API and request ownership
 
-Use a versioned framed protocol over a Unix-domain stream. Proposed v1 frame:
+HTTP/1.1 over the private Unix socket; no TCP listener. All paths are under `/v1`.
+The app uses swift-server AsyncHTTPClient with `http+unix://` URLs; the CLI uses
+httpx with a Unix-socket transport. JSON bodies are at most 64 KiB and carry
+`Content-Length`; audio uploads may instead be chunked (below). No WebSockets.
+FastAPI's documentation and OpenAPI routes and
+uvicorn access logs are disabled. Errors are `{"code": "<stable code>"}` with no
+free-form message, raw input or native diagnostics.
 
-```text
-1 byte kind | 4 bytes unsigned big-endian payload length | payload
-kind 1: UTF-8 JSON control message (maximum 64 KiB)
-kind 2: binary PCM audio chunk (maximum 256 KiB)
-```
-
-Control messages include `version`, `type`, and a client-generated `request_id`
-where applicable. Audio frames belong to the connection's one admitted request;
-they cannot route audio to another connection's request. Decode lengths before
-allocation; reject oversized frames, malformed controls, invalid sample alignment,
-unexpected ordering, and audio exceeding the recording limit. Close a malformed
-connection and cancel only its owned request. Never echo a rejected frame in logs.
-
-Proposed controls:
-
-| Message | Contract |
+| Method and path | Contract |
 | --- | --- |
-| `hello` / `hello_ok` | Negotiate protocol version; planned app settings include display model, editor mode, capture format and limits; no vocabulary |
-| `begin` / `accepted` | Reserve the single active slot before app recording or CLI audio submission; freeze configuration generation and model identity |
-| `end_audio` | Finish PCM submission and start inference |
-| `cancel` / `cancelled` | Cancel the connection's matching request; idempotent acknowledgment for an already terminal request |
-| `result` | One final transcript for the matching live request; empty result does not authorize delivery |
-| `error` | Stable code and safe message; examples: busy, model_missing, model_invalid, invalid_audio, worker_failed, deadline_exceeded |
-| `status` | Version, idle/busy/loading state and model identity only, not content or vocabulary |
-| `stop` | Invalidate work and shut down; no result delivery after stop wins |
+| `GET /v1/status` | `api_version`, `state` (`idle` or `busy`), `worker`, `network_isolation`, `config_generation`, app settings (`editor_mode`, `model_id`, `language`), audio format, limits and deadlines. No content or vocabulary. Never starts a server |
+| `POST /v1/requests` | Reserve the single active slot before app recording or CLI decoding → `201 {request_id, config_generation, model_id}`, or `409 {"code":"busy"}`. No queue or preemption |
+| `PUT /v1/requests/{id}/audio` | Raw canonical audio (`application/octet-stream`). The app streams it with `Transfer-Encoding: chunked` from recording start; the CLI may send one `Content-Length` body. The end of the body starts inference → `200 {"text": ...}` or an error. At most one upload per request. This connection owns the request: losing it before the response cancels |
+| `DELETE /v1/requests/{id}` | Cancel → `204`, also for terminal, expired or unknown IDs. Not proof the request existed |
+| `POST /v1/stop` | Invalidate work, stop admission → `202`, then reap the worker, remove the socket and exit |
 
-For the alpha, use canonical mono 16 kHz float32 little-endian PCM on the wire.
-Swift converts microphone audio; the CLI decodes supported WAV input into the same
-format using portable code, subject to dependency review. If decoding requires
-native unsafe code, move that decoding into an isolated helper/worker rather than
-loading it into the server. Do not pass arbitrary filesystem paths to the server.
+Request IDs are server-generated, random and opaque. The client must open the
+upload within 5 seconds of `201`; otherwise the server releases the slot and a
+late upload fails `404 request_not_found`. The app opens it immediately after
+admission, before the microphone starts and including any permission prompt, and
+writes chunks as capture produces them. From then on the upload connection owns
+the request, so closing it, including the kernel closing a crashed app's socket,
+cancels at once (PRD P5). `DELETE` remains an explicit cancel from any connection.
 
-Reserve the slot before capture to avoid five minutes of recording followed by
-busy rejection. Keep audio in the Swift process until Stop/cap, then submit bounded
-chunks. The server buffers the complete request in memory, then forwards it over
-private worker pipes using the same bounded framing. Five minutes of canonical
-PCM is 19,200,000 bytes per full buffer; peak memory includes multiple buffers and
-the model, and must be measured. No claim of zero-copy transport is made.
+Reservation lasts at most 330 seconds from `201` until the body ends, enforced by
+the server because uvicorn has no body-read timeout. Inference then has a separate
+120-second hard deadline, including worker launch and model load. Clients wait up
+to 125 seconds for the response after the body ends. These are failure bounds,
+not acceptable interactive latency. The handler waits for the worker result and
+for client disconnect together, and a disconnect cancels the worker; Starlette
+does not interrupt a handler on disconnect by itself.
 
-Proposed resource caps: five minutes total audio, control frame limit above,
-256 vocabulary terms of at most 128 UTF-8 bytes each, and final result payload
-within the control-frame limit. Fail explicitly if a result exceeds the cap; never
-truncate and deliver misleading text. Revisit caps with representative fixtures.
+Audio is canonical mono 16 kHz float32 little-endian PCM: nonempty, 4-byte
+aligned, every sample finite and in [-1, 1], at most 19,200,000 bytes (300
+seconds). Chunk boundaries are arbitrary: the server validates samples as they
+arrive, carries an incomplete trailing sample into the next chunk, counts bytes
+against the cap (and rejects an oversized `Content-Length` before reading), and
+fails a misaligned or empty body at its end. Swift converts microphone audio;
+the CLI decodes supported WAV input into the same format. Do not pass filesystem
+paths, vocabulary, model paths or configuration overrides to the server. Reserve
+before capture to avoid five minutes of recording followed by busy rejection.
+Swift keeps no full recording buffer. The server holds the audio in memory, since
+the engine does not stream, then forwards it over private worker pipes using
+bounded framing. Peak memory includes multiple buffers and the model, and must
+be measured.
 
-Client connection loss cancels its reservation/inference. Proposed reservation
-deadline is 330 seconds through completion of audio upload; model/inference then
-has a separate 120-second hard deadline, to be checked against five-minute inputs
-in the spike. These are failure bounds, not acceptable interactive latency.
+The result's serialized response must fit 64 KiB; otherwise fail with
+`result_too_large` and never truncate. Preserve Unicode and newlines; normalize
+whitespace-only recognition to `""`, which is successful no-speech and authorizes
+no review, Copy or stdout. Proposed codes and statuses: `invalid_request` 400,
+`invalid_audio` 400 or 413, `request_not_found` 404, `busy` 409, `cancelled` 409,
+`model_missing`/`model_invalid`/`isolation_unavailable`/`server_stopping` 503,
+`worker_failed`/`result_too_large` 500, `deadline_exceeded` 504,
+`incompatible_api` client-local. Unknown codes are generic failures, never success.
+Model errors never trigger acquisition. Contract fixtures (request and response
+bytes, expected client outcomes) are shared by pytest and Swift tests; they prove
+codec and state expectations only.
 
 ## 7. State machine and cancellation
 
 Server request lifecycle:
 
 ```text
-Idle -> Reserved/receiving -> Loading worker -> Transcribing -> Result returned -> Idle
-                    any active state -> Cancelled/Failed -> Idle
+Idle -> Reserved -> Receiving audio -> Loading worker -> Transcribing -> Result returned -> Idle
+                    any active state -> Cancelled/Expired/Failed -> Idle
 ```
 
-Only one admitted request exists, including its recording reservation. An invalid
-or busy request must not disturb it. Each terminal transition releases buffers
-and the active slot exactly once. Worker responses include a server-assigned
-generation as well as the request identity; a stale worker response cannot match
-a new request that reuses a client ID.
+Only one admitted request exists, including its recording. An invalid or
+busy request must not disturb it. Each terminal transition releases buffers and
+the active slot exactly once. Cancellation is `DELETE`, loss of the upload
+connection, a missed upload-start or reservation deadline, or stop. Worker replies carry a server-assigned
+generation as well as the request ID; a stale worker reply cannot match a new
+request.
 
 Swift additionally owns local states: ready, awaiting admission, recording,
 uploading/transcribing, review/editing, copy initiated, and cancelled.
 The server cannot enforce final UI delivery; **both sides must invalidate work**.
 
 - On Escape/Cancel during capture or transcription, first invalidate the local
-  generation and discard pending display/delivery work, then send cancellation.
-  Do not wait for an acknowledgment before preventing delivery.
+  generation and discard pending display/delivery work, then close the upload
+  connection. Do not wait for an acknowledgment before preventing delivery.
 - Serialize cancel, result handling, editor changes and Copy initiation through
   the app's main-actor state. Recheck the live generation immediately before any
   display or clipboard write. Vim review Escape is mode switching, not Cancel.
 - Stop/cancellation before admission completes must not later start
-  microphone capture. Cancel a subsequently accepted reservation.
+  microphone capture. Cancel a subsequently granted reservation.
 - Server cancellation invalidates the request before stopping native computation.
   If inference cannot be interrupted safely, terminate the worker; never call
   native inference concurrently with teardown inside the same process.
@@ -382,28 +406,27 @@ destination. Respect reduced motion, native accessibility names and model displa
 
 ## 9. CLI contract
 
-Planned alpha command surface; `transcribe` and `model install` are not implemented:
+Planned alpha command surface (typer); none of it is implemented yet:
 
 ```text
+hagig start
 hagig transcribe <audio.wav>
 hagig model install <manifest-id>
 hagig status
 hagig stop
 ```
 
-`status` and `stop` already exist in #7's controlled lifecycle CLI. Current
-`start --fake-worker` and `fake-request --fake-worker` explicitly select a
-controlled fake, never inference or model installation. Both modes of that slice
-and its build instructions live in backend guidance; no complete app startup
-command exists yet. App launch must eventually start/connect to the bundled real
-server, not silently select the fake worker.
+`start` starts or attaches to the server and exits after readiness, without
+loading a model or downloading. `status` and `stop` never start an absent server.
+There are no public fake-worker commands; the test fake is test-only.
 
 Accept PCM WAV at 16-bit integer or 32-bit float, mono/stereo, 16/44.1/48 kHz,
-maximum five minutes; convert/resample deterministically. Reject unsupported or
-malformed formats without attempting downloads. WAV support and conversion
-dependencies must be validated in the inference spike before widening formats.
+maximum five minutes. Decode with a bounded parser using `struct` and numpy
+(stdlib `wave` cannot read float32), average stereo, and resample with
+deterministic linear interpolation. Reject unsupported or malformed formats
+without attempting downloads.
 
-`transcribe` starts/connects to the server, reserves a request, decodes and submits
+`transcribe` starts/connects to the server, reserves a request, decodes and uploads
 canonical audio, prints only the final text plus newline on stdout, and sends
 safe diagnostics to stderr. Ctrl-C invalidates the client's request and cancels
 it. No microphone, clipboard, or paste operations. Never change the input file.
@@ -415,12 +438,12 @@ server succeeds. Model installation is separate from transcription-server startu
 
 ## 10. Privacy, errors, and diagnostics
 
-Never log transcript, audio, vocabulary terms, raw config, or full IPC messages.
-Use stable codes, stage names, durations, versions, and bounded numeric counters.
-Do not echo a filename or native error string that may contain sensitive input
-without deliberate sanitization. Worker stdout is protocol-only; native diagnostics
-must not flow unfiltered into app logs. Inspect whether the library prints hotwords
-or tokens and suppress/configure that path before adoption.
+Never log transcript, audio, vocabulary terms, raw config, request bodies, or
+full worker messages. Use stable codes, stage names, durations, versions, and
+bounded numeric counters. Do not echo a filename or native error string that may
+contain sensitive input without deliberate sanitization. Worker stdout is
+protocol-only and stderr is discarded; set transformers logging to errors only
+and confirm no library prints prompts, tokens or vocabulary before adoption.
 
 Ordinary errors must be actionable without leaking content: permission needed,
 model missing/invalid, busy, no speech, worker failed, or deadline exceeded. A result
@@ -429,48 +452,51 @@ by default. OS swap/crash services and third-party clipboard/destination retenti
 are separate boundaries; finite application tests cannot promise secure erasure
 or control of all OS-managed storage.
 
-Dependency review must cover native libraries, model loaders, file decoding,
-tokenizers, transitive dependencies, install scripts, and any automatic download
-path. Explicit installer traffic is distinct from forbidden runtime traffic.
-Observe actual network attempts and local writes, not just successful connections.
-Test missing/corrupt models with networking both available and blocked.
+Dependency review must cover native wheels, model loaders, tokenizers, processors,
+chat templates, transitive dependencies, build hooks, and every automatic download
+or telemetry path, including Hugging Face Hub and tokenizer download fallbacks.
+Explicit installer traffic is distinct from forbidden runtime traffic. Observe
+actual network attempts and local writes, not just successful connections. Test
+missing/corrupt models with networking both available and blocked.
 
 ### Tool and dependency approval inventory
 
-This documentation change needs no new dependency, installation or tool.
 Repository guidance owns approval policy; this inventory records its application
 to the milestone, not an additional grant:
 
 | Surface | Approval / constraint |
 | --- | --- |
-| Rust starting set | `tokio` (needed features only), `serde`, `serde_json`, `clap`, `toml`, either `rustix` or `nix` when std is insufficient (not both), `tempfile` for tests; existing backend uses rustix |
-| Inference | Existing pinned sherpa-onnx candidate only subject to #6/#25 adoption; audit transitive/native build, model-loader and download paths, licensing separately from privacy; no new engine/plugin framework |
-| Native editor/UI | Existing Swift/AppKit/SwiftUI and shared render harness; no external editor, Vim dependency or new tool needed for this contract |
-| Build/test | Existing Rust/Swift/Xcode and repository commands; GitHub-hosted native CI for development, normal automatic CI allowed in this run; ask before any manual workflow dispatch |
+| Python runtime | uv-managed CPython (python-build-standalone), pinned in the project; `uv.lock` committed |
+| Server/CLI starting set | fastapi, uvicorn, pydantic, typer, httpx, numpy; stdlib `tomllib`; structlog from the template, configured for content-free fields only. No OpenTelemetry or pydantic-settings |
+| Inference | transformers and PyTorch with their locked transitives (huggingface_hub, tokenizers, safetensors) for Qwen3-ASR, subject to the §2 adoption gate; no new engine/plugin framework |
+| Swift client | swift-server AsyncHTTPClient for HTTP over the Unix socket; review its SwiftNIO transitives, including vendored BoringSSL, before adoption |
+| Native editor/UI | Existing Swift/AppKit/SwiftUI and shared render harness; no external editor, Vim dependency or new tool |
+| Build/test | uv, ruff, ty, pytest and just; copier for generating `backend/` from the template; existing Swift/Xcode commands; GitHub-hosted native CI; ask before any manual workflow dispatch |
 | Network observation | Distro-packaged strace approved for Linux observation only, not an app dependency; other new development tools need specific approval |
-| Not selected | Download/checksum/WAV/resampling libraries and additional build tools require owner approval before introduction; no DI or async-trait crate needed |
+| Not selected | Anything else, including audio/resampling libraries, needs owner approval first |
 | Packaging | Local ad-hoc signing as needed; public certificates/notarization, releases and Homebrew-tap writes deferred and not granted |
 
 ## 11. Verification strategy
 
 Map implementation tickets to the PRD's AC identifiers. Keep enduring tests at
-public interfaces: protocol/client operations, CLI outcomes, and app-visible
-delivery effects. Use temporary probes freely for spike evidence; do not retain
-tests of private call order or decorative formatting.
+public interfaces: API operations, CLI outcomes, and app-visible delivery
+effects. Use temporary probes freely for spike evidence; do not retain tests of
+private call order or decorative formatting.
 
 | Layer | Evidence |
 | --- | --- |
-| Portable Rust | Framing/limits, busy admission, startup contention, configuration validation, malformed audio, request-owner disconnect, cancellation/late results, worker crash/deadline recovery, CLI stdout/errors/input preservation |
-| Inference integration | Actual pinned model; paired boosted/unboosted fixtures and controls, silence, supported WAV variants, long audio, cold/warm latency and memory |
-| macOS build | Swift target and bundled Rust helpers/native library linkage on macOS; Linux success is not a macOS build |
+| Portable Python (pytest unit/integration/e2e) | Request limits, busy admission, upload-start and reservation deadlines, chunk-boundary validation, startup contention, configuration validation, malformed audio, upload disconnect, cancellation/late results, worker crash/deadline recovery, CLI stdout/errors/input preservation, Linux required-mode refusal |
+| Inference integration | Actual pinned model; paired biased/unbiased fixtures and controls, supported WAV variants, long audio, cold/warm latency and memory; silence and noise outcomes for AC9, including the known prompt echo |
+| macOS isolation | Real worker under `seatbelt-v1.sb`: outbound IPv4/IPv6/DNS denied while pipe IPC and inference work, with an unsandboxed connectivity control |
+| macOS build | Swift target and the bundled interpreter/environment, signing and loading on macOS; Linux success is not a macOS build |
 | Physical Mac | Record/Stop, permissions, microphone/device loss, native editor/keyboard routing, cancel/Copy races, second-device clipboard control, relocated local app and human usefulness; owner final tests deferred |
 | Privacy | Distinct source inspection, observed network/write behavior, blocked-network operation; include failure and recovery paths |
 
 Automated fake-worker tests should intentionally return results after cancellation,
-reuse request IDs across generations, crash while active, and stall. At least one
-real-worker test must establish recovery after process death. Verify service/process
-cleanup, not just returned text. An additional Apple device is needed for the
-observational Universal Clipboard check; API inspection alone is not that evidence.
+reuse stale generations, crash while active, and stall. At least one real-worker
+test must establish recovery after process death. Verify service/process cleanup,
+not just returned text. An additional Apple device is needed for the observational
+Universal Clipboard check; API inspection alone is not that evidence.
 
 The prototype's browser checks establish only the HTML artifact's behavior.
 GitHub-hosted macOS build, shared-view rendering and feasible automated native
@@ -481,40 +507,32 @@ physical-Mac, second-device or human-corpus acceptance. Use synthetic non-sensit
 public fixtures only; do not assume acceleration availability in a VM. PRD §5
 owns the AC-to-ticket/environment evidence matrix; do not duplicate it here.
 
-## 12. Spike-first implementation sequence
+## 12. Implementation sequence
 
-The ticket backlog now exists; this table retains bounded risk investigations,
-not a new architecture or an additional time/spend cap. #7 is merged and present;
-do not reimplement it. Keep experiments scoped and report exhausted evidence paths
-honestly rather than claiming acceptance. #6 remains blocked/partial in PR18.
-
-| Spike | Question, evidence, and exit decision | Unblocks |
+| Risk investigation | Question, evidence, and exit decision | Unblocks |
 | --- | --- | --- |
-| S1: inference and vocabulary (#6) | Can Rust run the candidate and expose boosting? Produce build recipe, exact artifacts, paired outputs, latency/memory and long-input measurements under AC6–AC8; numeric targets are not first-working-app gates. Resolve binding/adoption blockers with evidence, not assumed adoption. | Real worker/file transcription, audio conversion |
-| S2: native copy-only path (#21/#22) | Validate Record/Stop/cap/Cancel, editable Standard/Vim review, all currentHostOnly cut/copy routes and keyboard/accessibility behavior. No destination-identity or automatic-paste spike in this milestone. | Usable capture/review/Copy, final platform acceptance |
-| S3: packaging and privacy | Can the chosen native stack run from a relocatable self-contained bundle without forbidden runtime behavior? Produce loader/install evidence plus separate source/network/write/blocked-network findings. Proceed, patch dependencies, or reject adoption. | Distribution layout, dependency lock-in, alpha installation |
+| Inference (S2 spike, `spike/inference-s2` branch) | Hosted macOS runs are done (§2). Remaining: a physical-Mac run of both Qwen3-ASR sizes for MPS latency and memory, which picks the size. | Model manifest, worker |
+| Native copy-only path (#21/#22) | Validate Record/Stop/cap/Cancel, editable Standard/Vim review, all currentHostOnly cut/copy routes and keyboard/accessibility behavior. No destination-identity or automatic-paste work in this milestone. | Usable capture/review/Copy, final platform acceptance |
+| Packaging and privacy (#10/#23) | Can the bundled interpreter, environment and model run from a relocatable bundle without forbidden runtime behavior? Produce loader/install evidence plus separate source/network/write/blocked-network findings. Proceed, patch dependencies, or reject adoption. | Distribution layout, alpha installation |
 
-S1 and S2 can run independently using hosted Mac development evidence. Begin source
-privacy review during S1 rather than after adoption; S3's final native packaging
-and runtime evidence depends on the candidate S1 selects. Stop early on a privacy
-violation rather than spending the remaining spike budget on speed measurements.
+Stop early on a privacy violation rather than spending effort on speed measurements.
 
 Then implement vertical slices:
 
-1. **Existing scaffold:** #7 controlled lifecycle and synthetic Swift shell are
-   present. Extend them; their fake/synthetic results are not real dictation.
-2. **File to text:** real CLI → server → isolated worker, explicit model install,
-   WAV input, one active request, errors and cancellation. AC8–AC13 as applicable.
-3. **Record to review:** #21 Swift capture → same server → #22 editable in-memory
+1. **Python backend:** generate `backend/` from the template; real CLI → REST
+   server → isolated worker, explicit model install, WAV input, one active request,
+   errors and cancellation, macOS Seatbelt enforcement. The Swift client switches to
+   the REST API in the same change. AC8–AC13 as applicable.
+2. **Record to review:** #21 Swift capture → same server → #22 editable in-memory
    transcript, explicit Copy/Dismiss, cap and permissions. AC3–AC5, AC9, AC14.
-4. **Local bundle:** #23 can begin bundle feasibility early; its built artifact
+3. **Local bundle:** #23 can begin bundle feasibility early; its built artifact
    against integrated capture/editor/backend feeds final #10 acceptance. Do not
    make their issue closure dependencies circular.
-5. **Daily-use alpha:** #10 held-out human measurements and mandatory privacy/
+4. **Daily-use alpha:** #10 held-out human measurements and mandatory privacy/
    failure evidence; owner physical Mac/second-device tests remain deferred, not
    satisfied by CI. #24 public distribution follows separately.
 
-Each eventual ticket should name a user-visible or risk-retirement outcome, relevant
+Each ticket should name a user-visible or risk-retirement outcome, relevant
 ACs/constitutional boundaries, dependencies, bounded scope, verification environment,
 and required evidence. Do not organize tickets as isolated Swift/server/CLI silos.
 Create external tracker issues only when requested.
@@ -523,22 +541,31 @@ Create external tracker issues only when requested.
 
 Settled owner choices: Standard default, optional bounded Vim, menu-bar Record/
 Stop without a global shortcut, 5:00 cap/4:45 warning, local bundle before separate
-distribution, required-default/explicit-disabled isolation, and functionality-first
-numeric measurements. Do not reopen these as unanswered gates. WAV formats,
-restart-to-apply configuration, remaining resource caps and hard deadlines retain
-their proposed status until implementation evidence validates them; changes must
-not silently alter safety/privacy commitments.
+distribution, required-default/explicit-disabled isolation, functionality-first
+numeric measurements, and (2026-11-10) a Python backend managed with uv and
+generated from the owner's template, REST over the private Unix socket with no
+TCP, Swift AsyncHTTPClient, no Linux required-mode implementation initially,
+and Qwen3-ASR through transformers as the first candidate. Do not
+reopen these as unanswered gates. Streamed uploads owning the request (§6),
+WAV formats, restart-to-apply configuration, remaining resource caps and hard
+deadlines retain their proposed status until implementation evidence validates
+them; changes must not silently
+alter safety/privacy commitments.
 
 No review can substitute for these still-unverified facts:
 
-- Exact Rust binding coverage and model/tokenizer/native dependency pins.
+- Qwen3-ASR size, MPS latency, memory and long-input behavior on a physical Mac.
+- Silence/noise behavior for AC9: the biased model echoes its prompt on silence.
+- Seatbelt enforcement for the Python worker, and Hugging Face/transformers
+  offline behavior under it.
+- A relocatable, signed bundle of the uv-managed interpreter and environment.
+- The AsyncHTTPClient and Python dependency privacy reviews.
 - Native capture/editor/clipboard routing and cancellation boundary behavior.
-- Actual latency, correction burden, memory use, native loading, and privacy behavior.
 - Validated local app build/terminal launch recipe, hosted exact-head evidence,
   and owner final physical-Mac/human/second-device tests and consented fixtures.
 
-Resolve technical unknowns through S1–S3. If evidence contradicts an agreed product
-or constitutional requirement, document the conflict and obtain an explicit decision;
-do not relabel an unsafe implementation as satisfying the requirement. Missed
-numeric performance/usefulness targets must be reported as measurements, not
-misrepresented as either passing results or unagreed first-working-app blockers.
+If evidence contradicts an agreed product or constitutional requirement, document
+the conflict and obtain an explicit decision; do not relabel an unsafe
+implementation as satisfying the requirement. Missed numeric performance/usefulness
+targets must be reported as measurements, not misrepresented as either passing
+results or unagreed first-working-app blockers.
