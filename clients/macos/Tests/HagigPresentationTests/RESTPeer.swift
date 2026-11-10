@@ -89,11 +89,12 @@ final class Base {
     }
     deinit { try? FileManager.default.removeItem(atPath: path) }
 
-    /// A startup helper stand-in that records its argument and exits with `status`.
-    func helper(exit status: Int32) throws -> (url: URL, marker: String) {
-        let marker = path + "/helper-ran-\(status)"
-        let script = path + "/helper-\(status)"
-        try "#!/bin/sh\nprintf '%s' \"$1\" > '\(marker)'\nexit \(status)\n"
+    /// A startup helper stand-in that appends its argument and a newline to
+    /// `marker` on every run, waits `seconds`, then exits with `status`.
+    func helper(exit status: Int32, after seconds: Int = 0) throws -> (url: URL, marker: String) {
+        let marker = path + "/helper-ran-\(status)-\(seconds)"
+        let script = path + "/helper-\(status)-\(seconds)"
+        try "#!/bin/sh\nprintf '%s\\n' \"$1\" >> '\(marker)'\nsleep \(seconds)\nexit \(status)\n"
             .write(toFile: script, atomically: true, encoding: .utf8)
         guard chmod(script, 0o700) == 0 else { throw NSError(domain: "test.helper", code: 1) }
         return (URL(fileURLWithPath: script), marker)
