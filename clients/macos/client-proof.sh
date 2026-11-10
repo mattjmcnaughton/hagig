@@ -92,7 +92,7 @@ elif case == 'capture-failure':
 elif case == 'late-admission':
     replace('SocketRequest.swift', '            Self.release(socket, admitted.request_id) // Granted after the user cancelled.\n', '')
 elif case == 'cancel-body':
-    replace('SocketRequest.swift', '        body.fail()\n        upload?.cancel()\n', '        body.finish()\n')
+    replace('SocketRequest.swift', '        feed.finish(throwing: CancellationError())\n        upload?.cancel()\n', '        feed.finish()\n')
 else:
     raise AssertionError(case)
 PY
