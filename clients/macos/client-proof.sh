@@ -37,7 +37,7 @@ find Sources Tests -name '*.swift' -type f | LC_ALL=C sort | while read -r path;
     shasum -a 256 "$path"
 done > "$output/frozen.sha256"
 
-for experiment in admission late-result auto-stop cap warning compatibility exchange-deadline result-wait capture-failure late-admission cancel-body startup-poll; do
+for experiment in admission late-result auto-stop cap warning compatibility exchange-deadline result-wait capture-failure late-admission cancel-body startup-poll upload-early runtime-fallback stale-socket wait-anchor unknown-code; do
     directory="$output/$experiment"
     mkdir "$directory"
     echo UNPROVEN > "$directory/verdict.txt"
@@ -52,6 +52,11 @@ for experiment in admission late-result auto-stop cap warning compatibility exch
         late-admission) test=SocketTests.testAdmissionGrantedAfterCancelIsReleasedWithoutUploadOrCapture ;;
         cancel-body) test=SocketTests.testCancelWhileRecordingClosesTheUploadWithoutEndingTheBody ;;
         startup-poll) test=SocketTests.testHelperStartsTheServerOnceThenStatusIsRead ;;
+        upload-early) test=SocketTests.testUploadOpensBeforePermissionAndStreamsBeforeStop ;;
+        runtime-fallback) test=SocketTests.testFallbackIsTheDarwinTempDirNotTMPDIR ;;
+        stale-socket) test=SocketTests.testLaunchHelperRunsOnlyWhenNoServerAnswers ;;
+        wait-anchor) test=SocketTests.testResultWaitStartsWhenTheBodyEnds ;;
+        unknown-code) test=SocketTests.testEveryClientFixtureExchange ;;
     esac
     for phase in candidate mutant restored; do
         if [ "$phase" = mutant ]; then
@@ -95,6 +100,18 @@ elif case == 'late-admission':
 elif case == 'startup-poll':
     replace('SocketRequest.swift', '                try await Task.sleep(for: .milliseconds(50))\n',
             '                throw BackendFailure.generic\n')
+elif case == 'upload-early':
+    replace('SocketRequest.swift', 'upload = Task { try await Self.upload(',
+            'upload = Task { try await Task.sleep(for: .seconds(4)); return try await Self.upload(')
+elif case == 'runtime-fallback':
+    replace('SocketRequest.swift', 'guard let temp = darwinTempDir(),',
+            'guard let temp = environment["TMPDIR"] ?? darwinTempDir(),')
+elif case == 'stale-socket':
+    replace('SocketRequest.swift', 'retryConnectionEstablishment = false', 'retryConnectionEstablishment = true')
+elif case == 'wait-anchor':
+    replace('SocketRequest.swift', '            for await _ in ended { break }\n', '')
+elif case == 'unknown-code':
+    replace('SocketRequest.swift', 'errorStatuses[error.code]?.contains(reply.status) == true', 'true')
 elif case == 'cancel-body':
     replace('SocketRequest.swift', '        feed.finish(throwing: CancellationError())\n        upload?.cancel()\n', '        feed.finish()\n')
 else:
@@ -119,8 +136,10 @@ PY
         if [ "$phase" = mutant ]; then
             [ "$result" -eq 1 ]
             case "$experiment" in
-                admission|late-result|cap|late-admission|cancel-body|startup-poll) grep -F 'XCTAssertEqual failed' "$directory/$phase.log" ;;
-                auto-stop|warning) grep -F 'XCTAssertTrue failed' "$directory/$phase.log" ;;
+                admission|late-result|cap|late-admission|cancel-body|startup-poll|runtime-fallback|stale-socket) grep -F 'XCTAssertEqual failed' "$directory/$phase.log" ;;
+                auto-stop|warning|upload-early) grep -F 'XCTAssertTrue failed' "$directory/$phase.log" ;;
+                wait-anchor) grep 'XCTAssertEqual failed' "$directory/$phase.log" | grep -F 'deadline_exceeded' ;;
+                unknown-code) grep 'XCTAssertEqual failed' "$directory/$phase.log" | grep -F 'upload_unknown_code' ;;
                 compatibility) grep 'XCTAssertEqual failed' "$directory/$phase.log" | grep -F 'status_api_version_2' ;;
                 exchange-deadline) grep -F 'XCTAssertLessThan failed' "$directory/$phase.log" ;;
                 result-wait) grep 'XCTAssertEqual failed' "$directory/$phase.log" | grep -F 'deadline_exceeded' ;;
