@@ -30,6 +30,10 @@ test-unit:
 test-integration:
     uv run --frozen pytest tests/integration
 
+# Run end-to-end tests (real server, worker and CLI over the socket)
+test-e2e:
+    uv run --frozen pytest tests/e2e
+
 # Fast pre-push check
 gate: fmt lint typecheck test-unit
 
