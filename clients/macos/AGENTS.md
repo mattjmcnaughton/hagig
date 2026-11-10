@@ -161,15 +161,17 @@ Hagig.app/Contents/Resources/LICENSE                  # root LICENSE (the packag
 Hagig.app/Contents/Resources/python/bin/python3.12    # uv-managed python-build-standalone
 Hagig.app/Contents/Resources/python/lib/python3.12/   # stdlib, precompiled
 Hagig.app/Contents/Resources/python/lib/python3.12/site-packages/   # the locked environment
-    hagig/ (with hagig/seatbelt-v1.sb)  fastapi/ uvicorn/ numpy/ ...
+    hagig/ (with seatbelt-v1.sb and manifests/*.json)  torch/ transformers/
+    mlx/ mlx_whisper/ numba/ scipy/ fastapi/ uvicorn/ numpy/ ...
 ```
 
 How it is built, and why:
 
 - `sync_backend` in `bundle.sh` is the one place that picks the environment:
-  `UV_PYTHON_PREFERENCE=only-managed uv sync --frozen --no-dev --no-editable`
-  into a staging directory. When #47 adds engine groups or extras, change that
-  one command.
+  `UV_PYTHON_PREFERENCE=only-managed uv sync --frozen --no-dev --no-editable
+  --extra qwen3-asr --extra mlx-whisper` into a staging directory: #47's command
+  plus the two flags relocation needs (a wheel install, not an editable `.pth`
+  link to the checkout; and only a uv-managed interpreter).
 - uv environments are not relocatable: a venv's `pyvenv.cfg` records its
   interpreter's absolute path, uv adds a `_virtualenv` shim, and the project's
   `direct_url.json` names the checkout. So the bundle does not ship the venv.
@@ -219,9 +221,11 @@ id = "qwen3-asr-0.6b"  # or "qwen3-asr-1.7b"; "whisper-large-v3-turbo" on Apple 
 ```
 
 Installing a model is a separate explicit network step through the paired CLI,
-`.../Contents/Helpers/hagig model install <id>` with one of those three IDs.
-It is still a `not_implemented` stub until #47, and real engines arrive with #49,
-so this bundle cannot transcribe yet: every request answers `model_missing`.
+`.../Contents/Helpers/hagig model install <id>` with one of those three IDs
+(#47; models land in `$XDG_DATA_HOME/hagig/models/<id>/current`). The bundle
+build asserts it carries the three manifests, but no model install has been run
+from the bundle. Real engines arrive with #49, so this bundle cannot transcribe
+yet; without a model every request answers `model_missing`.
 
 Stop and relaunch. The server is per user and outlives the app. Before
 rebuilding or replacing a bundle: Quit the shell, coordinate with other clients
@@ -277,7 +281,7 @@ What each check proves (the scripts own the mechanics):
 
 `macos-build.yml`'s `bundle-smoke` job runs them all on macos-15 after moving the
 bundle to `$RUNNER_TEMP/relocated app` and hiding uv's private interpreter and
-cache directories. It uploads text logs only, never bundle bytes. Hosted runs are
+cache directories. `bundle-proof.sh` makes its copies as APFS clones (`cp -c`). It uploads text logs only, never bundle bytes. Hosted runs are
 not physical-Mac launch, LaunchServices, TCC, microphone or rebuild-permission
 acceptance.
 
@@ -356,8 +360,9 @@ Both workflows select `macos-15` and the installed `/Applications/Xcode_16.4.app
 explicitly; neither follows `macos-latest`. GitHub's image itself is mutable: record
 the environment, do not claim an immutable OS pin or Apple Silicon acceptance.
 Actions are SHA-pinned, credentials are not persisted, permissions are read-only,
-`macos-build.yml` jobs time out after 20 minutes (45 for the bundle smoke, which
-builds the app twice, and 60 for client semantics, which
+`macos-build.yml` jobs time out after 20 minutes (90 for the bundle smoke, which
+builds the app twice and compiles, signs and checks the engines, and 60 for
+client semantics, which
 rebuilds per experiment), and artifact retention is three days. Its build-test job
 fails if `swift package resolve` would change the committed `Package.resolved`.
 The manual `macos-screenshots.yml` still allows ten minutes, which may be too

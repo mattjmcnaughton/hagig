@@ -62,7 +62,9 @@ for experiment in checkout_link missing_profile unsigned_extension app_without_b
     echo UNPROVEN > "$directory/verdict.txt"
     copy="$scratch/$experiment/Hagig.app"
     mkdir "$scratch/$experiment"
-    cp -R "$app" "$copy"
+    # APFS clones: a full copy of an engine-sized bundle per experiment would
+    # cost minutes and gigabytes; mutating a clone copies only what it changes.
+    cp -cR "$app" "$copy"
     set -- "$copy"/Contents/Resources/python/bin/python3.*
     interpreter=$1
     site="$copy/Contents/Resources/python/lib/${interpreter##*/}/site-packages"
