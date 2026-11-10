@@ -188,9 +188,9 @@ before_exit)`):
   `HOME`, `TMPDIR`, `PATH=/usr/bin:/bin` and the four offline/telemetry
   variables. Vocabulary travels only in `load`.
 - Isolation (`Launcher.argv`): disabled runs the command as is. Required on
-  macOS prefixes `/usr/bin/sandbox-exec -f <absolute src/launcher/seatbelt-v1.sb>`,
-  resolved relative to the package (#48 must ship the profile at the same
-  relative place); a missing `sandbox-exec` or profile, a failed launch or no
+  macOS prefixes `/usr/bin/sandbox-exec -f <profile>`: `hagig/seatbelt-v1.sb`
+  inside an installed package (a wheel `force-include`, as in the app bundle,
+  #48), else `src/launcher/seatbelt-v1.sb` in a checkout; a missing `sandbox-exec` or profile, a failed launch or no
   ready line (including part of one) is `isolation_unavailable`; in
   disabled mode the same is `worker_failed`. Required anywhere else refuses before
   launching. Model checks wrap isolation: see **Models** for the order.

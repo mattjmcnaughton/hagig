@@ -42,10 +42,12 @@ hagig-worker = "hagig.worker:main"
 [project.urls]
 Repository = "https://github.com/mattjmcnaughton/hagig"
 
-# launcher.py finds the Seatbelt profile at <package parent>/launcher/; ship it
-# there in installed environments (the app bundle) as in the source tree.
+# Installed environments, such as the app bundle, carry the Seatbelt profile
+# inside the package; launcher.py looks there first and falls back to
+# src/launcher/ in a checkout. (Editable builds also copy it to an inert
+# site-packages/hagig/ directory, which the real package in src/ shadows.)
 [tool.hatch.build.targets.wheel.force-include]
-"src/launcher/seatbelt-v1.sb" = "launcher/seatbelt-v1.sb"
+"src/launcher/seatbelt-v1.sb" = "hagig/seatbelt-v1.sb"
 
 [tool.uv]
 exclude-newer = "1 week"
