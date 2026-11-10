@@ -29,17 +29,10 @@ jobs:
           mkdir -p captures
           { sw_vers; uname -m; xcodebuild -version; swift --version; git rev-parse HEAD; } > captures/environment.txt
           cat captures/environment.txt
-      # Temporary (#46): Xcode 16.4's SwiftPM produces Package.resolved for commit.
-      - name: Resolve Swift packages
+      - name: Require the committed package pins
         run: |
           swift package resolve
-          cat Package.resolved
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: package-resolved-${{ github.sha }}
-          path: clients/macos/Package.resolved
-          if-no-files-found: error
-          retention-days: 3
+          git diff --exit-code -- Package.resolved
       - run: swift build
       - run: swift test
       - name: Render minimal native proof

@@ -15,11 +15,12 @@ Normal operation requires the paired real backend, an explicitly installed model
 and native helper packaging (see the local experiment below). Bundle assembly
 requires explicit prepared native input, never a controlled-helper fallback.
 Hosted integration evidence is not physical-Mac acceptance (#21/#23 remain
-open). Resolve `hagig` only at `Contents/Helpers/hagig`. Only when the socket is
-absent does Swift run that helper once with `start` (a seam; bundled Python
-startup is #48) and wait for the socket within the 5 s startup bound. The server
-owns runtime locking/stale-socket cleanup; Swift never removes or repairs runtime
-files. No ambient PATH. Swift computes the socket exactly like
+open). Resolve `hagig` only at `Contents/Helpers/hagig`. Only when no server
+answers on the socket (absent, or stale after a crash) does Swift run that helper
+once with `start` (a seam; bundled Python startup is #48), then retry status
+within the one 5 s startup bound. Helper exit 2 (TDD §9 usage/configuration) shows
+the configuration issue. The server's lock owns stale-socket cleanup; Swift never
+removes or repairs runtime files. No ambient PATH. Swift computes the socket exactly like
 `backend/src/hagig/paths.py`: `$XDG_RUNTIME_DIR/hagig/server.sock` when that base
 is an owner-only 0700 directory, otherwise `hagig/server.sock` in
 `confstr(_CS_DARWIN_USER_TEMP_DIR)` (never `$TMPDIR`), failing closed when the OS
@@ -158,6 +159,10 @@ HagigShell, copies five explicit native files, and signs staged copies inside-ou
 Prepared inputs remain unchanged. Output is ignored under `clients/macos/.build/`.
 
 ### Local source experiment after the gated merges
+
+Unusable since #46: this recipe pairs the app with the Rust db18603 helper, which
+speaks the removed framed protocol, so every Record fails with Server unavailable.
+#48 replaces it with the Python server bundle. Kept as history.
 
 Use an Apple Silicon Mac with Xcode 16.4 and Rust 1.90.0 already installed
 (`backend/rust-toolchain.toml` selects that Rust toolchain). Apple supports
@@ -415,8 +420,11 @@ Both workflows select `macos-15` and the installed `/Applications/Xcode_16.4.app
 explicitly; neither follows `macos-latest`. GitHub's image itself is mutable: record
 the environment, do not claim an immutable OS pin or Apple Silicon acceptance.
 Actions are SHA-pinned, credentials are not persisted, permissions are read-only,
-jobs time out after 20 minutes (40 for client semantics, which rebuilds per
-experiment), and artifact retention is three days. The manual
+`macos-build.yml` jobs time out after 20 minutes (40 for client semantics, which
+rebuilds per experiment), and artifact retention is three days. Its build-test job
+fails if `swift package resolve` would change the committed `Package.resolved`.
+The manual `macos-screenshots.yml` still allows ten minutes, which may be too
+short now that SwiftNIO and BoringSSL compile from source. The manual
 scenario enum is bounded and never accepts arbitrary fixture content or commands.
 
 ## Evidence limits

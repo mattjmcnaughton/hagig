@@ -135,23 +135,31 @@ final class DictationTests: XCTestCase {
     }
 
     @MainActor
-    func testEarlyFailureDuringRecordingEndsTheRequest() async throws {
-        let model = Presentation()
-        let request = ControlledRequest()
-        let capture = ControlledCapture()
-        let controller = DictationController(presentation: model, makeRequest: { request },
-            permission: { true }, makeCapture: { _, _ in capture })
-        controller.record()
-        try await wait { request.admission != nil }
-        request.admission?.resume(returning: Self.standard)
-        try await wait { model.stage == .recording && request.result != nil }
-        // The server may answer before the body ends (deadline, stop, DELETE).
-        request.result?.resume(throwing: BackendFailure(code: "deadline_exceeded"))
-        try await wait { model.stage != .recording }
-        XCTAssertEqual(model.stage, .issue(.deadlineExceeded))
-        XCTAssertTrue(capture.stopped)
-        XCTAssertTrue(request.closed)
-        XCTAssertFalse(request.finished)
+    func testAnAnswerBeforeStopEndsTheRequest() async throws {
+        // The server may answer before the body ends (deadline, stop, DELETE). Text
+        // before Stop is not a result: the body never ended.
+        let early: [(Result<String, Error>, DemoIssue)] = [
+            (.failure(BackendFailure(code: "deadline_exceeded")), .deadlineExceeded),
+            (.success("Premature synthetic text"), .serverUnavailable),
+        ]
+        for (answer, issue) in early {
+            let model = Presentation()
+            let request = ControlledRequest()
+            let capture = ControlledCapture()
+            let controller = DictationController(presentation: model, makeRequest: { request },
+                permission: { true }, makeCapture: { _, _ in capture })
+            controller.record()
+            try await wait { request.admission != nil }
+            request.admission?.resume(returning: Self.standard)
+            try await wait { model.stage == .recording && request.result != nil }
+            request.result?.resume(with: answer)
+            try await wait { model.stage != .recording }
+            XCTAssertEqual(model.stage, .issue(issue))
+            XCTAssertNil(model.transcript)
+            XCTAssertTrue(capture.stopped)
+            XCTAssertTrue(request.closed)
+            XCTAssertFalse(request.finished)
+        }
     }
 
     @MainActor
