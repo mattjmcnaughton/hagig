@@ -1,14 +1,20 @@
-"""Script contracts with disposable tool stand-ins; NOT macOS execution evidence."""
+"""bundle.sh and helper contracts with disposable tool stand-ins.
+
+NOT macOS execution evidence: uv, Swift, codesign and the interpreter are
+stand-ins here. smoke-bundle.sh and bundle-proof.sh on macOS are the evidence.
+"""
+
+import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
-
+from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parent
+SYNC = "sync --frozen --no-dev --no-editable --managed-python"
 
 
 class BundleContracts(unittest.TestCase):
@@ -19,32 +25,83 @@ class BundleContracts(unittest.TestCase):
         self.mac = self.root / "clients/macos"
         self.mac.mkdir(parents=True)
         (self.root / "backend").mkdir()
+        (self.root / "LICENSE").write_text("MIT License (stand-in)\n")
         for name in ("bundle.sh", "Info.plist", "smoke-bundle.sh"):
             shutil.copy2(SOURCE / name, self.mac / name)
         self.tools = self.root / "tools"
         self.tools.mkdir()
         self.log = self.root / "calls"
-        self.env = dict(os.environ, PATH=f"{self.tools}:/usr/bin:/bin", CALLS=str(self.log))
-        self.env.pop("DEVELOPER_DIR", None)
-        self.native = self.root / "prepared native/Contents"
-        for name, value in (("Helpers/hagig", "cli"), ("Helpers/hagig-worker", "bootstrap"),
-                            ("Helpers/hagig-inference-worker", "native"),
-                            ("Frameworks/libsherpa-onnx-c-api.dylib", "sherpa"),
-                            ("Frameworks/libonnxruntime.dylib", "onnx")):
-            path = self.native / name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(value)
+        self.managed = self.root / "uv python"
+        self.base = self.managed / "cpython-3.12.14-macos-aarch64-none"
+        self.make_managed_python()
+        self.env = {
+            "PATH": f"{self.tools}:/usr/bin:/bin",
+            "HOME": str(self.root),
+            "CALLS": str(self.log),
+            "MANAGED": str(self.managed),
+        }
         self.stub("uname", 'if [ "$1" = -m ]; then echo arm64; else echo Darwin; fi')
         self.stub("xcodebuild", 'echo "Xcode 16.4"')
-        self.stub("swift", '''
+        self.stub("swift", """
 case "$*" in
-  *--show-bin-path*) printf '%s\n' "$PWD/.build/release" ;;
-  *) mkdir -p .build/release; printf shell > .build/release/HagigShell ;;
-esac''')
-        self.stub("plutil", ':')
-        self.stub("codesign", ':')
-        self.stub("install_name_tool", ':')
-        self.stub("open", ':')
+  *--show-bin-path*) printf '%s\\n' "$PWD/.build/release" ;;
+  *) mkdir -p .build/release; printf 'MACHO shell' > .build/release/HagigShell ;;
+esac""")
+        # A uv environment: packages in a venv whose python links to the managed one.
+        self.stub("uv", """
+case "$1" in
+  python) [ "$2" = dir ] && printf '%s\\n' "${UV_DIR:-$MANAGED}" ;;
+  sync)
+    env=$UV_PROJECT_ENVIRONMENT
+    site=$env/lib/python3.12/site-packages
+    mkdir -p "$env/bin" "$site/hagig" "$site/launcher" "$site/hagig-0.1.0.dist-info" "$site/__pycache__"
+    ln -s "$MANAGED/cpython-3.12.14-macos-aarch64-none/bin/python3.12" "$env/bin/python"
+    printf 'pkg' > "$site/hagig/__init__.py"
+    [ -n "$NO_PROFILE" ] || printf '(version 1)' > "$site/launcher/seatbelt-v1.sb"
+    printf 'MACHO ext' > "$site/hagig/_native.cpython-312-darwin.so"
+    printf '{"url":"file://checkout"}' > "$site/hagig-0.1.0.dist-info/direct_url.json"
+    printf 'meta' > "$site/hagig-0.1.0.dist-info/METADATA"
+    printf 'import _virtualenv' > "$site/_virtualenv.pth"
+    printf 'shim' > "$site/_virtualenv.py"
+    printf 'pyc' > "$site/__pycache__/_virtualenv.cpython-312.pyc"
+    [ -z "$EXTRA_PTH" ] || printf '/somewhere\\n' > "$site/extra.pth" ;;
+esac""")
+        self.stub("file", 'if grep -q MACHO "${!#}"; then echo "Mach-O 64-bit arm64"; else echo "ASCII text"; fi')
+        self.stub("codesign", ":")
+        for name in ("plutil", "install_name_tool", "open"):
+            self.stub(name, ":")
+
+    def make_managed_python(self):
+        base = self.base
+        for directory in ("bin", "include/python3.12", "share/man", "lib/pkgconfig",
+                          "lib/python3.12/site-packages/pip", "lib/python3.12/ensurepip",
+                          "lib/python3.12/idlelib", "lib/python3.12/tkinter",
+                          "lib/python3.12/config-3.12-darwin", "lib/python3.12/lib-dynload",
+                          "lib/tcl9.0", "lib/tk9.0"):
+            (base / directory).mkdir(parents=True)
+        python = base / "bin/python3.12"
+        python.write_text("""#!/bin/bash
+# MACHO stand-in interpreter
+here=$(dirname "$(dirname "$(readlink -f "$0")")")
+printf '%s\\n' "python $0 $*" >> "$CALLS"
+case "$*" in
+  *version_info*) echo 3.12 ;;
+  *base_prefix*) printf '%s\\n' "$here" ;;
+  *compileall*) : ;;
+  *SEATBELT_PROFILE*) [ -f "$here/lib/python3.12/site-packages/launcher/seatbelt-v1.sb" ] ;;
+esac
+""")
+        python.chmod(0o755)
+        (base / "bin/python3").symlink_to("python3.12")
+        (base / "bin/pip").write_text("#!/build/host/python\n")
+        (base / "bin/pip").chmod(0o755)
+        for name, text in (("lib/libpython3.12.dylib", "MACHO lib"),
+                           ("lib/libtcl9.0.dylib", "MACHO tcl"),
+                           ("lib/python3.12/lib-dynload/_ssl.cpython-312-darwin.so", "MACHO ssl"),
+                           ("lib/python3.12/lib-dynload/_tkinter.cpython-312-darwin.so", "MACHO tk"),
+                           ("lib/python3.12/os.py", "stdlib"),
+                           ("include/python3.12/Python.h", "header")):
+            (base / name).write_text(text)
 
     def stub(self, name, body):
         path = self.tools / name
@@ -52,202 +109,163 @@ esac''')
         path.chmod(0o755)
 
     def run_bundle(self, *args):
-        if args in (("build",), ("run",)):
-            args = (*args, str(self.native))
+        args = args or ("build",)
         return subprocess.run(["/bin/bash", str(self.mac / "bundle.sh"), *args],
                               cwd=self.root, env=self.env, capture_output=True, text=True)
 
     def calls(self):
         return self.log.read_text() if self.log.exists() else ""
 
+    def output(self):
+        return self.mac / ".build/Hagig.app"
+
+    def assert_no_output(self):
+        self.assertFalse(self.output().exists())
+        self.assertFalse((self.mac / ".build/bundle.lock").exists())
+        self.assertEqual(list((self.mac / ".build").glob("bundle.*")), [])
+        self.assertNotIn("open ", self.calls())
+
     def test_usage_rejects_extra_or_unknown_arguments_without_tools(self):
-        for args in (("wat",), ("build", "extra"), ()):
+        for args in (("wat",), ("build", "/prepared/Contents"), ("run", "extra")):
             with self.subTest(args=args):
-                self.assertNotEqual(self.run_bundle(*args).returncode, 0)
+                self.assertEqual(self.run_bundle(*args).returncode, 2)
         self.assertEqual(self.run_bundle("--help").returncode, 0)
         self.assertEqual(self.calls(), "")
 
-    def test_existing_bundle_or_symlink_is_never_replaced(self):
+    def test_layout_is_the_managed_interpreter_with_the_locked_packages(self):
+        result = self.run_bundle()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        contents = self.output() / "Contents"
+        files = sorted(str(p.relative_to(contents)) for p in contents.rglob("*")
+                       if p.is_file() or p.is_symlink())
+        site = "Resources/python/lib/python3.12/site-packages"
+        self.assertEqual(files, sorted([
+            "Info.plist", "MacOS/HagigShell", "Helpers/hagig", "Resources/LICENSE",
+            "Resources/python/bin/python3.12",
+            "Resources/python/lib/libpython3.12.dylib",
+            "Resources/python/lib/python3.12/os.py",
+            "Resources/python/lib/python3.12/lib-dynload/_ssl.cpython-312-darwin.so",
+            f"{site}/hagig/__init__.py", f"{site}/hagig/_native.cpython-312-darwin.so",
+            f"{site}/hagig-0.1.0.dist-info/METADATA", f"{site}/launcher/seatbelt-v1.sb",
+        ]))
+        self.assertEqual((contents / "Resources/LICENSE").read_text(), "MIT License (stand-in)\n")
+        self.assertIn(f"uv {SYNC}\n", self.calls())
+        # The build never edits the developer's managed interpreter.
+        self.assertTrue((self.base / "bin/pip").exists())
+        self.assertTrue((self.base / "lib/python3.12/site-packages/pip").is_dir())
+
+    def test_everything_is_signed_inside_out_after_compiling(self):
+        self.assertEqual(self.run_bundle().returncode, 0)
+        calls = self.calls().splitlines()
+        signs = [i for i, line in enumerate(calls) if line.startswith("codesign --force")]
+        compile_at = next(i for i, line in enumerate(calls) if "compileall" in line)
+        self.assertEqual(len(signs), 3)
+        self.assertLess(compile_at, signs[0])
+        python = calls[signs[0]]
+        for member in ("bin/python3.12", "lib/libpython3.12.dylib", "_ssl.cpython-312-darwin.so",
+                       "_native.cpython-312-darwin.so"):
+            self.assertIn(member, python)
+        self.assertNotIn("libtcl", python)
+        self.assertIn("Helpers/hagig", calls[signs[1]])
+        self.assertIn("MacOS/HagigShell", calls[signs[1]])
+        self.assertTrue(calls[signs[2]].endswith("/Hagig.app"))
+        self.assertTrue(calls[signs[2] + 1].startswith("codesign --verify --deep --strict"))
+        self.assertTrue(all(str(self.managed) not in calls[i] for i in signs))
+
+    def test_unreviewed_pth_missing_profile_or_unmanaged_python_never_publish(self):
+        for name, value in (("EXTRA_PTH", "1"), ("NO_PROFILE", "1"), ("UV_DIR", "/usr")):
+            with self.subTest(variable=name):
+                self.env[name] = value
+                self.assertNotEqual(self.run_bundle("run").returncode, 0)
+                self.assert_no_output()
+                del self.env[name]
+
+    def test_failure_cleans_staging_and_does_not_publish_or_launch(self):
+        for tool in ("swift", "uv", "install_name_tool", "codesign"):
+            with self.subTest(tool=tool):
+                original = (self.tools / tool).read_text()
+                self.stub(tool, "exit 19")
+                self.assertNotEqual(self.run_bundle("run").returncode, 0)
+                self.assert_no_output()
+                (self.tools / tool).write_text(original)
+
+    def test_existing_bundle_symlink_lock_or_non_macos_is_refused(self):
         build = self.mac / ".build"
         build.mkdir()
         bundle = build / "Hagig.app"
         bundle.mkdir()
-        sentinel = bundle / "keep"
-        sentinel.write_text("live paired bytes")
-        self.assertNotEqual(self.run_bundle("build").returncode, 0)
-        self.assertEqual(sentinel.read_text(), "live paired bytes")
+        (bundle / "keep").write_text("live paired bytes")
+        self.assertNotEqual(self.run_bundle().returncode, 0)
+        self.assertEqual((bundle / "keep").read_text(), "live paired bytes")
         shutil.rmtree(bundle)
         bundle.symlink_to(self.root / "missing")
         self.assertNotEqual(self.run_bundle("run").returncode, 0)
         self.assertTrue(bundle.is_symlink())
-        self.assertNotIn("cargo", self.calls())
+        bundle.unlink()
+        (build / "bundle.lock").mkdir()
+        self.assertNotEqual(self.run_bundle().returncode, 0)
+        self.assertTrue((build / "bundle.lock").is_dir())
+        (build / "bundle.lock").rmdir()
+        self.stub("uname", "echo Linux")
+        self.assertNotEqual(self.run_bundle().returncode, 0)
+        self.assertNotIn("uv sync", self.calls())
         self.assertNotIn("open ", self.calls())
 
     def test_symlink_build_directory_refused(self):
         (self.mac / ".build").symlink_to(self.root, target_is_directory=True)
-        self.assertNotEqual(self.run_bundle("build").returncode, 0)
+        self.assertNotEqual(self.run_bundle().returncode, 0)
         self.assertFalse((self.root / "Hagig.app").exists())
 
-    def test_build_in_path_with_spaces_packages_only_existing_binaries(self):
-        result = self.run_bundle("build")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        contents = self.mac / ".build/Hagig.app/Contents"
-        self.assertEqual((contents / "MacOS/HagigShell").read_text(), "shell")
-        self.assertEqual((contents / "Helpers/hagig").read_text(), "cli")
-        self.assertEqual((contents / "Helpers/hagig-worker").read_text(), "bootstrap")
-        self.assertEqual((contents / "Helpers/hagig-inference-worker").read_text(), "native")
-        self.assertEqual((contents / "Frameworks/libonnxruntime.dylib").read_text(), "onnx")
-        self.assertEqual((contents / "Frameworks/libsherpa-onnx-c-api.dylib").read_text(), "sherpa")
-        self.assertEqual(sorted(str(p.relative_to(contents)) for p in contents.rglob("*") if p.is_file()),
-                         ["Frameworks/libonnxruntime.dylib", "Frameworks/libsherpa-onnx-c-api.dylib",
-                          "Helpers/hagig", "Helpers/hagig-inference-worker", "Helpers/hagig-worker",
-                          "Info.plist", "MacOS/HagigShell"])
-        self.assertNotIn("open ", self.calls())
-        self.assertNotIn("cargo", self.calls())
-        self.assertNotIn("curl", self.calls())
-        self.assertIn("--verify", self.calls())
-        self.assertFalse((self.mac / ".build/bundle.lock").exists())
-
-    def test_missing_or_symlink_native_member_never_publishes_or_launches(self):
-        helper = self.native / "Helpers/hagig-inference-worker"
-        helper.unlink()
-        self.assertNotEqual(self.run_bundle("run").returncode, 0)
-        self.assertFalse((self.mac / ".build/Hagig.app").exists())
-        helper.symlink_to(self.native / "Helpers/hagig")
-        self.assertNotEqual(self.run_bundle("run").returncode, 0)
-        self.assertNotIn("open ", self.calls())
-
-    def test_prepared_native_contents_are_never_changed(self):
-        before = {p: p.read_bytes() for p in self.native.rglob("*") if p.is_file()}
-        self.assertEqual(self.run_bundle("build").returncode, 0)
-        self.assertEqual({p: p.read_bytes() for p in before}, before)
-        signed = [line for line in self.calls().splitlines() if line.startswith("codesign ")]
-        self.assertTrue(signed)
-        self.assertTrue(all(str(self.native) not in line for line in signed))
-
-    def test_run_launches_bundle_only_after_success(self):
+    def test_run_opens_the_bundle_only_after_success(self):
         result = self.run_bundle("run")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(f"open {self.mac}/.build/Hagig.app\n", self.calls())
+        self.assertIn(f"open {self.output()}\n", self.calls())
 
-    def test_packaged_shell_removes_only_loader_rpath_before_signing(self):
-        # Text stand-ins model load commands, not Mach-O editing on Linux.
-        self.stub("swift", '''
-case "$*" in
-  *--show-bin-path*) printf '%s\\n' "$PWD/.build/release" ;;
-  *) mkdir -p .build/release
-     printf 'shell\\n@loader_path\\n/usr/lib/swift\\n' > .build/release/HagigShell ;;
-esac''')
-        self.stub("install_name_tool", '''
-[ "$1" = -delete_rpath ] && [ "$2" = '@loader_path' ] || exit 65
-sed '/^@loader_path$/d' "$3" > "$3.edited"
-mv "$3.edited" "$3"''')
-        self.stub("codesign", '''
-case "${!#}" in
-  *.app) ! grep -Fx '@loader_path' "${!#}/Contents/MacOS/HagigShell" ;;
-esac''')
-        result = self.run_bundle("build")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.mac / ".build/Hagig.app/Contents/MacOS/HagigShell").read_text(),
-                         "shell\n/usr/lib/swift\n")
-        self.assertEqual((self.mac / ".build/release/HagigShell").read_text(),
-                         "shell\n@loader_path\n/usr/lib/swift\n")
+    def test_helper_execs_the_bundled_interpreter_relative_to_itself(self):
+        self.assertEqual(self.run_bundle().returncode, 0)
+        app = self.root / "moved elsewhere/Hagig.app"
+        app.parent.mkdir()
+        shutil.move(str(self.output()), app)
+        record = self.root / "record.json"
+        interpreter = app / "Contents/Resources/python/bin/python3.12"
+        interpreter.write_text(f"""#!{sys.executable} -I
+import json, os, sys
+json.dump({{"argv": sys.argv, "env": dict(os.environ)}}, open({str(record)!r}, "w"))
+sys.exit(int(open({str(self.root / "exit")!r}).read()))
+""")
+        (self.root / "exit").write_text("2")
+        link = self.root / "via link"
+        link.symlink_to(app.parent, target_is_directory=True)
+        helpers = app / "Contents/Helpers"
+        for program, cwd in ((str(helpers / "hagig"), "/"), ("./hagig", helpers),
+                             ("../../Contents/Helpers/hagig", helpers),
+                             (str(link / "Hagig.app/Contents/Helpers/hagig"), "/")):
+            with self.subTest(program=program):
+                record.unlink(missing_ok=True)
+                # No PATH, uv, PYTHONPATH or developer variables at all.
+                done = subprocess.run([program, "start", "--x y"], cwd=cwd, env={},
+                                      capture_output=True)
+                self.assertEqual(done.returncode, 2, done.stderr)
+                seen = json.loads(record.read_text())
+                self.assertEqual(seen["argv"][0], str(interpreter))
+                self.assertEqual(seen["argv"][1:4], ["-I", "-B", "-c"])
+                self.assertIn("from hagig.cli import app", seen["argv"][4])
+                self.assertEqual(seen["argv"][5:], ["start", "--x y"])
+                self.assertEqual(seen["env"]["UV_OFFLINE"], "1")
+                self.assertEqual(seen["env"]["UV_PYTHON_DOWNLOADS"], "never")
+                self.assertNotIn("PYTHONPATH", seen["env"])
+                self.assertFalse(any(str(self.root / "clients") in value
+                                     for value in seen["env"].values()))
 
-    def test_failure_cleans_staging_and_does_not_publish_or_launch(self):
-        for tool in ("swift", "install_name_tool", "codesign"):
-            with self.subTest(tool=tool):
-                original = (self.tools / tool).read_text()
-                self.stub(tool, 'exit 19')
-                self.assertNotEqual(self.run_bundle("run").returncode, 0)
-                self.assertFalse((self.mac / ".build/Hagig.app").exists())
-                self.assertFalse((self.mac / ".build/bundle.lock").exists())
-                self.assertEqual(list((self.mac / ".build").glob("bundle.*")), [])
-                self.assertNotIn("open ", self.calls())
-                (self.tools / tool).write_text(original)
-
-    def test_concurrent_build_lock_is_preserved(self):
-        lock = self.mac / ".build/bundle.lock"
-        lock.mkdir(parents=True)
-        self.assertNotEqual(self.run_bundle("build").returncode, 0)
-        self.assertTrue(lock.is_dir())
-        self.assertNotIn("cargo", self.calls())
-
-    def test_non_macos_refuses_before_building(self):
-        self.stub("uname", 'echo Linux')
-        self.assertNotEqual(self.run_bundle("build").returncode, 0)
-        self.assertNotIn("cargo", self.calls())
-
-    def test_smoke_loader_checks_system_swift_and_rejects_checkout_paths(self):
-        self.assertEqual(self.run_bundle("build").returncode, 0)
-        contents = self.mac / ".build/Hagig.app/Contents"
-        (contents / "MacOS/HagigShell").write_text('#!/bin/bash\nexec sleep 30\n')
-        scratch = self.root / "smoke scratch"
-        service = self.root / "simulated service"
-        runtime_record = self.root / "observed runtime"
-        caller_runtime = self.root / "caller runtime"
-        caller_runtime.mkdir()
-        sentinel = caller_runtime / "live"
-        sentinel.write_text("unrelated service")
-        self.env.update(SMOKE_SCRATCH=str(scratch), SERVICE_STATE=str(service),
-                        RUNTIME_RECORD=str(runtime_record), TEST_PYTHON=sys.executable,
-                        XDG_RUNTIME_DIR=str(caller_runtime))
-        self.stub("mktemp", 'mkdir "$SMOKE_SCRATCH"; printf "%s\\n" "$SMOKE_SCRATCH"')
-        (contents / "Helpers/hagig").write_text('''#!/bin/bash
-[ "$XDG_RUNTIME_DIR" = "$SMOKE_SCRATCH/runtime" ] || exit 61
-"$TEST_PYTHON" -c 'import os, stat; assert stat.S_IMODE(os.stat(os.environ["XDG_RUNTIME_DIR"]).st_mode) == 0o700' || exit 62
-printf '%s' "$XDG_RUNTIME_DIR" > "$RUNTIME_RECORD"
-case "$1" in
-status) if [ -e "$SERVICE_STATE" ]; then printf '%s\\n' '{"worker":"inference","network_isolation":"required","state":"idle"}'; else echo stopped; fi ;;
-start) touch "$SERVICE_STATE" ;;
-stop) [ "$FAIL_STOP" = 0 ] || exit 63; rm -f "$SERVICE_STATE"; echo stopped ;;
-esac
-''')
-        self.stub("file", 'echo "Mach-O 64-bit executable arm64"')
-        self.stub("otool", '''
-dependency=$DEPENDENCY
-rpath=$RPATH
-if [ "$DEPENDENCY" = native-layout ] || [ "$DEPENDENCY" = inference-in-cli ]; then
-    dependency=/usr/lib/libSystem.B.dylib
-    rpath=/usr/lib/swift
-    case "$2" in
-      */Helpers/*) rpath='@executable_path/../Frameworks' ;;
-      */Frameworks/*) rpath='@loader_path' ;;
-    esac
-    case "$2" in
-      */Helpers/hagig-inference-worker|*/Frameworks/libsherpa-onnx-c-api.dylib)
-        dependency='@rpath/libonnxruntime.dylib' ;;
-    esac
-    if [ "$DEPENDENCY" = inference-in-cli ]; then
-        case "$2" in */Helpers/hagig) dependency='@rpath/libsherpa-onnx-c-api.dylib' ;; esac
-    fi
-fi
-if [ "$1" = -L ]; then
-    printf 'binary:\\n\\t%s (compatibility version 1.0.0)\\n' "$dependency"
-else
-    printf '          cmd LC_RPATH\\n      cmdsize 32\\n         path %s (offset 12)\\n' "$rpath"
-fi''')
-        cases = (("/usr/lib/libSystem.B.dylib", "/usr/lib/swift", True, False),
-                 ("@rpath/libswift_Concurrency.dylib", "/usr/lib/swift", True, False),
-                 ("/tmp/checkout/libbad.dylib", "/usr/lib/swift", False, False),
-                 ("@rpath/libswift_Concurrency.dylib", "/tmp/checkout/lib", False, False),
-                 ("native-layout", "native-layout", True, False),
-                 ("inference-in-cli", "native-layout", False, False),
-                 ("/usr/lib/libSystem.B.dylib", "/usr/lib/swift", False, True))
-        for dependency, rpath, succeeds, fail_stop in cases:
-            with self.subTest(dependency=dependency, rpath=rpath, fail_stop=fail_stop):
-                self.env.update(DEPENDENCY=dependency, RPATH=rpath, FAIL_STOP=str(int(fail_stop)))
-                result = subprocess.run(["/bin/bash", str(self.mac / "smoke-bundle.sh")],
-                                        env=self.env, capture_output=True, text=True, timeout=10)
-                self.assertEqual(result.returncode == 0, succeeds, result.stderr)
-                self.assertEqual(sentinel.read_text(), "unrelated service")
-                self.assertEqual(list(caller_runtime.iterdir()), [sentinel])
-                self.assertEqual(service.exists(), fail_stop)
-                self.assertEqual(scratch.exists(), fail_stop)
-                if succeeds or fail_stop:
-                    self.assertEqual(runtime_record.read_text(), str(scratch / "runtime"))
-                if fail_stop:
-                    self.assertIn("retained private smoke directory", result.stderr)
-                    self.assertTrue((scratch / "relocated app/Hagig.app").is_dir())
+    def test_smoke_refuses_a_bundle_inside_the_checkout_or_a_relative_path(self):
+        self.assertEqual(self.run_bundle().returncode, 0)
+        self.log.unlink()
+        for target in (str(self.output()), "clients/macos/.build/Hagig.app"):
+            with self.subTest(target=target):
+                done = subprocess.run(["/bin/bash", str(self.mac / "smoke-bundle.sh"), target],
+                                      cwd=self.root, env=self.env, capture_output=True, text=True)
+                self.assertNotEqual(done.returncode, 0)
+        self.assertNotIn("codesign", self.calls())
 
 
 if __name__ == "__main__":

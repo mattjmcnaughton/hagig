@@ -61,26 +61,90 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  # Preserve the existing check context; this covers script contracts only, not
-  # native assembly/loading acceptance. #48 restores the backend bundle steps.
+  # #48: build Hagig.app with the uv-managed interpreter and the frozen backend
+  # environment, move it outside the checkout, hide uv's interpreters and cache,
+  # then run the relocation smoke, its counterfactuals and the app against the
+  # bundled server. No model is installed: requests must answer model_missing.
   bundle-smoke:
     runs-on: macos-15
-    timeout-minutes: 10
+    # A release HagigShell build plus a debug test build of SwiftNIO/BoringSSL.
+    timeout-minutes: 45
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      UV_PYTHON_PREFERENCE: only-managed
+    defaults:
+      run:
+        shell: bash  # -eo pipefail, so a failure before `| tee` fails the step
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.12.9'
+          enable-cache: false
+      - name: Private uv directories and evidence location
+        run: |
+          {
+            echo "UV_PYTHON_INSTALL_DIR=$RUNNER_TEMP/uv-python"
+            echo "UV_CACHE_DIR=$RUNNER_TEMP/uv-cache"
+            echo "EVIDENCE=$RUNNER_TEMP/bundle-evidence"
+            echo "RELOCATED=$RUNNER_TEMP/relocated app/Hagig.app"
+          } >> "$GITHUB_ENV"
+          mkdir "$RUNNER_TEMP/bundle-evidence"
       - name: Record native bundle toolchain and tested revision
         run: |
-          sw_vers
-          uname -m
-          xcodebuild -version
-          swift --version
-          git rev-parse HEAD
+          { sw_vers; uname -m; xcodebuild -version; swift --version; uv --version; git rev-parse HEAD; } | tee "$EVIDENCE/environment.txt"
       - name: Script contracts (tool stand-ins, not native proof)
         run: python3 clients/macos/test_bundle.py
+      - name: Build the bundle (uv sync is the only network step)
+        run: bash clients/macos/bundle.sh build 2>&1 | tee "$EVIDENCE/build.log"
+      - name: Relocate outside the checkout and hide uv's interpreters and cache
+        run: |
+          mkdir "$(dirname "$RELOCATED")"
+          mv clients/macos/.build/Hagig.app "$RELOCATED"
+          mv "$UV_PYTHON_INSTALL_DIR" "$UV_PYTHON_INSTALL_DIR.hidden"
+          mv "$UV_CACHE_DIR" "$UV_CACHE_DIR.hidden"
+          test ! -e clients/macos/.build/Hagig.app
+      - name: Relocation smoke (signatures, loader paths, status, model_missing, Seatbelt, stop)
+        timeout-minutes: 5
+        run: bash clients/macos/smoke-bundle.sh "$RELOCATED" 2>&1 | tee "$EVIDENCE/smoke.log"
+      - name: App against the bundled server through Contents/Helpers/hagig
+        working-directory: clients/macos
+        timeout-minutes: 25
+        run: |
+          HAGIG_BUNDLED_APP="$RELOCATED" HAGIG_INTEGRATION_WAV="$GITHUB_WORKSPACE/backend/tests/fixtures/speech.wav" \
+            swift test --filter BundledBackendTests 2>&1 | tee "$EVIDENCE/integration.log"
+          grep -E 'Executed 2 tests, with 0 failures' "$EVIDENCE/integration.log"
+          if grep -E 'skipped|Skipped' "$EVIDENCE/integration.log"; then exit 1; fi
+          test "$(grep -c BUNDLED_BACKEND_CLEANUP_COMPLETE "$EVIDENCE/integration.log")" = 2
+      - name: Counterfactual - the app test fails against a bundle without the backend package
+        working-directory: clients/macos
+        timeout-minutes: 10
+        run: |
+          broken="$RUNNER_TEMP/broken app/Hagig.app"
+          mkdir "$(dirname "$broken")"
+          cp -R "$RELOCATED" "$broken"
+          rm -rf "$broken"/Contents/Resources/python/lib/python3.*/site-packages/hagig
+          if HAGIG_BUNDLED_APP="$broken" HAGIG_INTEGRATION_WAV="$GITHUB_WORKSPACE/backend/tests/fixtures/speech.wav" \
+              swift test --skip-build --filter BundledBackendTests/testRecordingReachesTheBundledServerAndShowsModelMissing \
+              > "$EVIDENCE/integration-counterfactual.log" 2>&1; then
+            echo 'The app test passed without a bundled backend' >&2
+            exit 1
+          fi
+          grep -F 'serverUnavailable' "$EVIDENCE/integration-counterfactual.log"
+          rm -rf "$(dirname "$broken")"
+      - name: Smoke counterfactuals (checkout link, missing profile, unsigned extension)
+        timeout-minutes: 10
+        run: bash clients/macos/bundle-proof.sh "$RELOCATED" "$EVIDENCE/proof"
+      - name: Upload bounded text evidence (no bundle bytes)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bundle-smoke-${{ github.sha }}
+          path: ${{ runner.temp }}/bundle-evidence/
+          if-no-files-found: warn
+          retention-days: 3
 
   editor-semantics:
     runs-on: macos-15

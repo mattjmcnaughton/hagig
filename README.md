@@ -17,14 +17,17 @@ adopted [constitution](docs/CONSTITUTION.md) and design documents, it contains:
   bounded Vim), Copy/Cut are explicit and current-host-only, and the shell shares
   its SwiftUI views with the native screenshot harness. See
   [native guidance](clients/macos/AGENTS.md).
-- **Local app assembly (#23):** `clients/macos/bundle.sh` assembles an ignored,
-  ad-hoc-signed `Hagig.app` from explicitly prepared native helpers. The
-  [local experiment recipe](clients/macos/AGENTS.md#local-source-experiment-after-the-gated-merges)
-  builds and launches it from a clone.
-
-The Python backend (per-user server, isolated inference worker and CLI, serving a
-REST API over a private Unix socket) is planned; the
-[technical design](docs/technical/tdds/01-mvp.md) owns its contract.
+- **Python backend (#43-#45):** a per-user server, isolated inference worker and
+  CLI in `backend/`, serving a REST API over a private Unix socket and tested
+  with a test-only fake engine. Real engines (#49) and model installation (#47)
+  are not implemented, so nothing transcribes yet. See
+  [backend guidance](backend/AGENTS.md); the
+  [technical design](docs/technical/tdds/01-mvp.md) owns its contract.
+- **Local app bundle (#48, toward #23):** `clients/macos/bundle.sh` assembles an
+  ignored, ad-hoc-signed `Hagig.app` with the uv-managed Python interpreter and
+  the frozen backend environment; the app starts the bundled server through
+  `Contents/Helpers/hagig`. Without a model, requests answer `model_missing`. See
+  the [local bundle guidance](clients/macos/AGENTS.md#local-bundle-48-app-plus-bundled-python-backend).
 
 Native state renders and a synthetic interaction recording were inspected. None
 of this is acceptance of physical microphone capture, permissions, devices or
