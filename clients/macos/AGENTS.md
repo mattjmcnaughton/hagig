@@ -199,7 +199,12 @@ How it is built, and why:
 - Signing is local and ad hoc, inside out: every Mach-O file under
   `Resources/python` (the interpreter, `.so` and `.dylib`), then the helper and
   `HagigShell`, then the app, then `codesign --verify --deep --strict`.
-  `install_name_tool` removes SwiftPM's `@loader_path` rpath from the shell only.
+  `install_name_tool` removes SwiftPM's `@loader_path` rpath from the shell, and,
+  before signing, any absolute loader search path outside `/usr/lib` and
+  `/System/Library` from the bundled Python code: some wheels keep their build
+  machine's paths (scipy's `_fblas` names `/opt/homebrew/Cellar/gcc@13/...`),
+  which on a Mac with Homebrew are user-writable places a library could be
+  planted. The build log lists each removal.
   Ad-hoc signing is not Developer ID, notarization, Gatekeeper approval, a TCC
   grant or permission stability across rebuilds, and without the hardened
   runtime it gives no resistance to same-user dyld injection.
@@ -258,7 +263,8 @@ What each check proves (the scripts own the mechanics):
   diagnostic strings); the helper starts a server that is the bundled
   interpreter and maps no code from elsewhere; `GET /v1/status` answers over the
   socket with `network_isolation: required`; `transcribe speech.wav` answers
-  `model_missing`; `stop` works; the seal still verifies afterwards; and it
+  `model_missing`; torch, transformers, scipy, numba, MLX and mlx-whisper import
+  from the relocated bundle (loading, not inference); `stop` works; the seal still verifies afterwards; and it
   prints the interpreter version and sizes. Without a model the server never
   launches a worker (`model_missing` is checked first), so the smoke runs the
   server's own `Launcher().argv("required")` and `worker_env` with the bundled
@@ -269,7 +275,8 @@ What each check proves (the scripts own the mechanics):
   a `.pth` link to the checkout (the CLI still runs, so runtime success alone
   would miss it), a missing profile (`isolation_unavailable`), an unsigned
   `pydantic_core` extension (which macOS still loads in this unhardened process,
-  so only the build and the smoke enforce signing), and no `hagig` package for the app test
+  so only the build and the smoke enforce signing), a build-host search path
+  added to an extension, and no `hagig` package for the app test
   (`serverUnavailable`). The original then passes both checks again.
 - `BundledBackendTests` (opt-in: absolute `HAGIG_BUNDLED_APP` and
   `HAGIG_INTEGRATION_WAV`; both unset skips, one set fails) is the app against

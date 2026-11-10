@@ -73,6 +73,13 @@ case "$1" in
 esac""")
         self.stub("file", 'if grep -q MACHO "${!#}"; then echo "Mach-O 64-bit arm64"; else echo "ASCII text"; fi')
         self.stub("codesign", ":")
+        # Build-host search paths stand in for scipy's; only extensions carry them.
+        self.stub("otool", """
+case "${!#}" in
+  *_native*) printf '          cmd LC_RPATH\\n         path /opt/homebrew/lib (offset 12)\\n'
+             printf '          cmd LC_RPATH\\n         path @loader_path/../.dylibs (offset 12)\\n'
+             printf '          cmd LC_RPATH\\n         path /usr/lib (offset 12)\\n' ;;
+esac""")
         for name in ("plutil", "install_name_tool", "open"):
             self.stub(name, ":")
 
@@ -176,6 +183,11 @@ esac
         self.assertTrue(calls[signs[2]].endswith("/Hagig.app"))
         self.assertTrue(calls[signs[2] + 1].startswith("codesign --verify --deep --strict"))
         self.assertTrue(all(str(self.managed) not in calls[i] for i in signs))
+        # Only the build-host search path goes, and before anything is signed.
+        deletes = [i for i, line in enumerate(calls) if line.startswith("install_name_tool -delete_rpath")]
+        self.assertEqual([calls[i].split()[2] for i in deletes], ["@loader_path", "/opt/homebrew/lib"])
+        self.assertTrue(calls[deletes[1]].endswith("_native.cpython-312-darwin.so"))
+        self.assertLess(deletes[1], signs[0])
 
     def test_startup_code_missing_profile_or_unmanaged_python_never_publish(self):
         # UV_DIR stands in for an interpreter outside uv's managed directory.

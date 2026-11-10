@@ -132,6 +132,19 @@ while IFS= read -r -d '' file; do
     case "$(file -b "$file")" in Mach-O*) machos+=("$file") ;; esac
 done < <(find "$python" -type f \( -name '*.so' -o -name '*.dylib' -o -perm -u+x \) -print0)
 [ "${#machos[@]}" -gt 0 ] || fail 'No interpreter code found to sign.'
+# Some wheels keep their build machine's absolute loader search paths (scipy:
+# /opt/homebrew/Cellar/gcc@13/...). They resolve nothing the bundle needs, and on
+# a Mac with Homebrew they name user-writable directories a library could be
+# planted in. Keep only bundle-relative and sealed system-volume search paths.
+for file in "${machos[@]}"; do
+    while read -r rpath; do
+        case "$rpath" in
+            @loader_path*|@executable_path*|/usr/lib|/usr/lib/*|/System/Library/*) ;;
+            *) echo "Removing build-host loader search path $rpath from ${file#"$python"/}"
+               install_name_tool -delete_rpath "$rpath" "$file" ;;
+        esac
+    done < <(otool -l -arch arm64 "$file" | awk '/cmd LC_RPATH/ { path = 1; next } path && $1 == "path" { print $2; path = 0 }')
+done
 codesign --force --sign - --timestamp=none "${machos[@]}"
 codesign --force --sign - --timestamp=none "$app/Contents/Helpers/hagig" "$app/Contents/MacOS/HagigShell"
 codesign --force --sign - --timestamp=none "$app"

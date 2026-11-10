@@ -134,6 +134,14 @@ set -e
 echo 'transcribe speech.wav: model_missing (exit 1, empty stdout).'
 [ "$(field "$(run "$cli" status)" state)" = idle ] || fail 'not idle after model_missing'
 
+# The engine stack loads from the relocated bundle alone: every native library
+# resolves through the bundle's own loader paths. Not inference evidence.
+run "$interpreter" -I -c 'import importlib, sys
+for name in ("torch", "transformers", "scipy.linalg", "numba", "mlx.core", "mlx_whisper"):
+    importlib.import_module(name)
+    print("imported", name, getattr(sys.modules[name.split(".")[0]], "__version__", ""))' ||
+    fail 'an engine module did not import from the relocated bundle'
+
 # Without a model the server never launches a worker (model_missing is checked
 # first), so run the server's own required-mode argv for this bundle directly:
 # sandbox-exec with the bundled profile, then the bundled worker, which must
