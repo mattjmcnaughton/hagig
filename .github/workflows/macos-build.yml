@@ -67,8 +67,9 @@ jobs:
   # bundled server. No model is installed: requests must answer model_missing.
   bundle-smoke:
     runs-on: macos-15
-    # A release HagigShell build plus a debug test build of SwiftNIO/BoringSSL.
-    timeout-minutes: 45
+    # A release HagigShell build, a debug test build of SwiftNIO/BoringSSL, and
+    # about 1.5 GB of interpreter and engines to compile, sign and check (#47).
+    timeout-minutes: 90
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     defaults:
@@ -93,11 +94,14 @@ jobs:
           mkdir "$RUNNER_TEMP/bundle-evidence"
       - name: Record native bundle toolchain and tested revision
         run: |
-          { sw_vers; uname -m; xcodebuild -version; swift --version; uv --version; git rev-parse HEAD; } | tee "$EVIDENCE/environment.txt"
+          { sw_vers; uname -m; xcodebuild -version; swift --version; uv --version; git rev-parse HEAD; df -h "$RUNNER_TEMP"; } | tee "$EVIDENCE/environment.txt"
       - name: Script contracts (tool stand-ins, not native proof)
         run: python3 clients/macos/test_bundle.py
       - name: Build the bundle (uv sync is the only network step)
-        run: bash clients/macos/bundle.sh build 2>&1 | tee "$EVIDENCE/build.log"
+        timeout-minutes: 30
+        run: |
+          bash clients/macos/bundle.sh build 2>&1 | tee "$EVIDENCE/build.log"
+          df -h "$RUNNER_TEMP" | tee -a "$EVIDENCE/build.log"
       - name: Relocate outside the checkout and hide uv's interpreters and cache
         run: |
           mkdir "$(dirname "$RELOCATED")"
@@ -106,7 +110,7 @@ jobs:
           mv "$UV_CACHE_DIR" "$UV_CACHE_DIR.hidden"
           test ! -e clients/macos/.build/Hagig.app
       - name: Relocation smoke (signatures, loader paths, status, model_missing, Seatbelt, stop)
-        timeout-minutes: 5
+        timeout-minutes: 15
         run: bash clients/macos/smoke-bundle.sh "$RELOCATED" 2>&1 | tee "$EVIDENCE/smoke.log"
       - name: App against the bundled server through Contents/Helpers/hagig
         working-directory: clients/macos
@@ -118,7 +122,7 @@ jobs:
           if grep -E 'skipped|Skipped' "$EVIDENCE/integration.log"; then exit 1; fi
           test "$(grep -c BUNDLED_BACKEND_CLEANUP_COMPLETE "$EVIDENCE/integration.log")" = 2
       - name: Counterfactuals (checkout link, missing profile, unsigned extension, no backend package)
-        timeout-minutes: 15
+        timeout-minutes: 45
         run: bash clients/macos/bundle-proof.sh "$RELOCATED" "$EVIDENCE/proof"
       - name: Upload bounded text evidence (no bundle bytes)
         if: always()

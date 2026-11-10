@@ -18,12 +18,13 @@ root=$(cd -- "$mac/../.." && pwd -P)
 output="$mac/.build/Hagig.app"
 
 # The one place that chooses the bundled environment: the frozen lock, runtime
-# dependencies only, a uv-managed (python-build-standalone) interpreter, and the
+# dependencies plus both inference engines (#47's extras; mlx-whisper is empty
+# off Apple Silicon), a uv-managed (python-build-standalone) interpreter, and the
 # project installed as a wheel rather than an editable link to this checkout.
 # The variable, not --managed-python, which uv refuses beside an inherited one.
 sync_backend() {
     (cd -- "$root/backend" && UV_PROJECT_ENVIRONMENT="$1" UV_PYTHON_PREFERENCE=only-managed \
-        uv sync --frozen --no-dev --no-editable)
+        uv sync --frozen --no-dev --no-editable --extra qwen3-asr --extra mlx-whisper)
 }
 
 fail() { echo "$*" >&2; exit 1; }
@@ -99,8 +100,11 @@ interpreter="$python/bin/python$version"
 "$interpreter" -I -m compileall -q -f -j 0 --invalidation-mode unchecked-hash \
     -s "$python" -p /hagig-bundle "$python/lib/python$version"
 "$interpreter" -I -c 'import hagig.cli, hagig.server, hagig.worker
+from importlib.resources import files
 from hagig.launcher import SEATBELT_PROFILE
-assert SEATBELT_PROFILE.is_file(), "Seatbelt profile missing from the environment"'
+assert SEATBELT_PROFILE.is_file(), "Seatbelt profile missing from the environment"
+manifests = {p.name for p in (files("hagig") / "manifests").iterdir() if p.name.endswith(".json")}
+assert manifests == {"qwen3-asr-0.6b.json", "qwen3-asr-1.7b.json", "whisper-large-v3-turbo.json"}, manifests'
 
 helper="$app/Contents/Helpers/hagig"
 cat > "$helper" <<'HELPER'
