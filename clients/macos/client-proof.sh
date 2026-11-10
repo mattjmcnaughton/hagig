@@ -37,7 +37,7 @@ find Sources Tests -name '*.swift' -type f | LC_ALL=C sort | while read -r path;
     shasum -a 256 "$path"
 done > "$output/frozen.sha256"
 
-for experiment in admission late-result auto-stop cap warning capability frame-deadline result-wait capture-failure; do
+for experiment in admission late-result auto-stop cap warning compatibility exchange-deadline result-wait capture-failure late-admission cancel-body; do
     directory="$output/$experiment"
     mkdir "$directory"
     echo UNPROVEN > "$directory/verdict.txt"
@@ -45,10 +45,12 @@ for experiment in admission late-result auto-stop cap warning capability frame-d
         admission) test=DictationTests.testCancelDuringAdmissionNeverStartsCaptureAndLateResultNeverCopies ;;
         late-result|auto-stop) test=DictationTests.testStopCapConvergeAndCancellationWinsAgainstDelayedResult ;;
         cap|warning) test=CaptureTests.testWarningCapAndStopAreBounded ;;
-        capability) test=SocketTests.testFakeMalformedCapabilitiesAndDuplicateKeysAreRejected ;;
-        frame-deadline) test=SocketTests.testBlockedUploadUsesFiveSecondFrameDeadline ;;
-        result-wait) test=SocketTests.testFragmentedHandshakeAndDelayedUnicodeResult ;;
+        compatibility) test=SocketTests.testEveryClientFixtureExchange ;;
+        exchange-deadline) test=SocketTests.testUnansweredStatusFailsAtTheFiveSecondExchangeBound ;;
+        result-wait) test=SocketTests.testResultWaitOutlastsTheExchangeBound ;;
         capture-failure) test=CaptureTests.testCanonicalConversionAndFiniteValidation ;;
+        late-admission) test=SocketTests.testAdmissionGrantedAfterCancelIsReleasedWithoutUploadOrCapture ;;
+        cancel-body) test=SocketTests.testCancelWhileRecordingClosesTheUploadWithoutEndingTheBody ;;
     esac
     for phase in candidate mutant restored; do
         if [ "$phase" = mutant ]; then
@@ -67,7 +69,9 @@ if case == 'admission':
             '                guard presentation.requestID == id, !Task.isCancelled else { request.cancel(); return }\n', '', 2)
 elif case == 'late-result':
     replace('DictationController.swift',
-            '                guard presentation.requestID == id, !Task.isCancelled else { return }\n', '')
+            '            guard presentation.requestID == id, !Task.isCancelled else { return }\n', '')
+    replace('DictationController.swift',
+            '            guard presentation.stage == .transcribing else { throw BackendFailure.generic }\n', '')
     replace('Presentation.swift',
             '        guard self.requestID == requestID, stage == .transcribing else { return }\n', '')
 elif case == 'auto-stop':
@@ -75,18 +79,20 @@ elif case == 'auto-stop':
 elif case == 'cap':
     replace('MicrophoneCapture.swift', 'maximumBytes = 19_200_000', 'maximumBytes = 19_264_000')
 elif case == 'warning':
-    replace('MicrophoneCapture.swift', 'bytes.count >= 285 *', 'bytes.count >= 286 *')
-elif case == 'capability':
-    replace('SocketRequest.swift', 'guard worker == "inference",', 'guard worker != nil,')
-elif case == 'frame-deadline':
-    replace('SocketRequest.swift', 'deadline: min(uploadDeadline, .now.advanced(by: .seconds(5))))',
-            'deadline: uploadDeadline)', 2)
+    replace('MicrophoneCapture.swift', 'sent >= 285 *', 'sent >= 286 *')
+elif case == 'compatibility':
+    replace('SocketRequest.swift', 'status.api_version == 1', 'status.api_version >= 1')
+elif case == 'exchange-deadline':
+    replace('SocketRequest.swift', 'exchangeBound: Duration = .seconds(5)', 'exchangeBound: Duration = .seconds(9)')
 elif case == 'result-wait':
-    replace('SocketRequest.swift', 'deadline: .now.advanced(by: .seconds(125)))',
-            'deadline: .now.advanced(by: .seconds(5)))')
+    replace('SocketRequest.swift', 'resultWait: Duration = .seconds(125)', 'resultWait: Duration = .seconds(5)')
 elif case == 'capture-failure':
-    replace('MicrophoneCapture.swift', 'if !accepted { bytes.removeAll(); closed = true }',
-            'if false { bytes.removeAll(); closed = true }')
+    replace('MicrophoneCapture.swift', 'if !accepted { failed = true; closed = true }',
+            'if false { failed = true; closed = true }')
+elif case == 'late-admission':
+    replace('SocketRequest.swift', '            Self.release(socket, admitted.request_id) // Granted after the user cancelled.\n', '')
+elif case == 'cancel-body':
+    replace('SocketRequest.swift', '        body.fail()\n        upload?.cancel()\n', '        body.finish()\n')
 else:
     raise AssertionError(case)
 PY
@@ -109,12 +115,12 @@ PY
         if [ "$phase" = mutant ]; then
             [ "$result" -eq 1 ]
             case "$experiment" in
-                admission|late-result|cap|frame-deadline) grep -F 'XCTAssertEqual failed' "$directory/$phase.log" ;;
-                auto-stop) grep -F 'Timed out waiting for controlled boundary' "$directory/$phase.log" ;;
-                warning) grep -F 'XCTAssertTrue failed' "$directory/$phase.log" ;;
-                capability) grep -F 'Incompatible peer accepted' "$directory/$phase.log" ;;
-                result-wait) grep -F 'failed: caught error: "BackendFailure(issue: HagigPresentation.DemoIssue.deadlineExceeded)"' "$directory/$phase.log" ;;
-                capture-failure) grep 'XCTAssertTrue failed' "$directory/$phase.log" | grep -F 'failed capture discards prior PCM before Stop' ;;
+                admission|late-result|cap|late-admission|cancel-body) grep -F 'XCTAssertEqual failed' "$directory/$phase.log" ;;
+                auto-stop|warning) grep -F 'XCTAssertTrue failed' "$directory/$phase.log" ;;
+                compatibility) grep 'XCTAssertEqual failed' "$directory/$phase.log" | grep -F 'status_api_version_2' ;;
+                exchange-deadline) grep -F 'XCTAssertLessThan failed' "$directory/$phase.log" ;;
+                result-wait) grep 'XCTAssertEqual failed' "$directory/$phase.log" | grep -F 'deadline_exceeded' ;;
+                capture-failure) grep 'XCTAssertEqual failed' "$directory/$phase.log" | grep -F 'failed capture never completes its upload' ;;
             esac
         else
             [ "$result" -eq 0 ]

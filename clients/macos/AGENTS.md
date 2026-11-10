@@ -4,25 +4,45 @@
 
 The #22 editor (PR30) and the #21 capture/socket client (PR32) are merged on main.
 The normal shell routes Record/Stop/Cancel to `DictationController`, native
-AVAudioEngine/AVAudioConverter capture and the #9 public socket contract
-(`backend/PROTOCOL.md`). Backend and wire changes are owned by the backend; there
-is no Swift TOML parser, inference engine or normal-operation fake fallback.
-Older synthetic-only descriptions below are historical evidence notes.
+AVAudioEngine/AVAudioConverter capture and the REST API v1 contract in
+`backend/PROTOCOL.md` (#44), spoken by `SocketRequest` with swift-server
+AsyncHTTPClient over `http+unix://` (#46). Backend and wire changes are owned by
+the backend; there is no Swift TOML parser, inference engine or normal-operation
+fake fallback. Older synthetic-only and Rust-backend (#9) descriptions below are
+historical evidence notes.
 
 Normal operation requires the paired real backend, an explicitly installed model
 and native helper packaging (see the local experiment below). Bundle assembly
 requires explicit prepared native input, never a controlled-helper fallback.
 Hosted integration evidence is not physical-Mac acceptance (#21/#23 remain
-open). Resolve `hagig` only at
-`Contents/Helpers/hagig`; the helper starts/attaches with `start` (no fake flags).
-It owns runtime locking/stale-socket cleanup; Swift validates the same inherited
-XDG_RUNTIME_DIR or TMPDIR, private directory/socket and peer UID. No ambient PATH.
+open). Resolve `hagig` only at `Contents/Helpers/hagig`. Only when the socket is
+absent does Swift run that helper once with `start` (a seam; bundled Python
+startup is #48) and wait for the socket within the 5 s startup bound. The server
+owns runtime locking/stale-socket cleanup; Swift never removes or repairs runtime
+files. No ambient PATH. Swift computes the socket exactly like
+`backend/src/hagig/paths.py`: `$XDG_RUNTIME_DIR/hagig/server.sock` when that base
+is an owner-only 0700 directory, otherwise `hagig/server.sock` in
+`confstr(_CS_DARWIN_USER_TEMP_DIR)` (never `$TMPDIR`), failing closed when the OS
+gives none. It requires a 0700 runtime directory and 0600 socket owned by the
+user, rejects symlinked runtime directories, and measures the pathlib-normalized
+path against the 104-byte `sun_path` limit.
 
-Capture begins only after matching admission and microphone grant. Audio stays
-in memory as bounded mono16k f32le; warning at4:45, cap at5:00. Stop and cap share
-one completion path. Cancel/Escape invalidates main-actor visibility before
-disconnect/engine teardown. Device/configuration change and revoked access discard
-the request. Copy/Cut remain the preserved #22 currentHostOnly routes.
+Per request: `GET /v1/status` (compatibility rule, else `incompatible_api`), then
+`POST /v1/requests` before the microphone or any permission prompt, then the
+chunked `PUT /v1/requests/{id}/audio` opened at once. A `201` whose
+`config_generation`/`model_id` differ from the status, or that arrives after
+Cancel, is released with `DELETE` and never captured. Capture streams converted
+mono 16 kHz f32le chunks into the open upload as it produces them; no recording
+buffer is kept. Warning at 4:45, cap at 5:00; Stop and cap share one completion
+path, which ends the body. The client waits up to 125 s after the body ends, and
+5 s for status, admission and `DELETE`. Unknown codes and malformed replies are
+generic failures, never success; `{"text":""}` is no-speech (no review, no Copy).
+An early server response ends the request. Cancel/Escape invalidates main-actor
+visibility first, then closes the upload without ending its body and without
+waiting for any reply. A failed or empty capture is discarded the same way.
+Device/configuration change and revoked access discard the request. Copy/Cut
+remain the preserved #22 currentHostOnly routes. The header shows the status's
+`settings.model_id` after admission, otherwise "Local model".
 
 The synthetic editor harness is now explicit:
 `swift run HagigShell --synthetic-demo`. Only that flag creates demo controls;
@@ -30,10 +50,16 @@ normal launch does not show a fake result or request Accessibility/Input Monitor
 The owned synthetic interaction driver passes this flag and remains synthetic
 editor evidence, not microphone/socket or ordinary uninstrumented acceptance.
 
-Native commands remain `swift build` and `swift test` with Xcode16.4. Added tests
+Native commands remain `swift build` and `swift test` with Xcode16.4. The package
+pins AsyncHTTPClient exactly (1.28.0, the newest release Xcode 16.4's SwiftPM can
+load without the tracing packages) with a committed `Package.resolved`; SwiftNIO
+and BoringSSL compile from source, so CI jobs allow longer than ten minutes. Tests
 exercise controlled admission/late-result cancellation, converter/cap bounds and
-explicit test-only Unix peers (including a six-second delayed result, busy,
-fake-service rejection and malformed framing). They use no personal audio/text.
+an explicit test-only HTTP/1.1 peer on a real Unix socket that serves
+`backend/tests/fixtures/rest-v1-fixtures.json` byte for byte (read from the
+checkout, never copied into Swift): every client exchange, disconnects, the 5 s
+exchange bound, a six-second result, runtime-path rules and both cancel orderings
+at the delivery boundary. They use no personal audio/text.
 Ready proof remains two shared-view PNGs; representative gallery is now34 images
 (17 states × light/dark), adding admission, near-cap and recoverable client errors.
 Inspect Ready before every representative image, then execute AX/keyboard/pointer
@@ -277,7 +303,9 @@ it for another branch needs a new explicit owner grant. Linux stand-ins are not
 native signing/loader proof. Full #23 acceptance remains blocked on inference
 adoption (#6/#25) and owner physical-Mac launch/relocation/TCC/rebuild checks.
 
-Opt-in `RealBackendTests` takes absolute `HAGIG_INTEGRATION_HELPER`,
+`RealBackendTests` targeted the removed Rust helper and was deleted in #46;
+real-backend app integration against the Python server is #48's. The historical
+notes below describe that removed test. It took absolute `HAGIG_INTEGRATION_HELPER`,
 `HAGIG_INTEGRATION_DATA_HOME` and `HAGIG_INTEGRATION_WAV`. Use a signed relocated
 helper, isolated explicitly installed model data and #9's existing synthetic WAV.
 It exercises production conversion/controller/socket, real review, CLI busy,
@@ -318,9 +346,11 @@ synthetic text evidence.
 `bash clients/macos/client-proof.sh /absolute/new/evidence` runs preregistered
 client-only candidate/mutant/restoration in a disposable worktree with unchanged
 tests/digests and identical commands. Existing Xcode/Swift/Python only, no assets;
-CI must provide the ten-minute hard timeout. Compile/setup/zero-test failures do
-not count. Coverage: admission/late-result guards, PCM cap/warning, fake service
-rejection, frame deadline and delayed result allowance, not every protocol claim.
+CI provides the hard timeout. Compile/setup/zero-test failures do not count.
+Coverage: admission/late-result guards, auto-stop, PCM cap/warning, failed-capture
+discard, status compatibility, the 5 s exchange bound, the 125 s result wait,
+DELETE for a late admission and Cancel closing the upload without ending its
+body; not every protocol claim.
 
 Native evidence: [run 40509803030](https://github.com/mattjmcnaughton/hagig/actions/runs/40509803030)
 executed build, three passing presentation tests, two Ready renders and 26 state
@@ -385,7 +415,8 @@ Both workflows select `macos-15` and the installed `/Applications/Xcode_16.4.app
 explicitly; neither follows `macos-latest`. GitHub's image itself is mutable: record
 the environment, do not claim an immutable OS pin or Apple Silicon acceptance.
 Actions are SHA-pinned, credentials are not persisted, permissions are read-only,
-jobs time out after ten minutes, and artifact retention is three days. The manual
+jobs time out after 20 minutes (40 for client semantics, which rebuilds per
+experiment), and artifact retention is three days. The manual
 scenario enum is bounded and never accepts arbitrary fixture content or commands.
 
 ## Evidence limits
@@ -412,8 +443,8 @@ production-safe nonactivating feedback.
 `ReviewEditor.swift` embeds a real plain NSTextView in the shared HagigView, with
 native selection, accessibility, scrolling and in-memory undo. Standard remains
 default. `Presentation(editorMode:)` / `begin(editorMode:)` accept the eventual
-validated server setting; the real client takes it from the server's `hello_ok`
-settings during reservation, and there is no Swift TOML parsing.
+validated server setting; the real client takes it from `GET /v1/status`
+`settings.editor_mode` during reservation, and there is no Swift TOML parsing.
 The demo controls' explicitly synthetic mode picker applies to the next request.
 The existing 26-image gallery retains its count: fallback is Standard; copied is
 Vim Normal with a synthetic edited multiline Unicode fixture. No new render or

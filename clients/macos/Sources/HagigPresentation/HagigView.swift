@@ -51,7 +51,7 @@ public struct HagigView: View {
                 Image(systemName: "mic").font(.system(size: 16)).foregroundStyle(blue)
                 Text("Hagig").fontWeight(.semibold)
                 Spacer()
-                Text("Parakeet · English").font(.system(size: 10)).foregroundStyle(secondary)
+                Text(presentation.modelID ?? "Local model").font(.system(size: 10)).foregroundStyle(secondary)
             }
             .padding(.horizontal, 17)
             .padding(.vertical, 14)

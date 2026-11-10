@@ -13,7 +13,8 @@ permissions:
 jobs:
   build-test:
     runs-on: macos-15
-    timeout-minutes: 10
+    # SwiftNIO and BoringSSL (AsyncHTTPClient, #46) compile from source.
+    timeout-minutes: 20
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     defaults:
@@ -28,6 +29,17 @@ jobs:
           mkdir -p captures
           { sw_vers; uname -m; xcodebuild -version; swift --version; git rev-parse HEAD; } > captures/environment.txt
           cat captures/environment.txt
+      # Temporary (#46): Xcode 16.4's SwiftPM produces Package.resolved for commit.
+      - name: Resolve Swift packages
+        run: |
+          swift package resolve
+          cat Package.resolved
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package-resolved-${{ github.sha }}
+          path: clients/macos/Package.resolved
+          if-no-files-found: error
+          retention-days: 3
       - run: swift build
       - run: swift test
       - name: Render minimal native proof
@@ -79,7 +91,7 @@ jobs:
 
   editor-semantics:
     runs-on: macos-15
-    timeout-minutes: 10
+    timeout-minutes: 20
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     defaults:
@@ -90,7 +102,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Falsify native editor semantics in disposable worktree
-        timeout-minutes: 5
+        timeout-minutes: 15
         run: bash semantic-proof.sh "$RUNNER_TEMP/editor-semantic-proof"
       - name: Read native capability preflight (not interaction acceptance)
         timeout-minutes: 1
@@ -128,7 +140,8 @@ jobs:
 
   client-semantics:
     runs-on: macos-15
-    timeout-minutes: 10
+    # Eleven candidate/mutant/restored experiments, each an incremental rebuild.
+    timeout-minutes: 40
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     steps:
@@ -148,7 +161,7 @@ jobs:
 
   shell-interaction:
     runs-on: macos-15
-    timeout-minutes: 10
+    timeout-minutes: 20
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     defaults:
@@ -159,7 +172,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Exercise native editor, focus, cancellation and recovery
-        timeout-minutes: 8
+        timeout-minutes: 15
         run: bash interaction-probe/run.sh
       - name: Upload fixed synthetic metadata and cleanup-gated app-only movie
         if: always()
