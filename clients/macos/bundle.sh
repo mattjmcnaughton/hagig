@@ -1,27 +1,33 @@
 #!/bin/bash
-# Local experimental bundle from #9's explicitly prepared native Contents.
+# Local Hagig.app: HagigShell plus the uv-managed Python interpreter and the
+# locked backend environment (TDD section 4). `uv sync` below is the only network
+# step. Launching the result never resolves, syncs or downloads anything.
 set -euo pipefail
 
 usage() {
-    echo 'Usage: bash clients/macos/bundle.sh build|run /absolute/prepared/Contents'
-    echo 'Build a new local Hagig.app; run also opens that bundle. Never replaces an existing bundle.'
-    echo 'Prepare the exact backend/native candidate separately. This command never downloads assets or installs models.'
+    echo 'Usage: bash clients/macos/bundle.sh build|run'
+    echo 'Build a new local Hagig.app; run also opens it. Never replaces an existing bundle.'
+    echo 'Needs Xcode 16.4 and uv. Installs no model; model install is a separate explicit step.'
 }
 if [ "$#" -eq 1 ] && [ "$1" = --help ]; then usage; exit 0; fi
-if [ "$#" -ne 2 ]; then usage >&2; exit 2; fi
+if [ "$#" -ne 1 ]; then usage >&2; exit 2; fi
 case "$1" in build|run) ;; *) usage >&2; exit 2 ;; esac
-case "$2" in /*) ;; *) usage >&2; exit 2 ;; esac
 action=$1
-native=$2
 mac=$(cd -- "$(dirname -- "$0")" && pwd -P)
+root=$(cd -- "$mac/../.." && pwd -P)
 output="$mac/.build/Hagig.app"
+
+# The one place that chooses the bundled environment: the frozen lock, runtime
+# dependencies only, a uv-managed (python-build-standalone) interpreter, and the
+# project installed as a wheel rather than an editable link to this checkout.
+sync_backend() {
+    (cd -- "$root/backend" && UV_PROJECT_ENVIRONMENT="$1" \
+        uv sync --frozen --no-dev --no-editable --managed-python)
+}
 
 fail() { echo "$*" >&2; exit 1; }
 [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || fail 'Requires an Apple Silicon Mac (native arm64 shell).'
-for member in Helpers/hagig Helpers/hagig-worker Helpers/hagig-inference-worker \
-              Frameworks/libsherpa-onnx-c-api.dylib Frameworks/libonnxruntime.dylib; do
-    [ -f "$native/$member" ] && [ ! -L "$native/$member" ] || fail 'Prepared native Contents is incomplete or contains a symlink member.'
-done
+command -v uv >/dev/null || fail 'Install uv; it is needed to build, not to run, the bundle.'
 [ ! -L "$mac/.build" ] || fail 'Refusing a symlink .build directory.'
 if [ -e "$output" ] || [ -L "$output" ]; then
     fail 'Hagig.app already exists. Quit its shell, explicitly stop its shared service, then move the whole bundle aside before rebuilding. See clients/macos/AGENTS.md.'
@@ -40,32 +46,81 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 stage=$(mktemp -d "$mac/.build/bundle.XXXXXX")
 app="$stage/Hagig.app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Helpers" "$app/Contents/Frameworks"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Helpers" "$app/Contents/Resources"
 (
     cd -- "$mac"
     swift build -c release --arch arm64 --product HagigShell
 )
 bin=$(cd -- "$mac" && swift build -c release --arch arm64 --show-bin-path)
 cp "$bin/HagigShell" "$app/Contents/MacOS/HagigShell"
-# SwiftPM's shell needs system libraries only. The separate native helper keeps
-# #9's tested Frameworks rpath/IDs; never rewrite its loader commands here.
+# SwiftPM's shell needs system libraries only.
 install_name_tool -delete_rpath '@loader_path' "$app/Contents/MacOS/HagigShell"
-for name in hagig hagig-worker hagig-inference-worker; do
-    cp "$native/Helpers/$name" "$app/Contents/Helpers/$name"
-done
-for name in libonnxruntime.dylib libsherpa-onnx-c-api.dylib; do
-    cp "$native/Frameworks/$name" "$app/Contents/Frameworks/$name"
-done
-chmod 755 "$app/Contents/MacOS/HagigShell" "$app/Contents/Helpers/"*
+
+# uv environments are not relocatable: a venv records its interpreter by absolute
+# path. Instead, copy the managed interpreter itself (python-build-standalone finds
+# its prefix from its own location) and install the environment's packages into
+# that interpreter's site-packages. `python -I`, which every Hagig process uses,
+# then sees exactly those packages from wherever the bundle is moved.
+env_dir="$stage/env"
+sync_backend "$env_dir"
+version=$("$env_dir/bin/python" -I -c 'import sys; print("%d.%d" % sys.version_info[:2])')
+base=$("$env_dir/bin/python" -I -c 'import os, sys; print(os.path.realpath(sys.base_prefix))')
+managed=$(cd -P -- "$(uv python dir)" && pwd -P)
+case "$base" in "$managed"/*) ;; *) fail 'The environment does not use a uv-managed interpreter.' ;; esac
+python="$app/Contents/Resources/python"
+cp -R "$base" "$python"
+# Runtime only: no headers, docs, build configuration, pip or its bundled wheels,
+# Tcl/Tk GUI code and libraries, or scripts with build-host shebangs.
+stdlib="$python/lib/python$version"
+rm -rf "$python/include" "$python/share" "$python/lib/pkgconfig" "$stdlib/site-packages" \
+    "$stdlib"/config-"$version"-* "$stdlib/ensurepip" "$stdlib/idlelib" "$stdlib/tkinter" \
+    "$stdlib/turtledemo" "$stdlib"/lib-dynload/_tkinter.* \
+    "$python"/lib/tcl* "$python"/lib/tk* "$python"/lib/itcl* "$python"/lib/thread* \
+    "$python"/lib/libtcl* "$python"/lib/libtk*
+find "$python/bin" -mindepth 1 ! -name "python$version" -exec rm -f {} +
+site="$python/lib/python$version/site-packages"
+cp -R "$env_dir/lib/python$version/site-packages" "$site"
+# Not uv's venv shim, nor install-source records that name this checkout.
+rm -f "$site/_virtualenv.py" "$site/_virtualenv.pth" "$site"/__pycache__/_virtualenv.* "$site"/*.dist-info/direct_url.json
+if [ -n "$(find "$site" -name '*.pth' -print -quit)" ]; then
+    fail 'An unreviewed .pth file would change sys.path; review it before bundling.'
+fi
+interpreter="$python/bin/python$version"
+# Precompile everything so no process writes __pycache__ into the signed bundle.
+# Unchecked hashes stay valid however the copy changes file times. Strip the
+# staging prefix from recorded source names (import fixes them up on load), so
+# no file names the build path.
+"$interpreter" -I -m compileall -q -f -j 0 --invalidation-mode unchecked-hash \
+    -s "$python" -p /hagig-bundle "$python/lib/python$version"
+"$interpreter" -I -c 'import hagig.cli, hagig.server, hagig.worker
+from hagig.launcher import SEATBELT_PROFILE
+assert SEATBELT_PROFILE.is_file(), "Seatbelt profile missing from the environment"'
+
+cat > "$app/Contents/Helpers/hagig" <<EOF
+#!/bin/sh
+# The Hagig CLI paired with this app, generated by clients/macos/bundle.sh. Runs
+# the bundled interpreter relative to this file; never uv, PATH or a checkout.
+unset CDPATH
+case \$0 in */*) helpers=\${0%/*} ;; *) helpers=. ;; esac
+contents=\$(cd -P -- "\$helpers/.." && pwd -P) || exit 1
+export UV_OFFLINE=1 UV_PYTHON_DOWNLOADS=never
+exec "\$contents/Resources/python/bin/python$version" -I -B -c 'import sys; sys.argv[0] = "hagig"; from hagig.cli import app; app()' "\$@"
+EOF
+chmod 755 "$app/Contents/MacOS/HagigShell" "$app/Contents/Helpers/hagig"
+# The Python package carries no license text of its own.
+cp "$root/LICENSE" "$app/Contents/Resources/LICENSE"
 cp "$mac/Info.plist" "$app/Contents/Info.plist"
 plutil -lint "$app/Contents/Info.plist"
-# Sign nested code inside-out; never use --deep to paper over assembly mistakes.
-for name in libonnxruntime.dylib libsherpa-onnx-c-api.dylib; do
-    codesign --force --sign - --timestamp=none "$app/Contents/Frameworks/$name"
-done
-for name in hagig hagig-worker hagig-inference-worker; do
-    codesign --force --sign - --timestamp=none "$app/Contents/Helpers/$name"
-done
+
+# Ad-hoc sign nested code inside-out (every Mach-O library and executable, then
+# the helper and shell, then the app); never use --deep to paper over mistakes.
+machos=()
+while IFS= read -r -d '' file; do
+    case "$(file -b "$file")" in Mach-O*) machos+=("$file") ;; esac
+done < <(find "$python" -type f \( -name '*.so' -o -name '*.dylib' -o -perm -u+x \) -print0)
+[ "${#machos[@]}" -gt 0 ] || fail 'No interpreter code found to sign.'
+codesign --force --sign - --timestamp=none "${machos[@]}"
+codesign --force --sign - --timestamp=none "$app/Contents/Helpers/hagig" "$app/Contents/MacOS/HagigShell"
 codesign --force --sign - --timestamp=none "$app"
 codesign --verify --deep --strict "$app"
 # mkdir is exclusive: even a newly appeared output must not be overwritten/nested.

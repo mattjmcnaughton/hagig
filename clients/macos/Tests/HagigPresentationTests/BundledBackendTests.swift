@@ -1,0 +1,167 @@
+import AVFoundation
+import Darwin
+import XCTest
+@testable import HagigPresentation
+
+/// Streams a supplied WAV through the production converter into the open upload,
+/// standing in for the microphone. Never a normal-operation capture source.
+@MainActor
+private final class FileCapture: NativeCapture {
+    private let url: URL
+    private let sink: @Sendable (Data) -> Void
+    private var recording: PCMRecording?
+    init(url: URL, sink: @escaping @Sendable (Data) -> Void) { self.url = url; self.sink = sink }
+
+    func start() throws {
+        let file = try AVAudioFile(forReading: url)
+        let recording = try PCMRecording(format: file.processingFormat, sink: sink)
+        self.recording = recording
+        guard let chunk = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4_096) else {
+            throw CaptureFailure.device
+        }
+        while file.framePosition < file.length {
+            try file.read(into: chunk)
+            if chunk.frameLength > 0 { try recording.append(chunk) }
+        }
+    }
+
+    func stop() -> Bool { (recording?.finish() ?? 0) > 0 }
+}
+
+/// The app against the bundled Python server, through `Contents/Helpers/hagig`
+/// of a built, relocated Hagig.app (#48). Opt-in: set the absolute
+/// `HAGIG_BUNDLED_APP` and `HAGIG_INTEGRATION_WAV`; both unset skips, one fails.
+/// No model is installed, so a request must end in `model_missing`.
+final class BundledBackendTests: XCTestCase {
+    private struct Setup {
+        let helper: URL
+        let wav: URL
+        let root: URL
+        let environment: [String: String]
+    }
+
+    @MainActor
+    private func prepare(config: String) throws -> Setup {
+        let supplied = ProcessInfo.processInfo.environment
+        let app = supplied["HAGIG_BUNDLED_APP"], wav = supplied["HAGIG_INTEGRATION_WAV"]
+        if app == nil, wav == nil { throw XCTSkip("Requires a built, relocated Hagig.app and a WAV") }
+        let appPath = try XCTUnwrap(app), wavPath = try XCTUnwrap(wav)
+        XCTAssertTrue(appPath.hasPrefix("/") && wavPath.hasPrefix("/"))
+        // Short and private, so the socket path fits sun_path.
+        let root = URL(fileURLWithPath: "/private/tmp/hgb-" + String(UUID().uuidString.prefix(8)))
+        let files = FileManager.default
+        try files.createDirectory(at: root, withIntermediateDirectories: false,
+                                  attributes: [.posixPermissions: 0o700])
+        for name in ["home", "config/hagig", "data"] {
+            try files.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: true)
+        }
+        try config.write(to: root.appendingPathComponent("config/hagig/config.toml"), atomically: false, encoding: .utf8)
+        // No PATH, uv, PYTHONPATH or developer variables reach the helper.
+        let environment = ["HOME": root.appendingPathComponent("home").path,
+                           "XDG_RUNTIME_DIR": root.path,
+                           "XDG_CONFIG_HOME": root.appendingPathComponent("config").path,
+                           "XDG_DATA_HOME": root.appendingPathComponent("data").path]
+        return Setup(helper: URL(fileURLWithPath: appPath).appendingPathComponent("Contents/Helpers/hagig"),
+                     wav: URL(fileURLWithPath: wavPath), root: root, environment: environment)
+    }
+
+    @MainActor
+    func testRecordingReachesTheBundledServerAndShowsModelMissing() async throws {
+        let setup = try prepare(config: "[model]\nid = \"qwen3-asr-0.6b\"\n")
+        let initial = try await call(setup.helper, ["status"], setup.environment)
+        XCTAssertEqual(initial.status, 0)
+        XCTAssertEqual(initial.text, "stopped\n", "the app's helper start must launch the server")
+        let model = Presentation()
+        let controller = DictationController(presentation: model,
+            makeRequest: { SocketRequest(helper: setup.helper, environment: setup.environment) },
+            permission: { true }, makeCapture: { sink, _ in FileCapture(url: setup.wav, sink: sink) })
+        do {
+            controller.record()
+            try await wait(seconds: 10) { model.stage != .awaitingAdmission }
+            XCTAssertEqual(model.stage, .recording)
+            XCTAssertEqual(model.modelID, "qwen3-asr-0.6b")
+            let busy = try await statusJSON(setup)
+            XCTAssertEqual(busy["state"] as? String, "busy")
+            XCTAssertEqual(busy["network_isolation"] as? String, "required")
+            controller.stop()
+            try await wait(seconds: 30) { model.stage != .transcribing }
+            XCTAssertEqual(model.stage, .issue(.modelMissing))
+            XCTAssertNil(model.transcript)
+            XCTAssertFalse(model.copied)
+            let idle = try await statusJSON(setup)
+            XCTAssertEqual(idle["state"] as? String, "idle")
+            XCTAssertEqual(idle["worker"] as? String, "absent")
+        } catch {
+            controller.cancel()
+            try await stopAndClean(setup)
+            throw error
+        }
+        controller.cancel()
+        try await stopAndClean(setup)
+    }
+
+    @MainActor
+    func testMissingModelIDShowsConfigurationWithoutStartingAServer() async throws {
+        let setup = try prepare(config: "[editor]\nmode = \"standard\"\n")
+        let model = Presentation()
+        let controller = DictationController(presentation: model,
+            makeRequest: { SocketRequest(helper: setup.helper, environment: setup.environment) },
+            permission: { true }, makeCapture: { sink, _ in FileCapture(url: setup.wav, sink: sink) })
+        controller.record()
+        try await wait(seconds: 10) { model.stage != .awaitingAdmission }
+        XCTAssertEqual(model.stage, .issue(.configuration), "helper exit 2 is a configuration issue")
+        let status = try await call(setup.helper, ["status"], setup.environment)
+        XCTAssertEqual(status.text, "stopped\n")
+        try await stopAndClean(setup)
+    }
+
+    /// Stops only this test's server; keeps its runtime if stop fails.
+    @MainActor
+    private func stopAndClean(_ setup: Setup) async throws {
+        let stopped = try await call(setup.helper, ["stop"], setup.environment)
+        XCTAssertEqual(stopped.status, 0, "owned service cleanup must complete")
+        guard stopped.status == 0 else { return }
+        try FileManager.default.removeItem(at: setup.root)
+        print("BUNDLED_BACKEND_CLEANUP_COMPLETE")
+    }
+
+    @MainActor
+    private func statusJSON(_ setup: Setup) async throws -> [String: Any] {
+        let result = try await call(setup.helper, ["status"], setup.environment)
+        XCTAssertEqual(result.status, 0)
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.text.utf8)) as? [String: Any])
+    }
+
+    @MainActor
+    private func wait(seconds: Int, until condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(seconds))
+        while !condition() {
+            guard ContinuousClock.now < deadline else { throw BackendFailure(code: "test_timeout") }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    @MainActor
+    private func call(_ helper: URL, _ arguments: [String],
+                      _ environment: [String: String]) async throws -> (status: Int32, text: String) {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = helper
+        process.arguments = arguments
+        process.environment = environment
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(20))
+        while process.isRunning, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard !process.isRunning else {
+            process.terminate()
+            throw BackendFailure(code: "test_timeout")
+        }
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+    }
+}
