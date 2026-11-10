@@ -71,7 +71,6 @@ jobs:
     timeout-minutes: 45
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
-      UV_PYTHON_PREFERENCE: only-managed
     defaults:
       run:
         shell: bash  # -eo pipefail, so a failure before `| tee` fails the step
@@ -118,24 +117,8 @@ jobs:
           grep -E 'Executed 2 tests, with 0 failures' "$EVIDENCE/integration.log"
           if grep -E 'skipped|Skipped' "$EVIDENCE/integration.log"; then exit 1; fi
           test "$(grep -c BUNDLED_BACKEND_CLEANUP_COMPLETE "$EVIDENCE/integration.log")" = 2
-      - name: Counterfactual - the app test fails against a bundle without the backend package
-        working-directory: clients/macos
-        timeout-minutes: 10
-        run: |
-          broken="$RUNNER_TEMP/broken app/Hagig.app"
-          mkdir "$(dirname "$broken")"
-          cp -R "$RELOCATED" "$broken"
-          rm -rf "$broken"/Contents/Resources/python/lib/python3.*/site-packages/hagig
-          if HAGIG_BUNDLED_APP="$broken" HAGIG_INTEGRATION_WAV="$GITHUB_WORKSPACE/backend/tests/fixtures/speech.wav" \
-              swift test --skip-build --filter BundledBackendTests/testRecordingReachesTheBundledServerAndShowsModelMissing \
-              > "$EVIDENCE/integration-counterfactual.log" 2>&1; then
-            echo 'The app test passed without a bundled backend' >&2
-            exit 1
-          fi
-          grep -F 'serverUnavailable' "$EVIDENCE/integration-counterfactual.log"
-          rm -rf "$(dirname "$broken")"
-      - name: Smoke counterfactuals (checkout link, missing profile, unsigned extension)
-        timeout-minutes: 10
+      - name: Counterfactuals (checkout link, missing profile, unsigned extension, no backend package)
+        timeout-minutes: 15
         run: bash clients/macos/bundle-proof.sh "$RELOCATED" "$EVIDENCE/proof"
       - name: Upload bounded text evidence (no bundle bytes)
         if: always()

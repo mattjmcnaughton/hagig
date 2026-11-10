@@ -14,9 +14,12 @@ app=$(cd -P -- "$1" && pwd -P)
 case "$app/" in "$root"/*) fail 'move the bundle outside the checkout first' ;; esac
 contents="$app/Contents"
 cli="$contents/Helpers/hagig"
+# bundle.sh ships exactly one CPython minor version: bin/python3.N and lib/python3.N.
 set -- "$contents"/Resources/python/bin/python3.*
 [ "$#" -eq 1 ] && [ -f "$1" ] || fail 'expected exactly one bundled interpreter'
 interpreter=$1
+site="$contents/Resources/python/lib/${interpreter##*/}/site-packages"
+[ -d "$site" ] || fail 'no site-packages beside the interpreter'
 wav="$root/backend/tests/fixtures/speech.wav"
 
 echo '== Static: signatures, architectures, loader paths, checkout references'
@@ -32,22 +35,22 @@ while IFS= read -r binary; do
     codesign --verify --strict "$binary" 2>/dev/null || fail "unsigned or invalid code: ${binary#"$app"/}"
     case " $(lipo -archs "$binary") " in *' arm64 '*) ;; *) fail "not arm64: ${binary#"$app"/}" ;; esac
     # Only system libraries and loader-relative paths inside the bundle.
+    # Process substitution keeps these loops, and so `fail`, in this shell.
     own=$(otool -D "$binary" | tail -n +2)
-    otool -L "$binary" | tail -n +2 | awk '{ print $1 }' | while read -r dependency; do
+    while read -r dependency; do
         [ "$dependency" != "$own" ] || continue
         case "$dependency" in
             /usr/lib/*|/System/Library/*|@rpath/*|@loader_path/*|@executable_path/*) ;;
             *) fail "absolute loader dependency $dependency in ${binary#"$app"/}" ;;
         esac
-    done
-    otool -l "$binary" | awk '/cmd LC_RPATH/ { path = 1; next } path && $1 == "path" { print $2; path = 0 }' |
-        while read -r rpath; do
-            case "$rpath" in
-                @loader_path*|@executable_path*) ;;
-                /usr/lib/swift) [ "$binary" = "$contents/MacOS/HagigShell" ] || fail "rpath $rpath in ${binary#"$app"/}" ;;
-                *) fail "loader search path $rpath in ${binary#"$app"/}" ;;
-            esac
-        done
+    done < <(otool -L "$binary" | tail -n +2 | awk '{ print $1 }')
+    while read -r rpath; do
+        case "$rpath" in
+            @loader_path*|@executable_path*) ;;
+            /usr/lib/swift) [ "$binary" = "$contents/MacOS/HagigShell" ] || fail "rpath $rpath in ${binary#"$app"/}" ;;
+            *) fail "loader search path $rpath in ${binary#"$app"/}" ;;
+        esac
+    done < <(otool -l "$binary" | awk '/cmd LC_RPATH/ { path = 1; next } path && $1 == "path" { print $2; path = 0 }')
 done <<< "$machos"
 echo "Verified $count Mach-O files: signed, arm64, system or bundle-relative loader paths."
 # Where a checkout path could steer imports or execution. (The Swift shell may
@@ -58,12 +61,6 @@ found=$?
 set -e
 [ "$found" = 1 ] || fail "bundle names the checkout path (grep $found): ${references//"$app"\//}"
 echo 'No Resources or Helpers file names the checkout path.'
-
-manifest() {
-    find "$app" | LC_ALL=C sort
-    find "$app" -type f -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256
-}
-before=$(manifest)
 
 scratch=$(mktemp -d /private/tmp/hagig-smoke.XXXXXX)
 started=
@@ -110,13 +107,12 @@ server=$(lsof -t "$scratch/run/hagig/server.lock")
 [ "$(ps -ww -o command= -p "$server")" = "$interpreter -I -m hagig.server" ] ||
     fail 'server is not the bundled interpreter'
 # Every executable or library the server has mapped is the bundle's or the system's.
-lsof -p "$server" -Ffn | awk '/^f/ { text = ($0 == "ftxt") } /^n/ && text { print substr($0, 2) }' |
-    while read -r name; do
-        case "$name" in
-            "$app"/*|/usr/lib/*|/usr/share/*|/System/*|/private/var/db/dyld/*) ;;
-            *) fail "server mapped $name" ;;
-        esac
-    done
+while read -r name; do
+    case "$name" in
+        "$app"/*|/usr/lib/*|/usr/share/*|/System/*|/private/var/db/dyld/*) ;;
+        *) fail "server mapped $name" ;;
+    esac
+done < <(lsof -p "$server" -Ffn | awk '/^f/ { text = ($0 == "ftxt") } /^n/ && text { print substr($0, 2) }')
 echo "Server $server runs the relocated bundled interpreter and maps no code outside the bundle."
 set +e
 text=$(run "$cli" transcribe "$wav" 2> "$scratch/stderr")
@@ -171,12 +167,13 @@ kill -0 "$shell_pid" || fail 'relocated shell exited'
 kill "$shell_pid"; wait "$shell_pid" 2>/dev/null || true
 shell_pid=
 
-[ "$(manifest)" = "$before" ] || fail 'running the bundle changed its files'
-codesign --verify --deep --strict "$app"
-echo 'Bundle files unchanged by the run; signature still valid.'
+# The seal covers every file, so this fails if running added (say, __pycache__),
+# changed or removed anything in the bundle.
+codesign --verify --deep --strict "$app" || fail 'running the bundle changed its files'
+echo 'Bundle seal still valid after the run: no file added, changed or removed.'
 
 kib() { du -sk "$1" | awk '{ print $1 }'; }
-site="$contents/Resources/python/lib/$(basename "$interpreter")/site-packages"
+echo "BUNDLE_INTERPRETER $(run "$interpreter" -I -c 'import platform; print(platform.python_version())')"
 echo "BUNDLE_SIZE_KIB app=$(kib "$app") python=$(kib "$contents/Resources/python") site_packages=$(kib "$site") shell=$(kib "$contents/MacOS/HagigShell")"
 du -sk "$site"/* | sort -rn | sed -n 1,10p
 echo 'BUNDLE_SMOKE_PASSED'
