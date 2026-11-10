@@ -39,17 +39,17 @@ the target, pastes and submits; Hagig never inspects, focuses or injects keys th
 - Native macOS menu-bar application with Record/Stop controls, no global shortcut.
 - Microphone capture, Stop-to-transcribe, and Escape/Cancel cancellation.
 - English transcription using one local inference configuration.
-- Vocabulary boosting for project names and technical terms.
+- Vocabulary biasing for project names and technical terms.
 - Editable in-memory transcript review, explicit Copy and Dismiss; no auto-copy.
 - Standard native editing by default; optional bounded Vim via TOML, with the
   authoritative key table and clipboard routing in TDD §8.
 - Human-editable TOML configuration and explicit model installation.
 - Required-by-default worker network isolation, with explicit user opt-out as a
   supported mode; never automatic fallback to disabled isolation.
-- Rust server, isolated inference worker, and file-transcription CLI.
+- Python server, isolated inference worker, and file-transcription CLI.
 - Clone-buildable, relocatable Apple Silicon app bundle, terminal launch, without
-  requiring `/Applications` placement or a separately installed Rust,
-  Python, or inference-library runtime.
+  requiring `/Applications` placement or a separately installed Python, uv,
+  or inference-library runtime; the bundle ships its own interpreter.
 - Clear missing-model, permission, busy, and inference-failure behavior.
 - Evidence for the constitution's privacy and isolation requirements.
 
@@ -143,7 +143,7 @@ Carry forward these decisions:
 - Compact menu-bar surface, not a full application window or dashboard.
 - Visually distinct recording pulse and indeterminate transcription spinner.
 - Respect reduced motion; retain readable state labels without animation.
-- Show the configured model's display name, initially Parakeet, and English.
+- Show the configured model's display name, initially Qwen3-ASR, and English.
 - Editable review with an inline copy icon, accessible name and copy feedback.
 - No clipboard-mechanics explanation or permanent recording-cap warning in the
   popover. Document privacy boundaries in setup/help instead.
@@ -171,31 +171,31 @@ exclude failures or imply safety/privacy, cancellation or silence gates are opti
 | AC5 | Explicit Copy and every native cut/copy route use current-device-only clipboard writes. Inspect API routing and observe a second Apple device with an ordinary-copy positive control. No clipboard change on result display, internal Vim operations or Dismiss. |
 | AC6 | Latency measurement: at least 20 warm 15–30-second prompts; reference target is 95% text-ready within 2 seconds of Stop. Record every sample, median, p95, maximum and failures; separate review-visible and user Copy timing. Measure cold starts and longer inputs separately. |
 | AC7 | Usefulness measurement: 20 representative prompts; reference target is 18 usable unchanged, remaining prompts needing only small corrections, and median speech + wait + correction faster than measured typing. Report correction burden and total time even if targets are missed. |
-| AC8 | Vocabulary measurement: at least 10 term-bearing clips and 10 non-vocabulary controls. Report paired boosted/unboosted outputs, missed terms, false insertions and ordinary-word regressions. Vocabulary boosting remains required functionality; measured improvement and regressions inform follow-up rather than block the first working app. |
+| AC8 | Vocabulary measurement: at least 10 term-bearing clips and 10 non-vocabulary controls. Report paired biased/unbiased outputs, missed terms, false insertions and ordinary-word regressions. Vocabulary biasing remains required functionality; measured improvement and regressions inform follow-up rather than block the first working app. |
 | AC9 | Silence, empty input, invalid configuration, unsupported file, missing/corrupt model, and busy each yield clear non-content-bearing outcomes without unintended delivery or automatic downloading. |
 | AC10 | Crash or stall the worker; the app and server remain responsive, the affected request terminates without delivery, and a subsequent request can succeed. Stop and client-disconnect paths release the active slot. |
-| AC11 | Validate normal dictation/file transcription using separate dependency source review, observation of attempted networking and local writes, and execution with outbound networking blocked. Required isolation is the default and refuses startup if unavailable, without automatic fallback. Explicit disabled mode retains a separate worker and offline/no-upload behavior but makes no OS-network-block claim; validate that mode separately on restricted hosts. Record the selected mode with evidence. Logs contain no audio, transcripts, vocabulary, or raw sensitive configuration. |
+| AC11 | Validate normal dictation/file transcription using separate dependency source review, observation of attempted networking and local writes, and execution with outbound networking blocked. Required isolation is the default and refuses startup if unavailable, without automatic fallback. Explicit disabled mode retains a separate worker and offline/no-upload behavior but makes no OS-network-block claim; validate that mode separately on restricted hosts. Record the selected mode with evidence. Linux initially has no required-mode implementation, so it runs only in explicit disabled mode. Logs contain no audio, transcripts, vocabulary, or raw sensitive configuration. |
 | AC12 | Clone/build the local bundle, launch from a terminal, relocate outside the checkout and launch again without separately installed developer/inference runtimes or checkout library paths. Explicitly install the model, grant permissions, transcribe, stop and relaunch. Build tools are needed for building, not running the artifact. No release/Homebrew or `/Applications` prerequisite. |
 | AC13 | CLI WAV transcription outputs text only to stdout; failures use stderr/nonzero status; no clipboard side effects. The supplied input remains unchanged, including on cancellation and errors. |
 | AC14 | Recording/transcribing states are distinguishable with and without animation. Copy and Dismiss are keyboard-accessible and named for assistive technology. |
 
 ### Evidence mapping and current gaps
 
-These are required evidence plans, not results. #7's controlled backend and the
-synthetic native shell cover foundations only; #6/PR18 remains blocked and partial,
-not inference adoption. #10 owns final combined acceptance after #23's artifact;
+These are required evidence plans, not results. The synthetic native shell covers
+foundations only; the Python backend is planned and no inference is adopted.
+#10 owns final combined acceptance after #23's artifact;
 #24 distribution does not block a source build.
 
 | ACs | Concrete evidence / owning work | Environment and missing evidence |
 | --- | --- | --- |
-| AC3, AC10 | #8/#9 public server/worker tests: cancel in each phase, delayed/stale completion, crash/stall, disconnect/stop, reap and successful next request; #21 app generation/copy race tests | Linux and hosted Mac can exercise controlled faults; real inference and native app path still needed; owner physical Mac final |
+| AC3, AC10 | Python backend public server/worker tests: cancel in each phase, delayed/stale completion, crash/stall, disconnect/stop, reap and successful next request; #21 app generation/copy race tests | Linux and hosted Mac can exercise controlled faults; real inference and native app path still needed; owner physical Mac final |
 | AC4 | #21 clock-controlled Stop/cap/Cancel tests plus real timed capture: 4:45 warning, 5:00 single completion | Hosted native tests for boundaries; physical microphone duration/device behavior deferred |
 | AC5 | #22 editor and clipboard adapter tests for button, keyboard and menu cut/copy, all supported Vim operations and Dismiss; inspect currentHostOnly; #10 second-device observation | Hosted Mac validates API/interaction paths, not cross-device locality; owner second Apple device with ordinary-copy control deferred; local clipboard managers remain outside control |
-| AC6–AC8 | #6/#9/#10 pinned-model runs and raw sample tables, paired controls, failures, timings and owner correction/typing comparison | Synthetic public CI for development only; consented held-out human corpus and acceptance hardware measurements deferred; no personal audio in public artifacts |
-| AC9 | #9/#21 negative fixtures: silence/noise/empty, bad config/WAV, missing/corrupt model and busy; observe no delivery/download and recovery | Portable CLI and hosted native app checks; real microphone silence/noise on physical Mac remains required |
-| AC11 | #25 finite source/transitive/model-loader audit; #6/#9 runtime attempted-network/write observation and blocked-network tests, both explicit modes, failure/recovery controls | Linux namespace and hosted macOS Seatbelt evidence recorded separately; required refusal is not enforcement success, disabled success is not blocking evidence; full pinned inference privacy/adoption unproven |
+| AC6–AC8 | Python backend and #10 pinned-model runs and raw sample tables, paired controls, failures, timings and owner correction/typing comparison | Synthetic public CI for development only; consented held-out human corpus and acceptance hardware measurements deferred; no personal audio in public artifacts |
+| AC9 | Python backend and #21 negative fixtures: silence/noise/empty, bad config/WAV, missing/corrupt model and busy; observe no delivery/download and recovery | Portable CLI and hosted native app checks; real microphone silence/noise on physical Mac remains required |
+| AC11 | Python backend finite source/transitive/model-loader audit; runtime attempted-network/write observation and blocked-network tests, both explicit modes, failure/recovery controls | Hosted macOS Seatbelt evidence recorded separately; Linux has disabled mode only; required refusal is not enforcement success, disabled success is not blocking evidence; full pinned inference privacy/adoption unproven |
 | AC12 | #23 local build/terminal launch/relocation/native loader and ad-hoc-signing evidence, then #10 final artifact exercise | Hosted Mac build/relocation during development; owner physical-Mac permissions/run deferred; recipe and complete artifact not implemented |
-| AC13 | #9 real WAV CLI tests: stdout/stderr/status, supported formats, cancellation/failures, unchanged input digest, no clipboard calls | Linux and hosted Mac; controlled fake-worker success does not prove transcription |
+| AC13 | Python backend real WAV CLI tests: stdout/stderr/status, supported formats, cancellation/failures, unchanged input digest, no clipboard calls | Linux and hosted Mac; test-fake success does not prove transcription |
 | AC14 | #21/#22 shared SwiftUI renders, keyboard/pointer/accessibility and Standard/Vim editing fixtures, reduced-motion behavior | Ready artifact path already demonstrated for synthetic shell; new native interactions and final owner review still needed; Linux HTML/stills are not interaction evidence |
 
 ### Measurement protocol

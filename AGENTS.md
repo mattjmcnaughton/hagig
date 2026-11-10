@@ -9,7 +9,7 @@ changing its meaning.
 ## Dependency boundaries
 
 Inject external effects at meaningful ownership boundaries through explicit
-constructor or function inputs. Use Rust traits or Swift protocols when a
+constructor or function inputs. Use Python `Protocol`s or Swift protocols when a
 behavioral contract warrants them, closures for simple effects, and concrete types
 otherwise. Do not introduce an interface for every type or speculative future
 implementations. Keep dependency wiring explicit; no service locators or DI
@@ -22,19 +22,19 @@ inference, or privacy behavior; retain integration evidence for those boundaries
 ## Dependency approval
 
 Ask the owner before adding dependencies outside the agreed starting set:
-`tokio` (only needed features), `serde`, `serde_json`, `clap`, `toml`, either
-`rustix` or `nix` where standard APIs are insufficient (not both), `tempfile`
-for tests, and the existing pinned sherpa-onnx inference candidate subject to its
-adoption gate. No dependency-injection or async-trait crate is needed initially.
-Download, checksum, WAV/resampling libraries and additional development/build
-tools have not been selected; request approval before introducing them. Review
-transitive dependencies and native build/download behavior as part of adoption.
 
-Owner-approved #9 experiment (2026-11-08): the pinned candidate's macOS
-build-only zip→nix closure may coexist with rustix for bounded Apple Silicon
-experiments. This is not permission to add runtime nix, change pins, invoke the
-upstream native downloader, or claim inference adoption. The four exact installer
-crates approved for #9 are recorded in backend guidance.
+- Python, managed by uv: `fastapi`, `uvicorn`, `pydantic`, `typer`, `httpx`,
+  `numpy` and `structlog`; stdlib `tomllib` for configuration.
+- Inference: `transformers` and `torch` with their locked transitives, for
+  Qwen3-ASR, subject to the adoption gate in the technical design.
+- Swift: swift-server `AsyncHTTPClient` for HTTP over the Unix socket.
+- Development: `uv`, `ruff`, `ty`, `pytest`, `just`, and `copier` for generating
+  `backend/` from the owner's template.
+
+No dependency-injection framework. Audio/resampling libraries and other
+development or build tools have not been selected; request approval before
+introducing them. Review transitive dependencies, native wheels and
+download/telemetry behavior as part of adoption.
 
 Native macOS code and its render/test commands live in `clients/macos/`; follow
 its scoped [guidance](clients/macos/AGENTS.md). Use the same SwiftUI views in the
