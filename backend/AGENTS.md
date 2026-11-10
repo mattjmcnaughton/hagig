@@ -5,8 +5,9 @@ Read the root guidance, [constitution](../docs/CONSTITUTION.md) and
 contract) first. Configuration, paths, the server lock, WAV decoding, the REST
 server, the worker protocol and the CLI (`start`, `status`, `stop`,
 `transcribe`) are implemented and tested with a test-only fake engine (#45).
-Real engines (#49), model manifests and installation (#47) and bundling (#48)
-are not. Fake-engine success is not transcription evidence.
+Model manifests, `hagig model install` and load-time model checks are
+implemented (#47). Real engines (#49) and bundling (#48) are not. Fake-engine
+success is not transcription evidence.
 
 ## Layout and boundaries
 
@@ -32,11 +33,14 @@ are not. Fake-engine success is not transcription evidence.
   schemas, `LOAD_CODES` and `OFFLINE_ENV`, shared by server and worker. Both
   are stdlib only, because the worker imports them. `worker.py`: the engine `Protocol`, the fixed `ENGINES` table
   and the worker loop. `launcher.py`: worker argv per isolation mode and the
-  environment allowlist. `models.py`: alias → engine and the installed-directory
-  check, a minimal seam #47 replaces with manifest validation.
+  environment allowlist.
+- `manifest.py` and `manifests/<alias>.json`: the tracked model manifests.
+  `models.py` (stdlib only; the worker imports it): installation layout,
+  install record and the load-time checks. `installer.py`: `hagig model
+  install`, the only network code.
 - `client.py`: the CLI's httpx client (`trust_env=False`), one method per
   endpoint, each classifying its response into a PROTOCOL.md outcome. `cli.py`:
-  commands; `model install` is still a `not_implemented` stub (#47).
+  commands, including `model install`.
 - `controllers/` and `dtos/` from the template stay empty; the routers call
   services directly.
 - `src/launcher/seatbelt-v1.sb` is the macOS worker policy, kept byte-identical
@@ -189,12 +193,71 @@ before_exit)`):
   relative place); a missing `sandbox-exec` or profile, a failed launch or no
   ready line (including part of one) is `isolation_unavailable`; in
   disabled mode the same is `worker_failed`. Required anywhere else refuses before
-  launching. The model directory is checked first (`model_missing`).
+  launching. Model checks wrap isolation: see **Models** for the order.
 - Retirement: abort stdin (the exit request), wait 1 s, SIGTERM the process
   group, wait 1 s, SIGKILL the group, poll until reaped, then drain stdout. Group
   signals are sent only while unreaped. Any stdout byte or EOF while idle
   retires the worker. There is no automatic retry; the next request launches
   a fresh worker.
+
+**Models** (TDD sections 2 and 4; manifests, `models.py`, `installer.py`):
+
+- One manifest per alias in `src/hagig/manifests/` (package data): `engine`,
+  `apple_silicon_only`, `source` (publisher, repository, 40-hex revision,
+  license and its URL, and the `resolve/<rev>/` download base) and `files`
+  (plain name, size, SHA-256) for every file the engine reads. Whisper adds
+  `conversion`: Apple's `ml-explore/mlx-examples` `whisper/convert.py` at a
+  pinned commit with its size and SHA-256, its arguments (`--dtype float16`)
+  and its output names. Parsing is strict (`manifest_invalid`); pickle
+  suffixes, or no `.safetensors` among downloads or outputs, are
+  `manifest_pickle`. A manifest's identity is the SHA-256 of its bytes.
+  Pins (2026-11-10): the spike's revisions and weight hashes, cross-checked
+  against Hugging Face's LFS SHA-256; small files hashed from the pinned
+  revisions. Repository `README.md` and `.gitattributes` are not installed.
+- Layout under `$XDG_DATA_HOME/hagig/models/`: `.install.lock` (persistent
+  0600, `flock` non-blocking; never unlinked), `.staging-*` (an install in
+  progress), `<id>/current` → `v-<32 hex>` (a relative symlink, replaced
+  atomically) and `<id>/v-<hex>/`, the immutable installation: the engine's
+  files, flat, plus `hagig-install.json` (manifest ID, manifest SHA-256, every
+  file's size and SHA-256). #49 loads `transformers` `from_pretrained(dir)`
+  for Qwen and mlx-whisper's `load_model(dir)` (`config.json`,
+  `weights.safetensors`) for Whisper from the directory the worker receives.
+- `hagig model install <id>` (CLI process only): refuses unknown IDs (exit 2),
+  Whisper off Apple Silicon (exit 2) and Whisper without the `mlx-whisper`
+  extra (`engine_not_installed`), then takes the lock (`install_in_progress`
+  when held). A valid installation is re-hashed and kept
+  (`already_installed`). Otherwise every manifest file is fetched with httpx
+  (`trust_env=False`, no Hub client, cache or token, `Accept-Encoding:
+  identity`) into a fresh staging directory, refusing a declared length other
+  than the manifest size and stopping at the first byte past it, and hashing
+  while streaming. Redirects are followed by hand to HTTPS `huggingface.co`,
+  `*.hf.co`, `*.huggingface.co` or `raw.githubusercontent.com` only, at most
+  five. Whisper's `convert.py` is verified, then run as `<this python> -I`
+  with the worker's offline environment and stdio to `/dev/null` (30 min
+  bound); exactly the expected outputs must appear and are hashed into the
+  record. Publish: rename the staging content to `v-<hex>`, then replace
+  `current`; other versions are pruned. Failures leave the previous
+  `current` untouched; the next install removes leftovers. Codes:
+  `download_origin_refused`, `download_redirect_refused`, `download_failed`,
+  `download_size_mismatch`, `download_hash_mismatch` (each with the manifest
+  file name), `conversion_failed`, `conversion_output_invalid`,
+  `model_dir_unsafe`, `lock_file_unsafe`, `install_failed`, `interrupted`
+  (exit 130).
+- Load time, never acquiring anything. Before launching a worker the server
+  checks, in PROTOCOL.md's order: `<id>/current` exists (else
+  `model_missing`), isolation, then `installed_model`: a `v-<hex>` link, a
+  record of at most 64 KiB matching the tracked manifest (ID, digest, file
+  set, and sizes and hashes for unconverted files) and a directory holding
+  exactly the recorded regular files at their recorded sizes (else
+  `model_invalid`). It hashes nothing, so it costs one readlink, one small
+  read and one `lstat` per file per worker launch, never per warm request.
+  The worker's `load` then hashes every recorded file (`verify_installation`)
+  before constructing an engine: an absent file is `model_missing`, any other
+  difference `model_invalid`. That re-reads the weights once per worker
+  launch (seconds for 1.5–4 GB), the price of catching same-size corruption.
+- The server sends the resolved `v-<hex>` path, so a warm worker keeps its
+  version while an install publishes another; only the next launched worker
+  sees it. A worker loading while an install prunes its version fails closed.
 
 **CLI** (`hagig start|status|stop|transcribe`):
 
@@ -307,6 +370,26 @@ hatchling, Python 3.12 and SHA-pinned `astral-sh/setup-uv` and `actions/cache`.
 Direct runtime dependencies: fastapi, `uvicorn[standard]`, structlog, pydantic,
 typer, numpy, httpx. Development: pytest, ruff, ty. Build backend: hatchling
 (unpinned in `[build-system]`, resolved by uv when building the project).
+
+Engines (#47) are extras of the one package, pinned in the one `uv.lock`:
+`qwen3-asr` = transformers 5.22.2 and torch 2.15.0 (Linux from the explicit
+`pytorch-cpu` index, `2.15.0+cpu`; macOS from PyPI); `mlx-whisper` = mlx
+0.32.4 and mlx-whisper 0.4.3, marked `sys_platform == 'darwin' and
+platform_machine == 'arm64'` (an empty extra elsewhere). Plain `uv sync
+--frozen` (CI, the server and portable tests) installs neither. The bundle
+must run `uv sync --frozen --no-dev --extra qwen3-asr --extra mlx-whisper`.
+transformers 5.22.2 is newer than `exclude-newer`, so `exclude-newer-package`
+admits it alone. Engine transitives: huggingface-hub 2.4.0 (with httpx2
+2.16.0, httpcore2 2.16.0, truststore 0.10.5, hf-xet 1.8.0, filelock 4.2.7,
+fsspec 2026.9.0; httpx2-jsfetch 1.0 on Emscripten only), tokenizers 0.23.3,
+safetensors 0.8.0, regex 2026.9.29, jinja2 3.1.6, markupsafe 3.0.4, networkx
+3.7, sympy 1.14.0, mpmath 1.3.0, setuptools 84.2.1, tqdm 4.70.1; on Apple
+Silicon also mlx-metal 0.32.4, numba 0.68.1, llvmlite 0.50.0, scipy 1.18.1,
+tiktoken 0.14.0, requests 2.34.2, urllib3 2.8.0, charset-normalizer 3.5.2 and
+more-itertools 11.2.1. huggingface-hub, hf-xet (native Xet client), requests
+and tiktoken contain network code: the worker sets the offline variables and
+Seatbelt is the backstop; `hagig model install` uses none of them. Not yet
+inspected beyond this inventory (constitution §6).
 
 Locked transitives (see `uv tree --frozen`): annotated-doc, annotated-types,
 anyio, click, colorama (Windows only), h11, httptools, idna, markdown-it-py,

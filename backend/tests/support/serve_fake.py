@@ -1,7 +1,8 @@
 """Test-only server launcher: the real server with the fake worker injected.
 
 Run as `python -I serve_fake.py '<json options>'` with the test's XDG
-environment. Options: `control_dir` (required), `deadlines` (seconds by name),
+environment. Options: `control_dir` and `manifests` (a directory of
+`<alias>.json` synthetic manifests) (required), `deadlines` (seconds by name),
 `grace_seconds`, `hold_file` (after a stop drains, wait for this file before
 removing the socket), `sandbox_exec` (override, to make isolation unavailable
 on macOS) and `platform`.
@@ -14,6 +15,7 @@ import sys
 from pathlib import Path
 
 from hagig.launcher import SANDBOX_EXEC, Launcher
+from hagig.manifest import parse_manifest
 from hagig.server import run
 from hagig.services.requests import Deadlines
 
@@ -28,6 +30,7 @@ def main() -> None:
         sandbox_exec=Path(options.get("sandbox_exec", SANDBOX_EXEC)),
     )
     hold_file = options.get("hold_file")
+    manifests = Path(options["manifests"])
 
     async def hold() -> None:
         while hold_file and not os.path.exists(hold_file):
@@ -40,6 +43,9 @@ def main() -> None:
             deadlines=Deadlines(**options.get("deadlines", {})),
             grace_seconds=options.get("grace_seconds", 1.0),
             before_exit=hold,
+            manifests=lambda model_id: parse_manifest(
+                (manifests / f"{model_id}.json").read_bytes()
+            ),
         )
     )
 

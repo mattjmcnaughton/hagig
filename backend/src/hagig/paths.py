@@ -138,19 +138,24 @@ def socket_path(runtime: Path, *, platform: str = sys.platform) -> Path:
 
 
 class ServerLock:
-    """Exclusive server lifetime lock on `<runtime>/server.lock`."""
+    """Exclusive lock on a persistent 0600 file, by default `<runtime>/server.lock`.
+
+    The model installer takes the same kind of lock on its own file.
+    """
 
     def __init__(self, fd: int) -> None:
         self._fd = fd
 
     @classmethod
-    def acquire(cls, runtime: Path, *, uid: int | None = None) -> Self | None:
+    def acquire(
+        cls, runtime: Path, *, uid: int | None = None, name: str = LOCK_NAME
+    ) -> Self | None:
         """Take the lock, or return None if another holder has it."""
         uid = os.getuid() if uid is None else uid
         flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
         failure = "lock_unavailable"
         try:
-            fd = os.open(runtime / LOCK_NAME, flags, 0o600)
+            fd = os.open(runtime / name, flags, 0o600)
         except OSError as error:
             # ELOOP: O_NOFOLLOW met a symlink, a substituted object.
             if error.errno == errno.ELOOP:

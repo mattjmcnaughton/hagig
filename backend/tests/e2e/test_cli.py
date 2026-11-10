@@ -1,11 +1,14 @@
 """The real `hagig` CLI against the test server, and against the real server."""
 
 import os
+import platform
 import shutil
 import signal
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 from hagig.paths import ServerLock
 from hagig.wav import read_wav
@@ -138,6 +141,27 @@ def test_missing_model_id_is_actionable_and_content_free(home):
     assert not home.socket.exists()
 
 
+@pytest.mark.parametrize(
+    ("model", "stderr"),
+    [
+        ("qwen3-asr-9b", b"unknown_model\n"),
+        ("../qwen3-asr-0.6b", b"unknown_model\n"),
+        pytest.param(
+            "whisper-large-v3-turbo",
+            b"model_unsupported_on_platform\n",
+            marks=pytest.mark.skipif(
+                sys.platform == "darwin" and platform.machine() == "arm64",
+                reason="Whisper installs on Apple Silicon",
+            ),
+        ),
+    ],
+)
+def test_model_install_refuses_before_any_download(home, model, stderr):
+    result = hagig(home, "model", "install", model)
+    assert (result.returncode, result.stdout, result.stderr) == (2, b"", stderr)
+    assert not (home.root / "data").exists()
+
+
 def test_real_server_spawn_attach_worker_restart_and_stop(home):
     home.write_config()
     home.install_model()
@@ -152,14 +176,15 @@ def test_real_server_spawn_attach_worker_restart_and_stop(home):
     assert b'"network_isolation":"disabled"' in status.stdout
     assert b'"worker":"absent"' in status.stdout
 
-    # The real worker has no real engine yet (#49), so loading fails cleanly,
-    # and each request lazily launches a fresh worker.
+    # The CLI-spawned server checks the tracked manifest, which the harness's
+    # small synthetic installation cannot match, so each request fails before
+    # any worker launches (the worker path is covered with the fake engine).
     for _ in range(2):
         result = hagig(home, "transcribe", str(wav_copy(home)))
         assert (result.returncode, result.stdout, result.stderr) == (
             1,
             b"",
-            b"worker_failed\n",
+            b"model_invalid\n",
         )
     assert b'"state":"idle","worker":"absent"' in hagig(home, "status").stdout
 

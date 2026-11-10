@@ -25,6 +25,7 @@ from hagig.app import create_app
 from hagig.config import Config, ConfigError, load_config
 from hagig.launcher import Launcher, worker_env
 from hagig.logging import configure_logging
+from hagig.manifest import Manifest, ManifestError, load_manifest
 from hagig.paths import (
     PathError,
     ServerLock,
@@ -59,8 +60,12 @@ def run(
     deadlines: Deadlines | None = None,
     grace_seconds: float = 1.0,
     before_exit: Callable[[], Awaitable[None]] | None = None,
+    manifests: Callable[[str], Manifest] = load_manifest,
 ) -> int:
     """Serve until stopped. Returns the process exit status.
+
+    `manifests` maps the configured alias to its tracked manifest; tests
+    inject synthetic manifests so installations stay small.
 
     `before_exit` runs after a stop has drained, before the socket is removed;
     tests use it to hold the stopping state.
@@ -70,11 +75,12 @@ def run(
     code = None
     try:
         config = load_config(config_file(env))
+        manifest = manifests(config.model.id)
         runtime = ensure_runtime_dir(env)
         path = socket_path(runtime)
         models = models_dir(env)
         lock = ServerLock.acquire(runtime)
-    except (ConfigError, PathError) as error:
+    except (ConfigError, ManifestError, PathError) as error:
         code = error.code
     if code is not None:
         log.error("server_start_failed", code=code)
@@ -90,7 +96,7 @@ def run(
             mode=config.inference.network_isolation,
             env=worker_env(env),
             models_root=models,
-            model_id=config.model.id,
+            manifest=manifest,
             vocabulary=tuple(config.vocabulary.terms),
             grace_seconds=grace_seconds,
         )

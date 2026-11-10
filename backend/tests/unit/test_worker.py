@@ -6,6 +6,7 @@ import struct
 
 import pytest
 
+from hagig.models import ModelError
 from hagig.worker import EngineError, run
 
 READY = b"HAGIG-WORKER-READY-v1\n"
@@ -69,9 +70,13 @@ class Recorder:
         return self.text
 
 
-def serve(stdin_bytes, engines):
+def no_verify(model_dir):
+    pass
+
+
+def serve(stdin_bytes, engines, verify=no_verify):
     out = io.BytesIO()
-    status = run(io.BytesIO(stdin_bytes), out, engines)
+    status = run(io.BytesIO(stdin_bytes), out, engines, verify)
     return status, out
 
 
@@ -83,15 +88,22 @@ def test_ready_line_precedes_engine_construction_and_only_selected_engine_loads(
     out = io.BytesIO()
     engine = Recorder()
 
+    def verify(model_dir):
+        seen["verified"] = str(model_dir)
+
     def construct():
         seen["stdout_at_construction"] = out.getvalue()
+        assert seen["verified"] == "/models/m"
         return engine
 
     def other():
         raise AssertionError("unselected engine constructed")
 
     status = run(
-        io.BytesIO(load() + transcribe(PCM)), out, {"e": construct, "other": other}
+        io.BytesIO(load() + transcribe(PCM)),
+        out,
+        {"e": construct, "other": other},
+        verify,
     )
     assert status == 0
     assert seen["stdout_at_construction"] == READY
@@ -143,6 +155,21 @@ def test_load_failures_reply_error_with_null_request_id(raised, code):
             1,
             {"type": "error", "generation": 1, "request_id": None, "code": code},
         )
+    ]
+
+
+@pytest.mark.parametrize("code", ["model_missing", "model_invalid"])
+def test_installation_check_failures_stop_before_any_engine(code):
+    def verify(model_dir):
+        raise ModelError(code)
+
+    def construct():
+        raise AssertionError("engine constructed before the files were verified")
+
+    status, out = serve(load(), {"e": construct}, verify)
+    assert status == 1
+    assert replies(out) == [
+        (1, {"type": "error", "generation": 1, "request_id": None, "code": code})
     ]
 
 
