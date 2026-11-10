@@ -52,6 +52,7 @@ esac""")
         # A uv environment: packages in a venv whose python links to the managed one.
         self.stub("uv", """
 case "$1" in
+  python) [ "$2" = dir ] && printf '%s\\n' "${UV_DIR:-$MANAGED}" ;;
   sync)
     printf 'preference=%s\\n' "$UV_PYTHON_PREFERENCE" >> "$CALLS"
     env=$UV_PROJECT_ENVIRONMENT
@@ -176,8 +177,10 @@ esac
         self.assertTrue(calls[signs[2] + 1].startswith("codesign --verify --deep --strict"))
         self.assertTrue(all(str(self.managed) not in calls[i] for i in signs))
 
-    def test_startup_code_or_missing_profile_never_publish(self):
-        for name, value in (("EXTRA_PTH", "1"), ("SITECUSTOMIZE", "1"), ("NO_PROFILE", "1")):
+    def test_startup_code_missing_profile_or_unmanaged_python_never_publish(self):
+        # UV_DIR stands in for an interpreter outside uv's managed directory.
+        for name, value in (("EXTRA_PTH", "1"), ("SITECUSTOMIZE", "1"), ("NO_PROFILE", "1"),
+                            ("UV_DIR", "/usr")):
             with self.subTest(variable=name):
                 self.env[name] = value
                 self.assertNotEqual(self.run_bundle("run").returncode, 0)
