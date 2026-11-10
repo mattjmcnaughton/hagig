@@ -56,7 +56,6 @@ from hagig.paths import PathError, ServerLock
 
 MAX_REDIRECTS = 5
 CONVERT_SECONDS = 1800.0
-_CHUNK = 1 << 20
 _HOSTS = frozenset({"huggingface.co", "raw.githubusercontent.com"})
 _HOST_SUFFIXES = (".hf.co", ".huggingface.co")
 # httpx failures, including the ones outside HTTPError (invalid URLs, stream
@@ -199,7 +198,9 @@ class _Install:
         self._download(
             conversion.url, tool, conversion.size, conversion.sha256, "convert.py"
         )
+        # Created here, private, so the converter's umask cannot loosen it.
         output = staging / "output"
+        output.mkdir(mode=0o700)
         self.progress("convert", None)
         returncode = None
         with contextlib.suppress(OSError, subprocess.TimeoutExpired):
@@ -230,6 +231,9 @@ class _Install:
         return self._seal(output, hashes)
 
     def _seal(self, content: Path, hashes: dict[str, tuple[int, str]]) -> Path:
+        # Durable before publish (the converter never fsyncs its outputs).
+        for name in hashes:
+            _fsync(content / name)
         record = Record(self.manifest.id, self.manifest.digest, hashes)
         # A buffered write either writes everything or raises (e.g. ENOSPC).
         with open(content / RECORD_NAME, "xb", opener=_private_opener) as out:
@@ -286,7 +290,9 @@ class _Install:
                 if response.headers.get("content-length", str(size)) != str(size):
                     raise InstallError("download_size_mismatch", name)
                 total = 0
-                for chunk in response.iter_raw(_CHUNK):
+                # As received: a fixed chunk size would wait for a full chunk
+                # before the size check could see the first byte too many.
+                for chunk in response.iter_raw():
                     total += len(chunk)
                     if total > size:
                         raise InstallError("download_size_mismatch", name)
@@ -327,8 +333,8 @@ def _private_opener(path: str, flags: int) -> int:
     return os.open(path, flags | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
 
 
-def _fsync(directory: Path) -> None:
-    fd = os.open(directory, os.O_RDONLY)
+def _fsync(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         os.fsync(fd)
     finally:

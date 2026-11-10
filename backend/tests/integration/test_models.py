@@ -15,7 +15,13 @@ from hagig.models import (
     model_present,
     verify_installation,
 )
-from tests.support.models import FILES, WEIGHTS, manifest_bytes, write_installation
+from tests.support.models import (
+    FILES,
+    WEIGHTS,
+    manifest_bytes,
+    private_models_dir,
+    write_installation,
+)
 
 MANIFEST = parse_manifest(manifest_bytes("https://h.example"))
 VERSION = "v-" + "0" * 32
@@ -46,7 +52,8 @@ def test_a_valid_installation_passes_both_checks(models, version):
 def test_nothing_published_is_missing(models):
     assert not model_present(models, MANIFEST.id)
     assert error(installed_model, models, MANIFEST) == "model_missing"
-    (models / MANIFEST.id).mkdir(parents=True)
+    private_models_dir(models)
+    (models / MANIFEST.id).mkdir(mode=0o700)
     assert error(installed_model, models, MANIFEST) == "model_missing"
 
 
@@ -71,7 +78,7 @@ def test_a_current_pointer_the_installer_never_writes_is_invalid(models, version
 
 
 def test_a_model_path_that_is_a_file_is_invalid(models):
-    models.mkdir()
+    private_models_dir(models)
     (models / MANIFEST.id).write_text("")
     assert error(current_version, models, MANIFEST.id) == "model_invalid"
 
