@@ -1,497 +1,222 @@
-# Rust backend guidance
+# Python backend guidance
 
 Read the root guidance, [constitution](../docs/CONSTITUTION.md) and
-[technical design](../docs/technical/tdds/01-mvp.md) first. The controlled launch
-foundation remains available explicitly. The #9 real path below is experimental;
-implementation and default-feature tests are not native inference adoption.
+[technical design](../docs/technical/tdds/01-mvp.md) (§1–§7 and §9–§13 are the
+contract) first. This directory is a scaffold: configuration, paths, the server
+lock and WAV decoding are implemented and tested; the server, worker, CLI
+commands, model installation and bundling are not (#45, #47, #48).
 
-## Boundaries and scope
+## Layout and boundaries
 
-- One package, shared library, lifecycle CLI and controlled worker executable. Do not split crates by
-  process. Swift owns native macOS interaction; Rust owns portable backend work.
-- `launcher` is the constructor-injected platform effect boundary; `supervisor`
-  owns the child and reap. The service request layer owns protocol/state and the
-  returned private pipes. Keep request admission, generations, cancellation and
-  result delivery out of the launcher. They live in `service`, not the adapters.
-- Follow the root dependency-boundary convention: `SandboxedWorkerLauncher` and
-  `Supervisor::new(launcher)` are the existing trait/constructor-injection example.
-  Keep this contract focused on launching; concrete platform selection belongs
-  in the wiring caller. Do not add traits to pure protocol/state code solely to
-  mock it. Validate launch effects with controlled child processes and real
-  platform checks, not only substitute implementations.
-- Inference-only external-network isolation defaults to Required; an explicit
-  Disabled startup mode is a supported product opt-out, not an automatic fallback
-  or development-only exception. Required enforces before native/model loading
-  or refuses; Linux uses user/network namespaces, macOS initially sandbox-exec
-  (deprecated, requiring validation). Disabled makes no network-block claim.
-  Both modes retain offline/no uploads/no telemetry, process separation and all
-  launch hygiene. Installer networking remains outside the worker.
-- `PlatformLauncher::new(WorkerExecutable::new(absolute_path)?)` selects the
-  configured platform adapter with Required default. Explicitly select
-  `.with_network_isolation(NetworkIsolation::Disabled)` before startup to opt out.
-  `.network_isolation()` plus Display reports only the content-free selection,
-  not enforcement evidence. Only the trusted target and typed mode are configurable,
-  not arguments, shell commands, environment or arbitrary policy. The real service
-  freezes validated TOML configuration at startup. `unconfigured()` and platforms
-  without an integrated adapter fail closed. Fake CLI commands require explicit
-  controlled-worker selection; normal transcription never selects it.
-  Test-only unrestricted launchers live in `tests/`, never production options.
-- The target must be a trusted small Rust bootstrap, not linked inference code.
-  It flushes `HAGIG-WORKER-READY-v1\n` within five seconds, then begins the future
-  worker protocol. Adapters consume only this fixed ACK, not protocol bytes.
-  No inference library/model loading is allowed before this bootstrap boundary.
-  Required Linux namespace setup precedes even target exec/dynamic loading.
-  The macOS adapter and its dedicated native proof belong to issue #5; see
-  [platform guidance](src/launcher/AGENTS.md) for its policy, local unsafe sites,
-  typed-libc adoption, exact commands and actual evidence limitations.
-- The launch adapter must sanitize environment/descriptors and suppress native
-  diagnostics. Never log audio, transcripts, vocabulary, paths or raw OS errors.
-- Explicit `stop` reports cleanup failures; Drop is best-effort. Immediate kill
-  and reap are scaffold behavior, not the future graceful cancellation protocol.
-  No descendant processes are supported. OS kill/wait latency is not bounded by
-  this synchronous scaffold; asynchronous deadlines/escalation are later work.
-- Unsafe code is denied crate-wide, with local exceptions only at Linux's three
-  audited sites: pre_exec, unshare_unsafe, and enumerated BorrowedFd construction.
-  No module-wide unsafe allowance. The callback uses syscalls, stack buffers and bytes
-  allocated before fork: unshare, uid/gid maps, no_new_privs, and /proc/self/fd
-  enumeration to mark all descriptors >=3 CLOEXEC. Disabled bypasses only namespace
-  creation/maps; no_new_privs, descriptor/environment/cwd/pipe/ACK hygiene remains.
-  Do not add allocation, locks,
-  std I/O, logging or panics there. CLOEXEC preserves std's exec-error pipe until
-  exec while closing preconnected sockets before target/native loading.
+- One uv project and one package, `hagig`, with two entry points: `hagig`
+  (`hagig.cli:app`, the CLI and later the internal server command) and
+  `hagig-worker` (`hagig.worker:main`, also run as `python -I -m hagig.worker`).
+  Do not split packages per process.
+- `config.py`: TOML configuration (§3). `paths.py`: XDG locations, private
+  runtime directory, socket path and `ServerLock` (§3, §5). `wav.py`: bounded
+  WAV decoding into canonical PCM (§9). `logging.py`: content-free structlog.
+- `app.py`: FastAPI factory with no routes or lifespan yet; docs, OpenAPI and
+  FastAPI's native OpenTelemetry are disabled. `cli.py` and `worker.py` are stubs: every
+  CLI command exits 1 with `not_implemented` on stderr, and the worker exits 1
+  without writing to stdout, which is reserved for the worker protocol.
+- `routers/`, `controllers/`, `services/` and `dtos/` are the template's
+  layering (routers -> controllers -> services), empty until #45.
+- `src/launcher/seatbelt-v1.sb` is the macOS worker policy, kept byte-identical
+  from the Rust backend. `PROTOCOL.md` and `tests/fixtures/*-fixtures.json` are
+  owned by #44.
+- The server never imports an inference engine, PyTorch or model code. Keep
+  portable code free of AppKit, Accessibility and permission logic.
+- Inject effects through explicit inputs, per the root guidance:
+  `ensure_runtime_dir` takes the environment mapping, platform, uid, `tmp_root` and the macOS temp-dir
+  lookup; `load_config` takes `apple_silicon`. Tests use these, not mocks.
+- Never log or echo audio, transcripts, vocabulary, raw configuration, paths or
+  OS/library error text. Every error here is a stable code (plus a field name
+  for configuration) and is raised outside its `except` block, so no
+  content-bearing exception is attached as `__cause__` or `__context__`.
 
-## Dependency approval (mandatory)
+## Contracts implemented here
 
-Ask the owner BEFORE introducing any dependency outside: tokio (only the minimal
-needed features), serde, serde_json, clap, toml, either rustix OR nix only when
-standard APIs are insufficient (never both), tempfile for tests, and the existing
-pinned sherpa-onnx candidate subject to its adoption gate. Approval is not a reason
-to add an unused dependency. No DI framework or async-trait crate. Additional
-download/checksum/audio libraries and development/build tools are NOT preapproved;
-ask before adding or installing them. Standard Rust tools and the discussed just
-conventions are allowed. Pin toolchain and lockfile; review transitive dependencies,
-build scripts, native loading and automatic download behavior before adoption.
+**Configuration** (`load_config(path)`, path from `config_file(os.environ)`):
 
-For the owner-approved #9 Apple Silicon experiment only (2026-11-08), upstream
-zip's build-only nix may coexist with rustix. No runtime nix API is introduced;
-this exception does not waive the pinned candidate's adoption gate or authorize
-its implicit native downloader. Use the explicitly approved SHA256-pinned Mac
-archive and existing model assets in temporary CI storage, not user installations.
+- Read only from the file with `tomllib`; there are no environment-variable
+  overrides. A missing file or table means defaults: `editor.mode = "standard"`,
+  `inference.network_isolation = "required"`, `vocabulary.terms = []` and
+  `model.id = "qwen3-asr-0.6b"`.
+- The model default is PROVISIONAL, not a chosen default: §13 leaves the default
+  engine and Qwen size to a physical-Mac run. It lives only in
+  `config.PROVISIONAL_DEFAULT_MODEL_ID`.
+- Model aliases: `qwen3-asr-0.6b`, `qwen3-asr-1.7b`, `whisper-large-v3-turbo`
+  (the #47 manifest IDs). Whisper is rejected unless the platform is Darwin on
+  arm64 (`model.id model_unsupported_on_platform`).
+- Strict pydantic models with unknown keys forbidden. Codes: `unknown_key`
+  (names the containing table, or `<root>`, never the key, which is user input),
+  `invalid_value`, `invalid_type`, `too_many`, `too_long`, `too_large`,
+  `model_unsupported_on_platform` (the `IssueCode` Literal). File-level codes
+  are `config_unreadable`, `config_too_large` (over 1 MiB) and `config_syntax`
+  (including invalid UTF-8 and nesting deep enough to hit the recursion limit).
+  Validating without `load_config`'s platform context rejects Whisper. `ConfigError.code` is
+  `config_invalid` when `issues` lists field/code pairs.
+- Vocabulary: a list of strings, each stripped; empty terms and terms containing
+  control or line/paragraph-separator characters are `invalid_value` (terms go
+  into model prompts). At most 200 terms (`too_many`), 100 characters each
+  (`too_long`) and 16 KiB of UTF-8 in total (`too_large`). Errors name
+  `vocabulary.terms` or `vocabulary.terms[<index>]`.
+- Open engine limit: Whisper's prompt window (about 224 tokens) is smaller than
+  these caps allow. #49 owns how the engine handles it; validation here does not.
 
-Issue #4 dependency review: standard Rust has no unshare or post-fork FD
-enumeration API, so Linux alone uses approved `rustix = 1.1.6` with only
-std/fs/process/thread/event features. Do not also add nix. Active x86-64 Linux
-transitives are bitflags 2.13.2 and linux-raw-sys 0.12.1 (no build scripts); the
-lockfile also resolves inactive conditional libc/errno/Windows packages. No rustix
-net feature, native inference library, external compiler or artifact downloader
-was added. Reviewed rustix's build.rs: target/compiler feature detection using
-rustc metadata probes in OUT_DIR, then probe-file cleanup; no network/download
-or native compilation path. Used rustix paths are syscall wrappers; bitflags and
-linux-raw-sys supply flags/generated ABI definitions. This source/build-path review
-is not an exhaustive dependency privacy certification for every feature/target.
+**Paths** (`ensure_runtime_dir` creates; the others only compute):
 
-Tests use `/bin/sh` builtins and `/bin/kill -0` for scaffold fixtures. Linux tests
-compile a std-only worker using the pinned rustc into a test-owned Cargo temporary
-directory, then remove it and PID-only observation files on exit. The probe is not
-a production executable/feature. TCP endpoints are controlled IPv4/IPv6 loopback
-listeners, never model downloads, credentials or general internet services.
+- Config `$XDG_CONFIG_HOME/hagig/config.toml`, models
+  `$XDG_DATA_HOME/hagig/models`, defaulting under `$HOME`. Relative XDG values
+  are ignored, per the XDG spec; a missing or relative `HOME` is `home_unavailable`.
+- Runtime: `$XDG_RUNTIME_DIR/hagig` when that base is an owner-only (0700)
+  directory; otherwise macOS uses `hagig` inside `confstr(_CS_DARWIN_USER_TEMP_DIR)`
+  (via ctypes; Python 3.12 does not expose it) and fails closed with
+  `runtime_dir_unavailable` if the OS returns nothing, never `$TMPDIR`; other
+  platforms use `/tmp/hagig-<uid>`. The directory is created 0700. An existing
+  object that is a symlink, not a directory, not ours or not exactly 0700 is
+  `runtime_dir_unsafe` and is left untouched.
+- `socket_path` is `<runtime>/server.sock`, rejected with `socket_path_too_long`
+  unless it fits `sun_path` (104 bytes on macOS, 108 elsewhere) with its NUL.
+- `ServerLock.acquire(runtime)` opens `<runtime>/server.lock` with
+  `O_NOFOLLOW`, requires a regular 0600 file we own (`lock_file_unsafe`) and
+  takes `flock(LOCK_EX | LOCK_NB)`, returning None when another holder has it.
+  A symlink (ELOOP) is `lock_file_unsafe`; other open or lock failures, such as
+  a missing directory, are `lock_unavailable`.
+  `release()` closes the descriptor; the file is never unlinked, so every
+  contender locks the same inode. Stale-socket handling belongs to #45.
+
+**WAV** (`read_wav(path)` / `decode_wav(data)`):
+
+- RIFF/WAVE with 16-bit integer or 32-bit float PCM, plain or
+  WAVE_FORMAT_EXTENSIBLE with exactly those subformats and matching valid bits;
+  mono or stereo; 16, 44.1 or 48 kHz; at most five minutes of frames.
+- Output is mono 16 kHz float32: int16 is scaled by 1/32768, stereo channels are
+  averaged, and other rates are resampled by deterministic linear interpolation
+  that never extrapolates past the last input and applies no anti-aliasing
+  filter (see `wav._resample`).
+- Strict structure: the RIFF size must match the file, `fmt ` must precede a
+  single `data`, chunks must fit, sizes must agree with the format. Unknown
+  chunks are skipped with their pad byte.
+- Codes: `wav_unreadable`, `wav_malformed`, `wav_unsupported`, `wav_empty`,
+  `wav_too_long` (duration, or a file over `MAX_FILE_BYTES`, the largest
+  supported data plus 1 MiB) and `wav_invalid_samples` (float samples that are
+  not finite or exceed full scale). The file is opened read-only and at most
+  `MAX_FILE_BYTES + 1` bytes are read.
+
+**Logging**: `configure_logging()` writes JSON to stderr and keeps only
+allowlisted field names (`logging.CONTENT_FREE_FIELDS`) with scalar values;
+other keys, exceptions and structured values are dropped. It does not inspect
+scalar values, so event names and codes must be fixed strings. Call it once at
+the process entry point; it only covers structlog, not stdlib loggers.
 
 ## Developer commands
 
-Run from `backend/`, so rustup selects `rust-toolchain.toml` (Rust 1.90.0 plus
-rustfmt/Clippy). Track `Cargo.lock` even with no external dependencies. Build output
-is ignored by this directory's `.gitignore`.
+Run from `backend/`. uv selects Python 3.12 from `.python-version` and
+`requires-python = "==3.12.*"`. `uv.lock` is committed; `[tool.uv]
+exclude-newer = "1 week"` comes from the template. Changing dependencies
+(`uv lock`, `uv add`) is an explicit network step and needs the approvals below.
 
-| Recipe | Equivalent standard Rust commands |
-| --- | --- |
-| `just build` | `cargo build --locked --all-targets` |
-| `just fmt` | `cargo fmt --all` then `rustfmt --edition 2024 tests/fixtures/linux_worker.rs tests/fixtures/inference_peer.rs` |
-| `just fmt-check` | `cargo fmt --all -- --check` then `rustfmt --edition 2024 --check tests/fixtures/linux_worker.rs tests/fixtures/inference_peer.rs` |
-| `just lint` | `cargo clippy --locked --all-targets -- -D warnings` |
-| `just test` | `cargo test --locked --all-targets` then `cargo test --locked --doc` |
-| `just ci` | fmt-check, lint, test in that order |
+Run `just --list`. The recipes wrap `uv run --frozen` ruff, ty and pytest;
+`just gate` is the fast check and `just gate-expensive` is what CI runs.
 
-Borrow only rasm-tui's constructor-injected trait and fmt/lint/test/ci recipes,
-not its AWS/TUI dependencies, fake production repository or release pipeline.
-Integration tests use controlled child processes through the public launch and
-supervision APIs. Keep tests observable: private round-trip bytes, safe launch
-failure, refusal without isolation, and child termination/reaping. No model assets
-are required. Future cancellation tests must reject late/stale results, not merely
-assert mock call order.
+`.github/workflows/python-backend.yml` (push to main, python-backend and `py/**`,
+and pull requests, path-filtered) runs `uv sync --frozen` and the
+`gate-expensive` commands directly (no just on the runner) on ubuntu-24.04 and
+macos-15, with SHA-pinned checkout and `astral-sh/setup-uv` (uv 0.12.9).
 
-## Experimental real service (#9)
+Tests: `tests/unit` for pure parsing and validation, `tests/integration` for
+real filesystem, lock and socket behavior. Add an e2e tier with the first
+end-to-end test. Tests never touch the network, the
+real `/tmp/hagig-<uid>` or user configuration; derive expected values
+independently (for example the stdlib `wave` module decodes `speech.wav`).
 
-The authoritative client contract is [PROTOCOL.md](PROTOCOL.md). Normal `start`,
-`__serve` and `transcribe <wav>` select inference; a live fake service is rejected,
-never replaced or silently accepted. `status`/`stop` do not start a server.
-The server freezes configuration and paths until explicit stop/relaunch.
-`service/client.rs` owns CLI/startup/response I/O and stdout cancellation;
-`service.rs` owns admission, generations, child ownership and delivery;
-`service/inference.rs` owns the bounded private real exchange; `service/fake.rs`
-owns the controlled worker exchange. No generic engine/plugin boundary exists.
+## Template provenance
 
-Configuration: `$XDG_CONFIG_HOME/hagig/config.toml`, otherwise
-`$HOME/.config/hagig/config.toml`. Optional tables: `[editor] mode="standard"|"vim"`,
-`[model] id="parakeet-tdt-0.6b-v2-int8-v1"` (the documented base alias also works),
-`[inference] network_isolation="required"|"disabled"`, and `[vocabulary] terms=[...]`.
-Defaults are Required, Standard and no boosting. Unknown/invalid fields fail with
-fixed errors, never raw TOML/vocabulary. Terms have syntax/count/UTF8-byte limits;
-native tokenizer representability is a separate worker check, not approximate
-normalization. Never use configuration errors as a content-bearing diagnostic.
+Generated from `https://github.com/mattjmcnaughton/templates`, subdirectory
+`templates/python-service`, at `72a28b9be899c6ccd39f06f8482d55e460556acd`, with
+copier 9.19.1:
 
-`hagig model install parakeet-tdt-0.6b-v2-int8-v1` explicitly acquires only the
-tracked manifest's pinned assets. `--from <directory>` copies/hash-verifies the
-same five already-acquired assets without network acquisition. Installation is
-under `$XDG_DATA_HOME/hagig/models/<id>` or `$HOME/.local/share/hagig/models/<id>`.
-The installer validates private directories, stages and syncs verified assets,
-then renames without replacing existing installations. The empty 0600 advisory
-`.install-lock` file persists: never unlink it, which would split lock ownership.
-Process exit releases its OS lock. Abrupt termination can leave a `.stage-<pid>`
-directory; after confirming no installer is running, inspect/remove only owned
-abandoned model staging, never the final model or caller source files. Runtime
-never downloads, repairs or falls back when assets are missing/corrupt.
-
-Safe Rust WAV decoding accepts PCM16/normalized finite float32, mono/stereo,
-16/44.1/48kHz up to300s. Stereo averages then deterministic rational linear
-resampling is used; this is not an anti-aliasing filter. The native WAV reader is
-not used. The input file remains caller-owned. Nonempty success writes exact
-text plus one newline, whitespace-only success writes nothing; busy exits3,
-invalid input/usage/config exits2, SIGINT before delivery exits130 with no result,
-and other failures exit1. Stderr contains fixed codes/field names, not content.
-
-Ordinary builds/CI exclude `inference-candidate`. That optional binary is pinned
-to the reviewed source revision but NOT adopted: upstream sys build can download
-unchecked native binaries even with Cargo offline. Experimental builds must use
-independently verified local native libraries via absolute `SHERPA_ONNX_LIB_DIR`
-and a blocked-network build environment; do not use its downloader. The normal
-`hagig` and trusted `hagig-worker` bootstrap must not link native inference.
-The bootstrap ACKs only after platform isolation and then exec-replaces itself
-with sibling `hagig-inference-worker`, preserving the supervised PID. Native
-loading must work with the launcher's empty environment, not LD_LIBRARY_PATH or
-ambient PATH. A tested macOS helper/dylib layout and native adoption remain gates;
-do not infer them from the Linux build or optional feature. Candidate macOS zip
-transitively introduces nix alongside rustix; reconcile policy before adoption.
-
-The owner approved exact installer crates ureq2.12.1(tls only), sha2 0.11.1,
-tar0.4.46(no defaults), flate2 1.1.10(Rust backend) on2026-11-08. Minimal starting-set
-TOML(parse/serde/std) and Tokio(rt/signal) handle config and process-lifetime SIGINT.
-Ring's normal TLS closure compiles bundled C/assembly. This source/build inventory
-does not establish runtime privacy, native provenance/licenses or adoption.
-
-`real_service` tests include a disposable std-only private peer behind the actual
-trusted bootstrap. It exercises real exchange framing, bounded results, errors,
-cancellation/reap and warm recovery; it does NOT load a native model. Tests use
-explicit Disabled for this portable controlled peer, not Required enforcement.
-Actual model success, separate runtime networking/write observation and blocked-
-network operation must be reported independently, preserving silence failures.
-
-## Controlled lifecycle service (#7 baseline; explicit exerciser retained)
-
-Build both binaries with `cargo build --locked --bins`. Public commands:
-
-```
-hagig start --fake-worker [--network-isolation required|disabled]
-hagig fake-request --fake-worker [--network-isolation required|disabled]
-hagig status
-hagig stop
+```sh
+uvx copier@9.19.1 copy --trust --defaults <clone>/templates/python-service <out> \
+  -d project_name=hagig \
+  -d 'project_description=Privacy-first local voice-to-text server, worker and CLI' \
+  -d author_name=mattjmcnaughton -d author_email=me@mattjmcnaughton.com \
+  -d license=MIT -d include_database=false -d include_clients=false \
+  -d enable_otel=false -d include_technical_docs=false -d include_product_docs=false
 ```
 
-`fake-request` reserves the shared slot and runs the separate sibling
-`hagig-fake-worker`; success writes only a newline (explicit empty result), busy
-writes `busy` to stderr and exits 3. This is a controlled lifecycle exerciser,
-never an inference fallback. Its fake requests do not transcribe WAVs or install models.
-`start --fake-worker`/`fake-request` start/connect on demand; status/stop never start
-an absent server. `__serve --fake-worker` is the internal foreground server entry point.
-Selected mode is frozen by the winning server and reported on hello/status;
-connecting clients cannot change it. Required is default, not evidence that
-enforcement succeeded; worker launch may refuse on a restricted host.
+The template ships no answers-file template, so `.copier-answers.yml` is written
+by hand and `copier update` is not wired up. The answers, including author
+`mattjmcnaughton <me@mattjmcnaughton.com>` and license MIT, are owner-confirmed.
 
-Use validated owner-only XDG_RUNTIME_DIR/hagig, or the TDD's per-user temporary
-fallback. The socket is 0600 from bind, directory 0700, and persistent empty lock
-file 0600. A std advisory lock is held for the server lifetime; only its holder
-removes a validated stale socket. Keep the lock file after stop (unlinking it
-would split future contenders across different lock inodes). Unsafe existing
-objects are refused, not repaired. Same-user malicious processes remain outside
-the TDD threat boundary. No TCP listener or PID-file-based killing.
+Licensing: the repository is MIT under the root `LICENSE` (owner decision,
+subsuming #38). `pyproject.toml` declares `license = "MIT"`, but the package
+carries no license text of its own: the generated `backend/LICENSE` was removed,
+and `license-files` cannot point at `../LICENSE` (PEP 639 forbids `..`). #48 must
+copy the root `LICENSE` into the bundle.
 
-Protocol: v1 kind byte + u32 big-endian length; kind 1 strict JSON, maximum
-65,536 bytes; kind 2 canonical aligned PCM, maximum 262,144 bytes per chunk and
-19,200,000 bytes total. Controls require version/type, and opaque nonempty
-ASCII alphanumeric/hyphen/underscore request_id (maximum 128 bytes) on request
-operations. Send hello before begin/end_audio/cancel/status/stop. No queue or
-preemption. A request belongs to its connection; nonowner cancel is a harmless
-acknowledgment. Malformation closes only its connection and invalidates its work.
-For this controlled slice PCM bytes are validated/counted then discarded, not
-transcribed or persisted. End_audio optionally selects fake_action complete,
-crash or stall; no other executable, command, environment or model is accepted.
-The private controlled-worker wire after the unchanged bootstrap ACK is a bounded
-v1 envelope: version u8 (1), server generation u64 big-endian, ID length u8
-(1..128), opaque ASCII token ID, and action/result u8. Maximum size is 139 bytes.
-The server accepts only the exact expected version/generation/ID/success envelope;
-malformed, oversized, stale and mismatched replies fail the request, never echo
-child bytes, and retire the worker. Pipe reads/writes are nonblocking; partial
-replies cannot bypass cancellation or the absolute computation safety budget.
-This controlled protocol is not audio/model inference; the separate #9 private
-exchange uses bounded PCM/result framing rather than interpreting controlled
-success as transcript data. Status identity comes from the Supervisor-owned Child,
-not self-reported worker bytes. Empty controlled results are explicit.
-The private envelope is incompatible with #7's one-byte controlled helper. Stop
-the running service before replacing helpers, build/ship server and fake-worker
-together (`cargo build --locked --bins`), and use the same paired replacement
-after stopping for rollback. Do not mix a live old server with a new helper.
+After generation:
 
-On first end_audio the server lazily launches the controlled worker. Successful
-requests transfer its Supervisor and private pipes back to the service through
-the generation-tagged completion event; the next request takes that ownership.
-There is no shared child mutex, retry, queue, or idle eviction. Status reports
-the owned worker PID even while idle (including an exited but unreaped child).
-Stop reaps idle and active children. Crash/stall/protocol failure fails one request,
-reaps before slot release, and starts a fresh worker only on a later request.
-Cancellation/disconnect/deadline invalidate before cleanup; even a success waiting
-for service consumption retires its child before releasing an invalid reservation.
-Cancellation of an already serialized but not yet delivered result discards that
-result; completed computation may remain warm. Both orderings remain explicit.
+- Removed: `LICENSE` (see Licensing), `.dockerignore`, `.env.example`, `Dockerfile`, `docker-compose.yml`,
+  `tests/conftest.py`, the `tests/e2e` tier and `.gitkeep` files,
+  `.github/workflows/ci.yml`, `docs/` (`api.md`, `architecture.md`,
+  `development.md`, `adrs/`; the TDD owns these), `CLAUDE.md` and its `AGENTS.md`
+  symlink (this file replaces them), `routers/health.py` (`/healthz` and
+  `/readyz` are not in the `/v1` contract) and the `external` test marker.
+- Rewritten: `config.py` (TOML instead of pydantic-settings), `logging.py`
+  (stderr, allowlist, no environment settings), `app.py` (no routes, docs and
+  telemetry off, no metadata, lifespan or module-level app), `README.md`, `.gitignore` (database and Docker entries dropped).
+- Edited: `pyproject.toml` (pydantic, typer and numpy instead of
+  pydantic-settings; entry points; Python 3.12 pin) and `justfile` (`--frozen`,
+  single-run `test-all`, no external-test recipes).
+- Template defects: `ty>=0.12` is unsatisfiable (ty is 0.0.x), so the bound is
+  `ty>=0.0.1`; the generated description line exceeded ruff's 88 columns, so the
+  description answer was shortened.
 
-Admission and I/O run on one nonblocking loop with 32 live connections, bounded
-per-tick accept/read/frame/write work and capped input/output buffers. Startup and
-CLI I/O have finite deadlines. Hello, partial frame assembly and each CLI response
-use absolute five-second budgets, not timeouts reset by each received byte;
-reservation is 330 seconds, computation 120 seconds.
-Invalidation precedes worker cancellation; no successor is admitted before reap.
-Stop waits for the lifetime lock/socket cleanup before reporting CLI success.
-The existing supervisor uses immediate kill/reap, not graceful escalation or a
-bounded kernel wait; cleanup failure retains ownership and blocks successors.
-The real inference path retains these shared ownership rules. Cancellation cannot undo result
-bytes whose delivery has already begun; clients must also invalidate locally.
+## Dependency approval and inventory
 
-`cargo test --locked --test server_admission -- --nocapture` exercises actual CLI,
-server and controlled-worker processes with public framed socket clients. Add
-this target to every CI branch that selects test binaries explicitly, including
-ubuntu24; all-target build alone does not execute it. Linux results do not prove
-macOS builds, Seatbelt behavior or physical-Mac acceptance.
+Ask the owner before adding anything outside the root `AGENTS.md` starting set.
+For this run the owner also approved the template's `uvicorn[standard]` and
+hatchling, Python 3.12 and SHA-pinned `astral-sh/setup-uv` and `actions/cache`.
+`httpx` is approved but not added until the CLI client needs it.
 
-Deterministic lifecycle tests explicitly start the internal foreground service
-with `__serve --fake-worker --network-isolation disabled --fake-test-controls`.
-Only that explicit fake-slice opt-in accepts `fake_test` controls with optional
-`fake_pause_delivery`, `fake_pause_completion`, and `fake_advance_seconds` fields.
-These pause serialized success delivery or consumption of the single real worker
-completion event and advance a frozen request/idle monotonic clock (at most 3600s
-per control, 86400s total). Status adds content-free pending counters. They do not
-change the default 330s reservation/120s computation/330s idle durations, real
-frame timeouts, worker wall-clock safety budget, isolation, executable or launch hygiene.
-Ordinary start/fake-request reject this flag; ordinary servers reject the controls.
-Stop bypasses completion pause to clean up. No production inference uses these
-controls. Tests distinguish success pending before cancel, result-first delivery,
-reused IDs, both deadline boundaries, already completed late success suppression,
-actual child reap and public CLI recovery; they do not measure 330/120s wall time.
+Direct runtime dependencies: fastapi, `uvicorn[standard]`, structlog, pydantic,
+typer, numpy. Development: pytest, ruff, ty. Build backend: hatchling
+(unpinned in `[build-system]`, resolved by uv when building the project).
 
-Warm-worker public regression tests in `server_admission`:
-- `successful_requests_keep_worker_warm_until_explicit_stop`: same live child
-  across distinct/reused IDs, disconnected successful owners and simulated idle
-  periods exceeding the connection idle limit; stop reaps it.
-- `private_worker_identity_and_framing_faults_fail_once_and_recover`: stale
-  generation, same-length wrong ID, excessive advertised ID length, a true extra
-  wire byte after a valid envelope, partial reply, wrong version, and
-  synthetic stdout/stderr canary; one safe error/deadline, old child absent before
-  next admission, new child success, no worker bytes in server stdout/stderr.
-  A valid `fragmented` action flushes a one-byte prefix, waits 500ms, then sends
-  the remainder. Explicit fake-test status exposes `worker_reply_bytes` for valid
-  short prefixes only (maximum 138 progress events per envelope); the test observes
-  exactly one consumed byte while busy, then successful completion and same-PID
-  reuse. Ordinary status does not expose this test counter. These asymmetric
-  cases distinguish a valid short prefix, same-size wrong identity, and a correct
-  complete prefix with real excess data rather than only malformed length bytes.
-- `pending_warm_success_is_reaped_after_cancel_or_disconnect_before_reuse`:
-  already completed success invalidated before consumption, busy until cleanup,
-  actual reap then fresh reused-ID request.
-- `externally_killed_idle_worker_fails_one_request_without_automatic_retry`:
-  externally killed disposable child, one failure then lazy fresh-worker recovery.
-Existing deadline/stop pending-success tests now positively observe the warm
-child before invalidation and require its absence after cleanup. Existing
-reply-before-cancel, cancel-before-reply, active disconnect, crash/stall and
-Required-default tests remain in the same target. Fault actions `stale`, `wrong_id`,
-`oversized`, `excess_bytes`, `partial`, `wrong_version`, `diagnostic`, `fragmented` are controlled fake-worker
-actions only; no production inference or client-supplied executable is involved.
+Locked transitives (see `uv tree --frozen`): annotated-doc, annotated-types,
+anyio, click, colorama (Windows only), h11, httptools, idna, markdown-it-py,
+mdurl, opentelemetry-api, pydantic-core, pygments, python-dotenv, pyyaml, rich,
+shellingham, starlette, typing-extensions, typing-inspection, uvloop,
+watchfiles, websockets; dev adds iniconfig, packaging and pluggy. Native wheels:
+numpy, pydantic-core, httptools, uvloop, watchfiles, pyyaml, ruff and ty.
 
-Dependencies: serde (derive/std) and serde_json (std) from the agreed set, pinned
-by Cargo.lock; no async runtime, CLI framework, native inference, downloader or new
-dev tool. New transitives are serde_core/derive, proc-macro2, quote, syn,
-unicode-ident, itoa, memchr and zmij at locked versions. Reviewed build scripts:
-serde/core generate versioned private modules in OUT_DIR and query rustc;
-serde_json selects target arithmetic; quote/zmij query compiler versions;
-proc-macro2 builds compiler metadata probes under OUT_DIR then removes them.
-No native compiler/library download or network path was found in these scripts.
-Scoped source-effects inspection found parsing/formatting/token generation and
-documentation-only file/network examples, not runtime network or file-open sinks.
-This is source/build review, not exhaustive runtime networking/write observation
-or a real-inference adoption/privacy certification. Existing rustix now uses its
-fs feature on macOS too for socket-bind umask; no second syscall library added.
+Findings to carry forward (source inspection only, not runtime observation):
 
-## Evidence and authorization
+- fastapi 0.162 requires `opentelemetry-api` and has native telemetry that turns
+  on when a global provider exists or `FASTAPI_OTEL_AUTO_CONFIGURE=true`.
+  No OpenTelemetry SDK or exporter is installed, and `create_app` disables all
+  native telemetry (tested with the auto-configure variables set).
+- `uvicorn[standard]` installs websockets, watchfiles and python-dotenv; the
+  contract has no WebSockets, reload or env files, so #45 must run uvicorn with
+  WebSockets off, no reload, no env file, `access_log=False` and no default
+  `log_config` (its access and error loggers bypass the structlog allowlist).
+- FastAPI's default `RequestValidationError` handler echoes rejected input in
+  422 bodies; #45 must install a content-free handler before adding routes.
+- `decode_wav` holds float64 working copies (about 4.5 times the input at the
+  116 MB cap). Fine in the CLI; revisit if decoding moves into the server.
+- A grep of the installed runtime packages for `urllib.request`, `http.client`,
+  `socket`, `requests` and `httpx` imports found none outside the HTTP stack
+  (starlette, uvicorn, anyio, h11, httptools, websockets). This is a finite
+  source check, not a privacy certification (constitution §6).
 
-`.github/workflows/rust-checks.yml` defines Linux x86-64 and macOS 15 Apple Silicon
-jobs, asserts the native Rust host, and runs the equivalent commands above with
-read-only permissions, a SHA-pinned checkout and 15-minute job bounds. The runner
-label is OS-major-pinned, not an immutable VM image. No workflow dispatch or release
-pipeline is included. A workflow file is NOT evidence that a remote job ran.
+## Evidence log
 
-Record actual executed commands, host/toolchain, results and limitations here.
-Do not turn source inspection or local Linux checks into macOS/native isolation
-claims. Issue implementation does not authorize commit, push, PR creation,
-workflow dispatch, merge, deployment or installing unapproved tools. Obtain the
-owner's concrete authorization for those actions first.
+Record actual commands, hosts and results here; keep Linux, hosted macOS and
+physical-Mac evidence separate. A workflow file is not evidence that a job ran.
 
-Historical scaffold evidence (#2, 2026-10-27, Linux orb, x86_64-unknown-linux-gnu,
-rustc 1.90.0, before adding the Linux adapter/dependency):
-
-- `cargo fmt --all -- --check`: passed.
-- `cargo clippy --locked --all-targets -- -D warnings`: passed, no warnings.
-- `cargo test --locked --all-targets`: 5 integration tests passed; no unit tests.
-  Checks include private IPC, repeated launch after reap, safe spawn failure,
-  invalid-pipe cleanup, live-child Drop cleanup, and production refusal even with
-  a purported bypass flag/environment setting. Process-existence observation has
-  a positive live-child control and verifies absence after reap.
-- `cargo test --locked --doc`: passed, 0 doctests.
-- `cargo build --locked --all-targets`: passed.
-- `cargo test --locked --test worker_boundary --quiet`: passed 10 additional runs.
-- `cargo tree --locked` and Cargo metadata: only hagig, dependencies empty.
-  `ldd target/debug/hagig`: system libgcc_s, libc and ELF loader; no inference libs.
-
-At this initial local-validation checkpoint, remote Linux and Apple Silicon
-execution had not run. The PR's exact-head Rust checks and their logs are the
-authoritative remote evidence; inspect both host assertions and executed test
-steps, not only a green rollup. The just command itself (not installed here), real
-inference, Linux namespaces and macOS Seatbelt remain unverified by these checks.
-
-The owner subsequently authorized one scaffold commit, branch push, PR creation,
-automatic CI, and rebase-merge/remote-branch deletion only after actual Linux and
-Apple Silicon checks pass and issue #2 acceptance is met. This is not permission
-for manual workflow dispatch, releases or deployment. The current policy baseline
-is incorporated from PR #11. Root docs and other threads' work remain untouched.
-
-## Linux adapter evidence (#4)
-
-Run `cargo test --locked --test linux_isolation -- --nocapture` on a capable host
-for both explicit modes through PlatformLauncher and Supervisor. The required
-enforcement test fails UNSUPPORTED if namespaces/proc facilities or host IPv6
-are unavailable; it does NOT count refusal or disabled success as enforcement.
-Do not change host sysctls/AppArmor/seccomp policy to manufacture a pass.
-
-The same worker connects to the same outside listeners before and after isolated
-runs. Checks require a different network namespace from the first worker-main
-instructions, IPv4 ENETUNREACH, and IPv6 EADDRNOTAVAIL or ENETUNREACH (no source
-address/route in the fresh namespace), never an arbitrary failed connection.
-It deliberately leaks a preconnected inheritable socket in the unrestricted
-control and requires its absence under isolation; it also checks empty environment,
-root cwd, no_new_privs, protocol bytes immediately after ACK, live-child kill/reap,
-Drop cleanup and relaunch. A captured subprocess asserts that a diagnostic canary
-emitted by the unrestricted control never escapes the production launcher's stderr
-suppression. Bad/EOF/stalled ACKs must fail and reap within the ACK
-deadline. A subprocess in an unmapped user namespace triggers a REAL kernel
-denial of nested user-namespace creation; the target must never execute.
-
-This orb's Linux 6.1.158+ allows user/network namespaces and IPv6 loopback.
-Initial probe observed isolated IPv4 errno 101 and IPv6 errno 99; independent
-`unshare -Urn` socket checks confirmed those kernel reasons. The initial test's
-expectation that both families returned errno 101 was corrected, not treated as
-a passing run. The actual unsupported-host case remains host-dependent; the
-unmapped-parent test establishes fail-closed handling of real kernel denial.
-
-A network namespace is not filesystem/process confinement, protection against a
-malicious same-user process, prevention of filesystem-accessible proxy services,
-or proof of absence of networking attempts. Tests intentionally attempt connects.
-Inference/model integration, DNS-specific probes, descendants and async shutdown
-are not implemented here. At the initial checkpoint new remote Linux/macOS runs
-were unverified and #4 publication was not authorized. Owner D2 subsequently
-authorized commit/push/PR, automatic native CI and rebase-merge/branch deletion
-only after actual review-suite, resolve-review and exact-head CI gates pass.
-No manual dispatch, release/deployment, host-policy weakening or protection bypass.
-
-Implementation-checkpoint checks (recorded 2026-10-27, Linux, pinned Rust 1.90.0):
-
-- Cargo fmt check and standalone fixture rustfmt check: passed.
-- `cargo clippy --locked --all-targets -- -D warnings`: passed.
-- `cargo test --locked --all-targets -- --nocapture`: 8 integration tests passed
-  (2 Linux boundary tests, 6 scaffold tests), no ignored tests; nested subprocess
-  checks exercise captured diagnostics and actual kernel denial.
-- `cargo test --locked --doc`: passed, 0 doctests.
-- `cargo build --locked --all-targets`: passed.
-- `cargo tree --locked`: hagig -> rustix -> bitflags/linux-raw-sys only on this host.
-- Four observed explicit stop/relaunch rounds denied IPv4 with errno 101 and IPv6
-  with errno 99; additional live-child Drop/reap rounds passed. Stalled startup
-  failed safely and was reaped after about 5.006 seconds. Missing executable,
-  bad ACK, EOF, and real namespace denial returned safe errors; no fallback ran.
-- Captured log contains no emitted worker diagnostic canary. Reviewable local log:
-  `.amp/in/artifacts/issue-4-linux-verification.txt` at repository root.
-
-API integration order: issue #4 lands shared configuration/ACK and Linux dispatch;
-issue #5 then adds its owned macOS module, dispatch and any needed widening of
-the same pinned rustix target configuration. Issue #5 integrates that landed
-baseline and extracts the unchanged ACK routine for both adapters. Configured
-unsupported platforms still refuse; unconfigured launchers refuse everywhere.
-Do not import independently owned unpushed work without owner integration approval.
-
-Review resolution (2026-10-28): six actual review-suite skill lenses reviewed the
-complete task diff including new files. Seven warnings, no critical/nits: six
-dependency/I/O/tool inventories documented as intentional scope; one verified ACK
-test gap addressed. Existing tests now also exercise a correct prefix/wrong
-version suffix, truncated-prefix EOF, fragmented successful ACK plus immediate
-protocol, and a four-second prefix drip that must not reset the total five-second
-deadline. Targeted Linux tests passed, including reap/recovery. In disposable
-copies, first-byte-only ACK validation failed with unexpected launch success;
-per-read deadline reset failed the <7s bound. Neither mutation touched production
-source; scratch copies were removed. Final combined checks and exact-head remote
-native CI remain separate gates, not substituted by the suite. Local ignored
-current-capture plan/diary/review-resolution records are not shipped source.
-
-### Hosted Linux support/evidence checkpoint (2026-10-28)
-
-There is no 22.04-only product ceiling: explicit Disabled is supported on modern
-Ubuntu; Required still enforces or refuses without retry. CI separately labels
-22.04 capable-host enforcement evidence, 24.04 disabled/refusal evidence, and Mac
-portable shared checks (not yet Seatbelt proof). Both Linux jobs build/lint the
-whole package; 24.04 executes the full disabled hygiene/failure contract, required
-enforcement-or-refusal classification, real unmapped-userns denial and portable
-tests. It does NOT claim a passing full required-network gate. Diagnostics assert
-that the observed 24.04 mapped probe is denied; a policy change needs investigation,
-not an automatic status reinterpretation.
-
-The 22.04 enforcement host is available but deprecated since 2026-09-17 and retires
-2027-04-17, with March/April brownouts. Replace that evidence host before then with
-independently verified capability and the full unchanged required-network gate.
-This is a CI-evidence prerequisite, not an installer or product OS maximum.
-Do not disable AppArmor, change sysctls, add privileged containers, or count
-unsupported acceptance probes as green enforcement evidence.
-See the [official retirement notice](https://github.com/actions/runner-images/issues/14254).
-
-At comparison head `8f79248bf8bb09a0fd56d883086e78334e7d3e35`, the
-[PR 22.04 job](https://github.com/mattjmcnaughton/hagig/actions/runs/40688513118/job/122817010028)
-and [push 22.04 job](https://github.com/mattjmcnaughton/hagig/actions/runs/40688506386/job/122816985848)
-actually ran build, formatting, Clippy, both Linux isolation tests, six scaffold
-tests, and doctests successfully, with zero ignored tests. Independent userns
-and mapped user/network probes both returned 0. Kernel 6.8.0-1064-azure, pinned
-Rust 1.90.0 x86_64-unknown-linux-gnu. Setup logs identify ubuntu-22.04 image
-20261012.322.1; ImageVersion environment metadata reports 20261023.322.3. These
-different metadata values are recorded as observed, not reconciled by guessing;
-the label is OS-version-pinned, not an immutable VM image. AppArmor restriction
-value 0 was observed on these hosts, never changed by the workflow.
-
-The [same-head 24.04 job](https://github.com/mattjmcnaughton/hagig/actions/runs/40688513118/job/122817010345)
-is explicitly NOT a passing isolation host: unrestricted IPv4/IPv6 controls
-succeeded, configured launch failed closed, and independent `unshare` failed
-writing `/proc/self/uid_map` with EPERM. Userns-only control returned 0, mapped
-user/network control returned 1. Kernel 7.0.0-1017-azure; setup image
-20261025.353.1, ImageVersion metadata 20261026.354.1. Restriction value 1 observed;
-the exact responsible LSM rule/first failing production syscall was not uniquely
-established. This is historical required-mode refusal evidence, NOT a passing
-24.04 network-enforcement test. The subsequently accepted explicit-mode contract
-adds a supported disabled path; it does not reinterpret that historical failure.
-
-Read-only namespace diagnostics now run on Linux after both successful and failed
-gates, report both independent probe statuses and expected capability/refusal, and print
-specific kernel/image/policy observations only. They read no secrets and change
-no host security policy. Native Apple Silicon shared/scaffold checks also passed
-at the comparison head; this is not macOS Seatbelt/inference evidence. The rejected
-22-only pin was never published. Final explicit-mode source and transferred policy
-docs require a new complete-task review/resolution and actual exact-head native CI
-before merge. No profile installation, sudo, host policy change or new dependency.
+- 2026-11-10, Linux orb (Debian 12, x86_64, CPython 3.12.14 from uv 0.12.9),
+  #43 scaffold: `just gate-expensive` passed (ruff format, ruff check, ty, pytest
+  with the macOS-only temp-dir test skipped). Hosted ubuntu-24.04 and macos-15
+  results are the exact-head `python-backend.yml` runs on the #43 branch and PR.
