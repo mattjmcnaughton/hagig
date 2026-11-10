@@ -38,7 +38,8 @@ the target, pastes and submits; Hagig never inspects, focuses or injects keys th
 
 - Native macOS menu-bar application with Record/Stop controls, no global shortcut.
 - Microphone capture, Stop-to-transcribe, and Escape/Cancel cancellation.
-- English transcription using one local inference configuration.
+- English transcription using one configured local inference engine at a time;
+  Qwen3-ASR and Whisper (Apple Silicon only) are both supported.
 - Vocabulary biasing for project names and technical terms.
 - Editable in-memory transcript review, explicit Copy and Dismiss; no auto-copy.
 - Standard native editing by default; optional bounded Vim via TOML, with the

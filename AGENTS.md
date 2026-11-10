@@ -25,8 +25,9 @@ Ask the owner before adding dependencies outside the agreed starting set:
 
 - Python, managed by uv: `fastapi`, `uvicorn`, `pydantic`, `typer`, `httpx`,
   `numpy` and `structlog`; stdlib `tomllib` for configuration.
-- Inference: `transformers` and `torch` with their locked transitives, for
-  Qwen3-ASR, subject to the adoption gate in the technical design.
+- Inference: `transformers` and `torch` for Qwen3-ASR, and `mlx` and
+  `mlx-whisper` for Whisper (Apple Silicon only), with their locked
+  transitives, subject to the adoption gate in the technical design.
 - Swift: swift-server `AsyncHTTPClient` for HTTP over the Unix socket.
 - Development: `uv`, `ruff`, `ty`, `pytest`, `just`, and `copier` for generating
   `backend/` from the owner's template.

@@ -82,9 +82,11 @@ time and rejects overlapping requests as busy. The worker stays warm between
 requests; closing a client does not shut down the server. An explicit server stop
 cancels active work and shuts down the worker and server.
 
-The first inference configuration to evaluate is **Qwen3-ASR through Hugging Face
-transformers on PyTorch**, biased toward configured vocabulary through its context
-prompt. Packaging and privacy remain validation gates; accuracy
+The worker supports two engines behind one interface, selected by the configured
+model: **Qwen3-ASR through Hugging Face transformers on PyTorch** and **Whisper
+large-v3-turbo through Apple's mlx-whisper** (Apple Silicon only), each biased
+toward configured vocabulary through its prompt. Packaging and privacy remain
+validation gates; accuracy
 and latency require measurements, not first-working-app numeric gates. None is
 an established capability of this repository.
 
