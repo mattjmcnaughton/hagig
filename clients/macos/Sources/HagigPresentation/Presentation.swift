@@ -68,10 +68,10 @@ public final class Presentation: ObservableObject {
         return id
     }
 
-    public func admit(requestID: UUID, editorMode: EditorMode, modelID: String? = nil) -> Bool {
+    public func admit(requestID: UUID, editorMode: EditorMode, modelID: String) -> Bool {
         guard self.requestID == requestID, stage == .awaitingAdmission else { return false }
         self.editorMode = editorMode
-        if let modelID { self.modelID = modelID }
+        self.modelID = modelID
         editorLabel = editorMode == .vim ? "Vim · Normal" : "Standard"
         stage = .recording
         return true

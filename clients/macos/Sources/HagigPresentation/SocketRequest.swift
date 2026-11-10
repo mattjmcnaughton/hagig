@@ -16,6 +16,8 @@ struct Admission: Equatable {
 struct BackendFailure: Error, Equatable {
     let code: String
     static let generic = BackendFailure(code: "generic_failure")
+    /// The paired helper's TDD §9 usage/configuration exit (2).
+    static let configuration = BackendFailure(code: "configuration")
 
     var issue: DemoIssue {
         switch code {
@@ -24,7 +26,7 @@ struct BackendFailure: Error, Equatable {
         case "worker_failed", "result_too_large": return .workerFailed
         case "deadline_exceeded": return .deadlineExceeded
         case "invalid_audio": return .microphoneUnavailable
-        case "isolation_unavailable": return .configuration
+        case "isolation_unavailable", "configuration": return .configuration
         default: return .serverUnavailable // incompatible_api, server_stopping, cancelled, generic...
         }
     }
@@ -42,8 +44,8 @@ final class SocketRequest: DictationRequest {
         "isolation_unavailable": [503], "server_stopping": [503], "worker_failed": [500],
         "result_too_large": [500], "deadline_exceeded": [504],
     ]
+    /// Startup/connect and every exchange other than the upload.
     private nonisolated static let exchangeBound: Duration = .seconds(5)
-    private nonisolated static let resultWait: Duration = .seconds(125)
     private nonisolated static let client: HTTPClient = {
         var configuration = HTTPClient.Configuration()
         configuration.redirectConfiguration = .disallow
@@ -56,48 +58,66 @@ final class SocketRequest: DictationRequest {
     private let helper: URL
     private let environment: [String: String]
     private let darwinTempDir: @Sendable () -> String?
-    private nonisolated let body = UploadBody()
+    private let resultWait: Duration
+    /// The upload body. Only `finish()` ends it normally; Cancel ends it with an
+    /// error, so a cancelled upload never sends the chunk that starts inference.
+    private nonisolated let body: AsyncThrowingStream<ByteBuffer, Error>
+    private nonisolated let feed: AsyncThrowingStream<ByteBuffer, Error>.Continuation
+    /// Yields once when `finish()` ends the body; the result wait starts then.
+    private let bodyEnded: AsyncStream<Void>
+    private let endBody: AsyncStream<Void>.Continuation
     private var upload: Task<String, Error>?
-    private var cancelled = false
 
     nonisolated var sink: @Sendable (Data) -> Void {
-        let body = self.body
-        return { body.send($0) }
+        let feed = self.feed
+        return { data in if !data.isEmpty { feed.yield(ByteBuffer(bytes: data)) } }
     }
 
     init(helper: URL, environment: [String: String] = ProcessInfo.processInfo.environment,
-         darwinTempDir: @escaping @Sendable () -> String? = SocketRequest.darwinUserTempDir) {
+         darwinTempDir: @escaping @Sendable () -> String? = SocketRequest.darwinUserTempDir,
+         resultWait: Duration = .seconds(125)) {
         self.helper = helper
         self.environment = environment
         self.darwinTempDir = darwinTempDir
+        self.resultWait = resultWait
+        let stream = AsyncThrowingStream<ByteBuffer, Error>.makeStream()
+        body = stream.stream
+        feed = stream.continuation
+        let ended = AsyncStream<Void>.makeStream()
+        bodyEnded = ended.stream
+        endBody = ended.continuation
     }
 
     func reserve() async throws -> Admission {
         let startup = ContinuousClock.now.advanced(by: Self.exchangeBound)
-        let socket = try await Self.locate(environment: environment, darwinTempDir: darwinTempDir,
-                                           helper: helper, deadline: startup)
-        let status = try Self.status(try await Self.exchange(.GET, socket, "/v1/status", deadline: startup))
-        guard !cancelled, !Task.isCancelled else { throw CancellationError() }
+        let (socket, reply) = try await Self.connect(environment: environment, darwinTempDir: darwinTempDir,
+                                                     helper: helper, deadline: startup)
+        let status = try Self.status(reply)
+        try Task.checkCancellation()
         // Not cancelled with the caller: a 201 that arrives after Cancel is released below.
-        let reply = try await Task {
+        let admission = try await Task {
             try await Self.exchange(.POST, socket, "/v1/requests", deadline: .now.advanced(by: Self.exchangeBound))
         }.value
-        let admitted = try Self.admission(reply)
+        let admitted = try Self.admission(admission)
         guard admitted.config_generation == status.config_generation,
               admitted.model_id == status.settings.model_id else {
             Self.release(socket, admitted.request_id) // The server restarted between status and admission.
             throw BackendFailure.generic
         }
-        guard !cancelled, !Task.isCancelled else {
+        guard !Task.isCancelled else {
             Self.release(socket, admitted.request_id) // Granted after the user cancelled.
             throw CancellationError()
         }
-        let body = self.body
-        upload = Task { try await Self.upload(socket, admitted.request_id, body) }
+        let body = self.body, ended = bodyEnded, wait = resultWait
+        upload = Task { try await Self.upload(socket, admitted.request_id, body, ended: ended, wait: wait) }
         return Admission(editorMode: status.settings.editor_mode, modelID: status.settings.model_id)
     }
 
-    func finish() { body.finish() }
+    func finish() {
+        feed.finish()
+        endBody.yield()
+        endBody.finish()
+    }
 
     func result() async throws -> String {
         guard let upload else { throw CancellationError() }
@@ -106,8 +126,7 @@ final class SocketRequest: DictationRequest {
 
     /// Closes the upload without ending its body and never waits for a reply.
     func cancel() {
-        cancelled = true
-        body.fail()
+        feed.finish(throwing: CancellationError())
         upload?.cancel()
     }
 
@@ -132,7 +151,7 @@ final class SocketRequest: DictationRequest {
     /// `$XDG_RUNTIME_DIR/hagig` when that base is a private directory, otherwise
     /// `hagig` in the OS per-user temporary directory, never `$TMPDIR`.
     private nonisolated static func socketPath(environment: [String: String],
-                                       darwinTempDir: () -> String?) throws -> String {
+                                               darwinTempDir: () -> String?) throws -> String {
         let base: String
         if let xdg = environment["XDG_RUNTIME_DIR"], xdg.hasPrefix("/"),
            isPrivate(xdg, kind: S_IFDIR, mode: 0o700, followSymlinks: true) {
@@ -152,10 +171,11 @@ final class SocketRequest: DictationRequest {
 
     private nonisolated static func isPrivate(_ path: String, kind: mode_t, mode: mode_t,
                                              followSymlinks: Bool) -> Bool {
+        guard !path.utf8.contains(0) else { return false }
         var info = stat()
-        guard !path.utf8.contains(0),
-              (followSymlinks ? Darwin.stat(path, &info) : lstat(path, &info)) == 0 else { return false }
-        return info.st_mode & S_IFMT == kind && info.st_uid == getuid() && info.st_mode & 0o7777 == mode
+        let result: Int32
+        if followSymlinks { result = stat(path, &info) } else { result = lstat(path, &info) }
+        return result == 0 && info.st_mode & S_IFMT == kind && info.st_uid == getuid() && info.st_mode & 0o7777 == mode
     }
 
     private nonisolated static func exists(_ path: String) -> Bool {
@@ -163,25 +183,37 @@ final class SocketRequest: DictationRequest {
         return lstat(path, &info) == 0 || errno != ENOENT
     }
 
-    /// Validates the private runtime directory and socket. Only when the socket
-    /// is absent does the paired helper start the server (bundle wiring is #48);
-    /// Swift never removes or repairs runtime files.
-    private nonisolated static func locate(environment: [String: String], darwinTempDir: @Sendable () -> String?,
-                                           helper: URL, deadline: ContinuousClock.Instant) async throws -> String {
+    /// Reads `GET /v1/status` from a validated private socket. When no server
+    /// answers (no socket, or a stale one), the paired helper starts it once
+    /// (bundle wiring is #48). Swift never removes or repairs runtime files.
+    private nonisolated static func connect(environment: [String: String], darwinTempDir: @Sendable () -> String?,
+                                            helper: URL, deadline: ContinuousClock.Instant) async throws -> (String, Reply) {
         let socket = try socketPath(environment: environment, darwinTempDir: darwinTempDir)
-        if !exists(socket) {
-            try await start(helper: helper, environment: environment, deadline: deadline)
-            while !exists(socket) {
-                guard ContinuousClock.now < deadline else { throw BackendFailure.generic }
-                try await Task.sleep(for: .milliseconds(10))
+        var started = false
+        while true {
+            if exists(socket) {
+                let runtime = (socket as NSString).deletingLastPathComponent
+                guard isPrivate(runtime, kind: S_IFDIR, mode: 0o700, followSymlinks: false),
+                      isPrivate(socket, kind: S_IFSOCK, mode: 0o600, followSymlinks: false) else {
+                    throw BackendFailure.generic
+                }
+                do {
+                    return (socket, try await exchange(.GET, socket, "/v1/status", deadline: deadline))
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    // No response: refused (stale socket), closed, or the bound ran out.
+                }
+            }
+            try Task.checkCancellation()
+            guard ContinuousClock.now < deadline else { throw BackendFailure.generic }
+            if started {
+                try await Task.sleep(for: .milliseconds(50))
+            } else {
+                started = true
+                try await start(helper: helper, environment: environment, deadline: deadline)
             }
         }
-        let runtime = (socket as NSString).deletingLastPathComponent
-        guard isPrivate(runtime, kind: S_IFDIR, mode: 0o700, followSymlinks: false),
-              isPrivate(socket, kind: S_IFSOCK, mode: 0o600, followSymlinks: false) else {
-            throw BackendFailure.generic
-        }
-        return socket
     }
 
     private nonisolated static func start(helper: URL, environment: [String: String],
@@ -196,18 +228,22 @@ final class SocketRequest: DictationRequest {
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         try process.run()
-        while process.isRunning && ContinuousClock.now < deadline {
+        while process.isRunning, ContinuousClock.now < deadline, !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(10))
         }
         if process.isRunning {
-            process.terminate() // Only the owned startup helper, never a shared server PID.
-            let cleanup = ContinuousClock.now.advanced(by: .seconds(1))
-            while process.isRunning && ContinuousClock.now < cleanup { try? await Task.sleep(for: .milliseconds(10)) }
-            if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
+            // Only the owned startup helper, never a shared server PID.
+            process.terminate()
+            let pid = process.processIdentifier
+            DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
+                if process.isRunning { Darwin.kill(pid, SIGKILL) }
+            }
+            try Task.checkCancellation()
             throw BackendFailure.generic
         }
         guard process.terminationReason == .exit, process.terminationStatus == 0 else {
-            throw BackendFailure.generic
+            let usage = process.terminationReason == .exit && process.terminationStatus == 2
+            throw usage ? BackendFailure.configuration : BackendFailure.generic
         }
     }
 
@@ -278,9 +314,10 @@ final class SocketRequest: DictationRequest {
         }
     }
 
-    /// Streams the body from the open upload until `finish`, then waits up to
-    /// 125 seconds after the body ends. The server may answer early.
-    private nonisolated static func upload(_ socket: String, _ id: String, _ body: UploadBody) async throws -> String {
+    /// Streams `body` on the open upload, then waits up to `wait` after the
+    /// body ends. The server may answer before that.
+    private nonisolated static func upload(_ socket: String, _ id: String, _ body: AsyncThrowingStream<ByteBuffer, Error>,
+                                           ended: AsyncStream<Void>, wait: Duration) async throws -> String {
         var request = try prepare(.PUT, socket, "/v1/requests/\(id)/audio")
         request.headers.add(name: "Content-Type", value: "application/octet-stream")
         request.body = .stream(body, length: .unknown) // Transfer-Encoding: chunked
@@ -288,12 +325,9 @@ final class SocketRequest: DictationRequest {
         let reply = try await bounded(code: "deadline_exceeded") {
             try await Self.read(try await Self.client.execute(prepared, deadline: .distantFuture))
         } expiry: {
-            var end = body.endedAt
-            while end == nil {
-                try await Task.sleep(for: .milliseconds(50))
-                end = body.endedAt
-            }
-            try await Task.sleep(until: end!.advanced(by: Self.resultWait), clock: .continuous)
+            for await _ in ended { break }
+            try Task.checkCancellation()
+            try await Task.sleep(for: wait)
         }
         guard reply.status == 200 else { throw failure(reply) }
         guard let data = reply.body, let result = try? JSONDecoder().decode(Text.self, from: data) else {
@@ -342,12 +376,20 @@ final class SocketRequest: DictationRequest {
     private nonisolated static func admission(_ reply: Reply) throws -> Admitted {
         guard reply.status == 201 else { throw failure(reply) }
         guard let data = reply.body, let admitted = try? JSONDecoder().decode(Admitted.self, from: data),
-              (1...128).contains(admitted.request_id.utf8.count),
-              admitted.request_id.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) ||
-                  (97...122).contains($0) || $0 == 45 || $0 == 95 }) else {
+              isRequestID(admitted.request_id) else {
             throw BackendFailure.generic
         }
         return admitted
+    }
+
+    /// 1–128 characters of `[A-Za-z0-9_-]`, so the ID is safe in a URL path.
+    private nonisolated static func isRequestID(_ id: String) -> Bool {
+        (1...128).contains(id.utf8.count) && id.utf8.allSatisfy { byte in
+            (UInt8(ascii: "a")...UInt8(ascii: "z")).contains(byte) ||
+                (UInt8(ascii: "A")...UInt8(ascii: "Z")).contains(byte) ||
+                (UInt8(ascii: "0")...UInt8(ascii: "9")).contains(byte) ||
+                byte == UInt8(ascii: "_") || byte == UInt8(ascii: "-")
+        }
     }
 
     /// A listed code with a status the table allows for it; anything else is generic.
@@ -359,80 +401,3 @@ final class SocketRequest: DictationRequest {
 }
 
 extension EditorMode: Decodable {}
-
-/// The streamed upload body. It ends normally only through `finish()`; `fail()`
-/// or a cancelled consumer throws instead, so a cancelled upload never sends the
-/// final chunk that would start inference on partial audio.
-final class UploadBody: AsyncSequence, @unchecked Sendable {
-    typealias Element = ByteBuffer
-    private let lock = NSLock()
-    private var chunks: [ByteBuffer] = []
-    private var finished = false
-    private var failed = false
-    private var waiter: CheckedContinuation<ByteBuffer?, Error>?
-    private var ended: ContinuousClock.Instant?
-
-    /// When the consumer received the end of the body, if it has.
-    var endedAt: ContinuousClock.Instant? {
-        lock.lock(); defer { lock.unlock() }
-        return ended
-    }
-
-    func send(_ data: Data) {
-        lock.lock(); defer { lock.unlock() }
-        guard !finished, !failed, !data.isEmpty else { return }
-        let chunk = ByteBuffer(bytes: data)
-        if let waiter {
-            self.waiter = nil
-            waiter.resume(returning: chunk)
-        } else {
-            chunks.append(chunk)
-        }
-    }
-
-    func finish() {
-        lock.lock(); defer { lock.unlock() }
-        guard !finished, !failed else { return }
-        finished = true
-        if let waiter {
-            self.waiter = nil
-            ended = .now
-            waiter.resume(returning: nil)
-        }
-    }
-
-    func fail() {
-        lock.lock(); defer { lock.unlock() }
-        failed = true
-        chunks.removeAll()
-        waiter?.resume(throwing: CancellationError())
-        waiter = nil
-    }
-
-    private func next() async throws -> ByteBuffer? {
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                lock.lock(); defer { lock.unlock() }
-                if failed {
-                    continuation.resume(throwing: CancellationError())
-                } else if !chunks.isEmpty {
-                    continuation.resume(returning: chunks.removeFirst())
-                } else if finished {
-                    ended = .now
-                    continuation.resume(returning: nil)
-                } else {
-                    waiter = continuation
-                }
-            }
-        } onCancel: {
-            self.fail()
-        }
-    }
-
-    struct AsyncIterator: AsyncIteratorProtocol {
-        let body: UploadBody
-        func next() async throws -> ByteBuffer? { try await body.next() }
-    }
-
-    func makeAsyncIterator() -> AsyncIterator { AsyncIterator(body: self) }
-}
