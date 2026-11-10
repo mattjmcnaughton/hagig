@@ -1,0 +1,4171 @@
+{
+  "contract": "hagig REST API v1 shared fixtures; format and rules in backend/PROTOCOL.md",
+  "api_version": 1,
+  "error_codes": [
+    {
+      "code": "invalid_request",
+      "statuses": [
+        400
+      ]
+    },
+    {
+      "code": "invalid_audio",
+      "statuses": [
+        400,
+        413
+      ]
+    },
+    {
+      "code": "request_not_found",
+      "statuses": [
+        404
+      ]
+    },
+    {
+      "code": "busy",
+      "statuses": [
+        409
+      ]
+    },
+    {
+      "code": "cancelled",
+      "statuses": [
+        409
+      ]
+    },
+    {
+      "code": "model_missing",
+      "statuses": [
+        503
+      ]
+    },
+    {
+      "code": "model_invalid",
+      "statuses": [
+        503
+      ]
+    },
+    {
+      "code": "isolation_unavailable",
+      "statuses": [
+        503
+      ]
+    },
+    {
+      "code": "server_stopping",
+      "statuses": [
+        503
+      ]
+    },
+    {
+      "code": "worker_failed",
+      "statuses": [
+        500
+      ]
+    },
+    {
+      "code": "result_too_large",
+      "statuses": [
+        500
+      ]
+    },
+    {
+      "code": "deadline_exceeded",
+      "statuses": [
+        504
+      ]
+    }
+  ],
+  "client_local_codes": [
+    "incompatible_api",
+    "deadline_exceeded"
+  ],
+  "exchanges": [
+    {
+      "name": "status_idle",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "network_isolation": "required"
+      },
+      "request": {
+        "method": "GET",
+        "target": "/v1/status",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "468"
+          ]
+        ],
+        "body": {
+          "hex": "7b226170695f76657273696f6e223a312c227374617465223a2269646c65222c22776f726b6572223a22616273656e74222c226e6574776f726b5f69736f6c6174696f6e223a227265717569726564222c22636f6e6669675f67656e65726174696f6e223a22666978747572652d636f6e6669672d31222c2273657474696e6773223a7b22656469746f725f6d6f6465223a227374616e64617264222c226d6f64656c5f6964223a227177656e332d6173722d302e3662222c226c616e6775616765223a22656e227d2c22617564696f223a7b22656e636f64696e67223a226633326c65222c2273616d706c655f726174655f687a223a31363030302c226368616e6e656c73223a317d2c226c696d697473223a7b226a736f6e5f626f64795f6279746573223a36353533362c22726573756c745f626f64795f6279746573223a36353533362c22617564696f5f6279746573223a31393230303030307d2c22646561646c696e6573223a7b2275706c6f61645f73746172745f7365636f6e6473223a352c227265736572766174696f6e5f7365636f6e6473223a3333302c22636f6d7075746174696f6e5f7365636f6e6473223a3132302c22636c69656e745f776169745f7365636f6e6473223a3132357d7d",
+          "json": {
+            "api_version": 1,
+            "state": "idle",
+            "worker": "absent",
+            "network_isolation": "required",
+            "config_generation": "fixture-config-1",
+            "settings": {
+              "editor_mode": "standard",
+              "model_id": "qwen3-asr-0.6b",
+              "language": "en"
+            },
+            "audio": {
+              "encoding": "f32le",
+              "sample_rate_hz": 16000,
+              "channels": 1
+            },
+            "limits": {
+              "json_body_bytes": 65536,
+              "result_body_bytes": 65536,
+              "audio_bytes": 19200000
+            },
+            "deadlines": {
+              "upload_start_seconds": 5,
+              "reservation_seconds": 330,
+              "computation_seconds": 120,
+              "client_wait_seconds": 125
+            }
+          }
+        }
+      },
+      "server_variable": [
+        "/config_generation"
+      ],
+      "client": {
+        "outcome": "compatible"
+      }
+    },
+    {
+      "name": "status_busy_disabled",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "reserved",
+        "worker": "running"
+      },
+      "request": {
+        "method": "GET",
+        "target": "/v1/status",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "469"
+          ]
+        ],
+        "body": {
+          "hex": "7b226170695f76657273696f6e223a312c227374617465223a2262757379222c22776f726b6572223a2272756e6e696e67222c226e6574776f726b5f69736f6c6174696f6e223a2264697361626c6564222c22636f6e6669675f67656e65726174696f6e223a22666978747572652d636f6e6669672d31222c2273657474696e6773223a7b22656469746f725f6d6f6465223a227374616e64617264222c226d6f64656c5f6964223a227177656e332d6173722d302e3662222c226c616e6775616765223a22656e227d2c22617564696f223a7b22656e636f64696e67223a226633326c65222c2273616d706c655f726174655f687a223a31363030302c226368616e6e656c73223a317d2c226c696d697473223a7b226a736f6e5f626f64795f6279746573223a36353533362c22726573756c745f626f64795f6279746573223a36353533362c22617564696f5f6279746573223a31393230303030307d2c22646561646c696e6573223a7b2275706c6f61645f73746172745f7365636f6e6473223a352c227265736572766174696f6e5f7365636f6e6473223a3333302c22636f6d7075746174696f6e5f7365636f6e6473223a3132302c22636c69656e745f776169745f7365636f6e6473223a3132357d7d",
+          "json": {
+            "api_version": 1,
+            "state": "busy",
+            "worker": "running",
+            "network_isolation": "disabled",
+            "config_generation": "fixture-config-1",
+            "settings": {
+              "editor_mode": "standard",
+              "model_id": "qwen3-asr-0.6b",
+              "language": "en"
+            },
+            "audio": {
+              "encoding": "f32le",
+              "sample_rate_hz": 16000,
+              "channels": 1
+            },
+            "limits": {
+              "json_body_bytes": 65536,
+              "result_body_bytes": 65536,
+              "audio_bytes": 19200000
+            },
+            "deadlines": {
+              "upload_start_seconds": 5,
+              "reservation_seconds": 330,
+              "computation_seconds": 120,
+              "client_wait_seconds": 125
+            }
+          }
+        }
+      },
+      "server_variable": [
+        "/config_generation"
+      ],
+      "client": {
+        "outcome": "compatible"
+      }
+    },
+    {
+      "name": "status_extra_fields",
+      "consumers": [
+        "client"
+      ],
+      "request": {
+        "method": "GET",
+        "target": "/v1/status",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "523"
+          ]
+        ],
+        "body": {
+          "hex": "7b226170695f76657273696f6e223a312c227374617465223a2269646c65222c22776f726b6572223a22616273656e74222c226e6574776f726b5f69736f6c6174696f6e223a227265717569726564222c22636f6e6669675f67656e65726174696f6e223a22666978747572652d636f6e6669672d31222c2273657474696e6773223a7b22656469746f725f6d6f6465223a227374616e64617264222c226d6f64656c5f6964223a227177656e332d6173722d302e3662222c226c616e6775616765223a22656e222c226675747572655f73657474696e67223a2278227d2c22617564696f223a7b22656e636f64696e67223a226633326c65222c2273616d706c655f726174655f687a223a31363030302c226368616e6e656c73223a317d2c226c696d697473223a7b226a736f6e5f626f64795f6279746573223a36353533362c22726573756c745f626f64795f6279746573223a36353533362c22617564696f5f6279746573223a31393230303030302c226675747572655f6c696d6974223a317d2c22646561646c696e6573223a7b2275706c6f61645f73746172745f7365636f6e6473223a352c227265736572766174696f6e5f7365636f6e6473223a3333302c22636f6d7075746174696f6e5f7365636f6e6473223a3132302c22636c69656e745f776169745f7365636f6e6473223a3132357d2c226675747572655f6669656c64223a317d",
+          "json": {
+            "api_version": 1,
+            "state": "idle",
+            "worker": "absent",
+            "network_isolation": "required",
+            "config_generation": "fixture-config-1",
+            "settings": {
+              "editor_mode": "standard",
+              "model_id": "qwen3-asr-0.6b",
+              "language": "en",
+              "future_setting": "x"
+            },
+            "audio": {
+              "encoding": "f32le",
+              "sample_rate_hz": 16000,
+              "channels": 1
+            },
+            "limits": {
+              "json_body_bytes": 65536,
+              "result_body_bytes": 65536,
+              "audio_bytes": 19200000,
+              "future_limit": 1
+            },
+            "deadlines": {
+              "upload_start_seconds": 5,
+              "reservation_seconds": 330,
+              "computation_seconds": 120,
+              "client_wait_seconds": 125
+            },
+            "future_field": 1
+          }
+        }
+      },
+      "client": {
+        "outcome": "compatible"
+      }
+    },
+    {
+      "name": "status_api_version_2",
+      "consumers": [
+        "client"
+      ],
+      "request": {
+        "method": "GET",
+        "target": "/v1/status",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "468"
+          ]
+        ],
+        "body": {
+          "hex": "7b226170695f76657273696f6e223a322c227374617465223a2269646c65222c22776f726b6572223a22616273656e74222c226e6574776f726b5f69736f6c6174696f6e223a227265717569726564222c22636f6e6669675f67656e65726174696f6e223a22666978747572652d636f6e6669672d31222c2273657474696e6773223a7b22656469746f725f6d6f6465223a227374616e64617264222c226d6f64656c5f6964223a227177656e332d6173722d302e3662222c226c616e6775616765223a22656e227d2c22617564696f223a7b22656e636f64696e67223a226633326c65222c2273616d706c655f726174655f687a223a31363030302c226368616e6e656c73223a317d2c226c696d697473223a7b226a736f6e5f626f64795f6279746573223a36353533362c22726573756c745f626f64795f6279746573223a36353533362c22617564696f5f6279746573223a31393230303030307d2c22646561646c696e6573223a7b2275706c6f61645f73746172745f7365636f6e6473223a352c227265736572766174696f6e5f7365636f6e6473223a3333302c22636f6d7075746174696f6e5f7365636f6e6473223a3132302c22636c69656e745f776169745f7365636f6e6473223a3132357d7d",
+          "json": {
+            "api_version": 2,
+            "state": "idle",
+            "worker": "absent",
+            "network_isolation": "required",
+            "config_generation": "fixture-config-1",
+            "settings": {
+              "editor_mode": "standard",
+              "model_id": "qwen3-asr-0.6b",
+              "language": "en"
+            },
+            "audio": {
+              "encoding": "f32le",
+              "sample_rate_hz": 16000,
+              "channels": 1
+            },
+            "limits": {
+              "json_body_bytes": 65536,
+              "result_body_bytes": 65536,
+              "audio_bytes": 19200000
+            },
+            "deadlines": {
+              "upload_start_seconds": 5,
+              "reservation_seconds": 330,
+              "computation_seconds": 120,
+              "client_wait_seconds": 125
+            }
+          }
+        }
+      },
+      "client": {
+        "outcome": "incompatible_api"
+      }
+    },
+    {
+      "name": "status_missing_deadlines",
+      "consumers": [
+        "client"
+      ],
+      "request": {
+        "method": "GET",
+        "target": "/v1/status",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "351"
+          ]
+        ],
+        "body": {
+          "hex": "7b226170695f76657273696f6e223a312c227374617465223a2269646c65222c22776f726b6572223a22616273656e74222c226e6574776f726b5f69736f6c6174696f6e223a227265717569726564222c22636f6e6669675f67656e65726174696f6e223a22666978747572652d636f6e6669672d31222c2273657474696e6773223a7b22656469746f725f6d6f6465223a227374616e64617264222c226d6f64656c5f6964223a227177656e332d6173722d302e3662222c226c616e6775616765223a22656e227d2c22617564696f223a7b22656e636f64696e67223a226633326c65222c2273616d706c655f726174655f687a223a31363030302c226368616e6e656c73223a317d2c226c696d697473223a7b226a736f6e5f626f64795f6279746573223a36353533362c22726573756c745f626f64795f6279746573223a36353533362c22617564696f5f6279746573223a31393230303030307d7d",
+          "json": {
+            "api_version": 1,
+            "state": "idle",
+            "worker": "absent",
+            "network_isolation": "required",
+            "config_generation": "fixture-config-1",
+            "settings": {
+              "editor_mode": "standard",
+              "model_id": "qwen3-asr-0.6b",
+              "language": "en"
+            },
+            "audio": {
+              "encoding": "f32le",
+              "sample_rate_hz": 16000,
+              "channels": 1
+            },
+            "limits": {
+              "json_body_bytes": 65536,
+              "result_body_bytes": 65536,
+              "audio_bytes": 19200000
+            }
+          }
+        }
+      },
+      "client": {
+        "outcome": "incompatible_api"
+      }
+    },
+    {
+      "name": "status_unknown_state",
+      "consumers": [
+        "client"
+      ],
+      "request": {
+        "method": "GET",
+        "target": "/v1/status",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "470"
+          ]
+        ],
+        "body": {
+          "hex": "7b226170695f76657273696f6e223a312c227374617465223a22706175736564222c22776f726b6572223a22616273656e74222c226e6574776f726b5f69736f6c6174696f6e223a227265717569726564222c22636f6e6669675f67656e65726174696f6e223a22666978747572652d636f6e6669672d31222c2273657474696e6773223a7b22656469746f725f6d6f6465223a227374616e64617264222c226d6f64656c5f6964223a227177656e332d6173722d302e3662222c226c616e6775616765223a22656e227d2c22617564696f223a7b22656e636f64696e67223a226633326c65222c2273616d706c655f726174655f687a223a31363030302c226368616e6e656c73223a317d2c226c696d697473223a7b226a736f6e5f626f64795f6279746573223a36353533362c22726573756c745f626f64795f6279746573223a36353533362c22617564696f5f6279746573223a31393230303030307d2c22646561646c696e6573223a7b2275706c6f61645f73746172745f7365636f6e6473223a352c227265736572766174696f6e5f7365636f6e6473223a3333302c22636f6d7075746174696f6e5f7365636f6e6473223a3132302c22636c69656e745f776169745f7365636f6e6473223a3132357d7d",
+          "json": {
+            "api_version": 1,
+            "state": "paused",
+            "worker": "absent",
+            "network_isolation": "required",
+            "config_generation": "fixture-config-1",
+            "settings": {
+              "editor_mode": "standard",
+              "model_id": "qwen3-asr-0.6b",
+              "language": "en"
+            },
+            "audio": {
+              "encoding": "f32le",
+              "sample_rate_hz": 16000,
+              "channels": 1
+            },
+            "limits": {
+              "json_body_bytes": 65536,
+              "result_body_bytes": 65536,
+              "audio_bytes": 19200000
+            },
+            "deadlines": {
+              "upload_start_seconds": 5,
+              "reservation_seconds": 330,
+              "computation_seconds": 120,
+              "client_wait_seconds": 125
+            }
+          }
+        }
+      },
+      "client": {
+        "outcome": "incompatible_api"
+      }
+    },
+    {
+      "name": "status_unknown_editor_mode",
+      "consumers": [
+        "client"
+      ],
+      "request": {
+        "method": "GET",
+        "target": "/v1/status",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "465"
+          ]
+        ],
+        "body": {
+          "hex": "7b226170695f76657273696f6e223a312c227374617465223a2269646c65222c22776f726b6572223a22616273656e74222c226e6574776f726b5f69736f6c6174696f6e223a227265717569726564222c22636f6e6669675f67656e65726174696f6e223a22666978747572652d636f6e6669672d31222c2273657474696e6773223a7b22656469746f725f6d6f6465223a22656d616373222c226d6f64656c5f6964223a227177656e332d6173722d302e3662222c226c616e6775616765223a22656e227d2c22617564696f223a7b22656e636f64696e67223a226633326c65222c2273616d706c655f726174655f687a223a31363030302c226368616e6e656c73223a317d2c226c696d697473223a7b226a736f6e5f626f64795f6279746573223a36353533362c22726573756c745f626f64795f6279746573223a36353533362c22617564696f5f6279746573223a31393230303030307d2c22646561646c696e6573223a7b2275706c6f61645f73746172745f7365636f6e6473223a352c227265736572766174696f6e5f7365636f6e6473223a3333302c22636f6d7075746174696f6e5f7365636f6e6473223a3132302c22636c69656e745f776169745f7365636f6e6473223a3132357d7d",
+          "json": {
+            "api_version": 1,
+            "state": "idle",
+            "worker": "absent",
+            "network_isolation": "required",
+            "config_generation": "fixture-config-1",
+            "settings": {
+              "editor_mode": "emacs",
+              "model_id": "qwen3-asr-0.6b",
+              "language": "en"
+            },
+            "audio": {
+              "encoding": "f32le",
+              "sample_rate_hz": 16000,
+              "channels": 1
+            },
+            "limits": {
+              "json_body_bytes": 65536,
+              "result_body_bytes": 65536,
+              "audio_bytes": 19200000
+            },
+            "deadlines": {
+              "upload_start_seconds": 5,
+              "reservation_seconds": 330,
+              "computation_seconds": 120,
+              "client_wait_seconds": 125
+            }
+          }
+        }
+      },
+      "client": {
+        "outcome": "incompatible_api"
+      }
+    },
+    {
+      "name": "status_listed_error_code",
+      "consumers": [
+        "client"
+      ],
+      "request": {
+        "method": "GET",
+        "target": "/v1/status",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "26"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f72657175657374227d",
+          "json": {
+            "code": "invalid_request"
+          }
+        }
+      },
+      "client": {
+        "outcome": "incompatible_api"
+      }
+    },
+    {
+      "name": "status_not_found_foreign_server",
+      "consumers": [
+        "client"
+      ],
+      "request": {
+        "method": "GET",
+        "target": "/v1/status",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 404,
+        "reason": "Not Found",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "22"
+          ]
+        ],
+        "body": {
+          "hex": "7b2264657461696c223a224e6f7420466f756e64227d",
+          "json": {
+            "detail": "Not Found"
+          }
+        }
+      },
+      "client": {
+        "outcome": "incompatible_api"
+      }
+    },
+    {
+      "name": "status_stopping",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "stopping"
+      },
+      "request": {
+        "method": "GET",
+        "target": "/v1/status",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 503,
+        "reason": "Service Unavailable",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "26"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a227365727665725f73746f7070696e67227d",
+          "json": {
+            "code": "server_stopping"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "server_stopping"
+      }
+    },
+    {
+      "name": "route_unknown",
+      "consumers": [
+        "server"
+      ],
+      "given": {},
+      "request": {
+        "method": "GET",
+        "target": "/v1/unknown",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "26"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f72657175657374227d",
+          "json": {
+            "code": "invalid_request"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "route_wrong_method",
+      "consumers": [
+        "server"
+      ],
+      "given": {},
+      "request": {
+        "method": "POST",
+        "target": "/v1/status",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Length",
+            "0"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "26"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f72657175657374227d",
+          "json": {
+            "code": "invalid_request"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "route_trailing_slash",
+      "consumers": [
+        "server"
+      ],
+      "given": {},
+      "request": {
+        "method": "GET",
+        "target": "/v1/status/",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "26"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f72657175657374227d",
+          "json": {
+            "code": "invalid_request"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "route_get_request",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "GET",
+        "target": "/v1/requests/fixture-request-1",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "26"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f72657175657374227d",
+          "json": {
+            "code": "invalid_request"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "admit",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {},
+      "request": {
+        "method": "POST",
+        "target": "/v1/requests",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Length",
+            "0"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 201,
+        "reason": "Created",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "101"
+          ]
+        ],
+        "body": {
+          "hex": "7b22726571756573745f6964223a22666978747572652d726571756573742d31222c22636f6e6669675f67656e65726174696f6e223a22666978747572652d636f6e6669672d31222c226d6f64656c5f6964223a227177656e332d6173722d302e3662227d",
+          "json": {
+            "request_id": "fixture-request-1",
+            "config_generation": "fixture-config-1",
+            "model_id": "qwen3-asr-0.6b"
+          }
+        }
+      },
+      "server_variable": [
+        "/request_id",
+        "/config_generation"
+      ],
+      "client": {
+        "outcome": "admitted"
+      }
+    },
+    {
+      "name": "admit_busy",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "POST",
+        "target": "/v1/requests",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Length",
+            "0"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 409,
+        "reason": "Conflict",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "15"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a2262757379227d",
+          "json": {
+            "code": "busy"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "busy"
+      }
+    },
+    {
+      "name": "admit_with_body",
+      "consumers": [
+        "server"
+      ],
+      "given": {},
+      "request": {
+        "method": "POST",
+        "target": "/v1/requests",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/json"
+          ],
+          [
+            "Content-Length",
+            "2"
+          ]
+        ],
+        "body": {
+          "hex": "7b7d",
+          "json": {}
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "26"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f72657175657374227d",
+          "json": {
+            "code": "invalid_request"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "admit_stopping",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "stopping"
+      },
+      "request": {
+        "method": "POST",
+        "target": "/v1/requests",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Length",
+            "0"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 503,
+        "reason": "Service Unavailable",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "26"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a227365727665725f73746f7070696e67227d",
+          "json": {
+            "code": "server_stopping"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "server_stopping"
+      }
+    },
+    {
+      "name": "admit_config_changed",
+      "consumers": [
+        "client"
+      ],
+      "request": {
+        "method": "POST",
+        "target": "/v1/requests",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Length",
+            "0"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 201,
+        "reason": "Created",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "101"
+          ]
+        ],
+        "body": {
+          "hex": "7b22726571756573745f6964223a22666978747572652d726571756573742d31222c22636f6e6669675f67656e65726174696f6e223a22666978747572652d636f6e6669672d32222c226d6f64656c5f6964223a227177656e332d6173722d302e3662227d",
+          "json": {
+            "request_id": "fixture-request-1",
+            "config_generation": "fixture-config-2",
+            "model_id": "qwen3-asr-0.6b"
+          }
+        }
+      },
+      "client": {
+        "outcome": "generic_failure",
+        "then": "cancel_admitted"
+      }
+    },
+    {
+      "name": "upload_chunked_text",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "reserved",
+        "engine": {
+          "text": "Fixture λ.\nNext line."
+        }
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "000000",
+            "3e000040",
+            "bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "34"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b2274657874223a224669787475726520cebb2e5c6e4e657874206c696e652e227d",
+          "json": {
+            "text": "Fixture λ.\nNext line."
+          }
+        }
+      },
+      "client": {
+        "outcome": "text",
+        "text": "Fixture λ.\nNext line."
+      }
+    },
+    {
+      "name": "upload_content_length_text",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "reserved",
+        "engine": {
+          "text": "Fixture λ.\nNext line."
+        }
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Content-Length",
+            "12"
+          ]
+        ],
+        "body": {
+          "hex": "0000003e000040bf0000803f"
+        }
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "34"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b2274657874223a224669787475726520cebb2e5c6e4e657874206c696e652e227d",
+          "json": {
+            "text": "Fixture λ.\nNext line."
+          }
+        }
+      },
+      "client": {
+        "outcome": "text",
+        "text": "Fixture λ.\nNext line."
+      }
+    },
+    {
+      "name": "upload_empty_text",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "reserved",
+        "engine": {
+          "text": ""
+        }
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "11"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b2274657874223a22227d",
+          "json": {
+            "text": ""
+          }
+        }
+      },
+      "client": {
+        "outcome": "empty"
+      }
+    },
+    {
+      "name": "upload_whitespace_text",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved",
+        "engine": {
+          "text": " \n\t　 "
+        }
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "11"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b2274657874223a22227d",
+          "json": {
+            "text": ""
+          }
+        }
+      },
+      "client": {
+        "outcome": "empty"
+      }
+    },
+    {
+      "name": "upload_text_surrounding_whitespace_preserved",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "reserved",
+        "engine": {
+          "text": " Fixture.\n"
+        }
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "22"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b2274657874223a2220466978747572652e5c6e227d",
+          "json": {
+            "text": " Fixture.\n"
+          }
+        }
+      },
+      "client": {
+        "outcome": "text",
+        "text": " Fixture.\n"
+      }
+    },
+    {
+      "name": "audio_one_byte_chunks",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "00",
+            "00",
+            "00",
+            "3e",
+            "00",
+            "00",
+            "40",
+            "bf",
+            "00",
+            "00",
+            "80",
+            "3f"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "19"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b2274657874223a22466978747572652e227d",
+          "json": {
+            "text": "Fixture."
+          }
+        }
+      },
+      "client": {
+        "outcome": "text",
+        "text": "Fixture."
+      }
+    },
+    {
+      "name": "audio_boundary_values",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "000080bf0000",
+            "803f0000008001000000"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "19"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b2274657874223a22466978747572652e227d",
+          "json": {
+            "text": "Fixture."
+          }
+        }
+      },
+      "client": {
+        "outcome": "text",
+        "text": "Fixture."
+      }
+    },
+    {
+      "name": "audio_misaligned_chunked",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e",
+            "000040"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "24"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f617564696f227d",
+          "json": {
+            "code": "invalid_audio"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_audio"
+      }
+    },
+    {
+      "name": "audio_misaligned_content_length",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Content-Length",
+            "7"
+          ]
+        ],
+        "body": {
+          "hex": "0000003e000040"
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "24"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f617564696f227d",
+          "json": {
+            "code": "invalid_audio"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_audio"
+      }
+    },
+    {
+      "name": "audio_empty_chunked",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": []
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "24"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f617564696f227d",
+          "json": {
+            "code": "invalid_audio"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_audio"
+      }
+    },
+    {
+      "name": "audio_empty_content_length",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Content-Length",
+            "0"
+          ]
+        ],
+        "body": {
+          "hex": ""
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "24"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f617564696f227d",
+          "json": {
+            "code": "invalid_audio"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_audio"
+      }
+    },
+    {
+      "name": "audio_no_framing",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "24"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f617564696f227d",
+          "json": {
+            "code": "invalid_audio"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_audio"
+      }
+    },
+    {
+      "name": "audio_nan_split_across_chunks",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f0000",
+            "c07f"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "24"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f617564696f227d",
+          "json": {
+            "code": "invalid_audio"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_audio"
+      }
+    },
+    {
+      "name": "audio_plus_infinity",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000807f"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "24"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f617564696f227d",
+          "json": {
+            "code": "invalid_audio"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_audio"
+      }
+    },
+    {
+      "name": "audio_minus_infinity",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "000080ff"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "24"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f617564696f227d",
+          "json": {
+            "code": "invalid_audio"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_audio"
+      }
+    },
+    {
+      "name": "audio_just_above_plus_one",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0100803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "24"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f617564696f227d",
+          "json": {
+            "code": "invalid_audio"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_audio"
+      }
+    },
+    {
+      "name": "audio_just_below_minus_one",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "010080bf"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "24"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f617564696f227d",
+          "json": {
+            "code": "invalid_audio"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_audio"
+      }
+    },
+    {
+      "name": "audio_plus_two_after_valid",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f",
+            "00000040",
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "24"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f617564696f227d",
+          "json": {
+            "code": "invalid_audio"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_audio"
+      }
+    },
+    {
+      "name": "audio_cap_exact_content_length",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Content-Length",
+            "19200000"
+          ]
+        ],
+        "body": {
+          "repeat": {
+            "unit_hex": "00000000",
+            "count": 4800000
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "19"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b2274657874223a22466978747572652e227d",
+          "json": {
+            "text": "Fixture."
+          }
+        }
+      },
+      "client": {
+        "outcome": "text",
+        "text": "Fixture."
+      }
+    },
+    {
+      "name": "audio_cap_exact_chunked",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "repeat": {
+            "unit_hex": "00000000",
+            "count": 4800000,
+            "chunk_units": 16384
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "19"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b2274657874223a22466978747572652e227d",
+          "json": {
+            "text": "Fixture."
+          }
+        }
+      },
+      "client": {
+        "outcome": "text",
+        "text": "Fixture."
+      }
+    },
+    {
+      "name": "audio_cap_exceeded_by_one_byte_chunked",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "repeat": {
+            "unit_hex": "00",
+            "count": 19200001,
+            "chunk_units": 65536
+          }
+        }
+      },
+      "response": {
+        "status": 413,
+        "reason": "Request Entity Too Large",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "24"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f617564696f227d",
+          "json": {
+            "code": "invalid_audio"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_audio"
+      }
+    },
+    {
+      "name": "audio_cap_exceeded_content_length_declared",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Content-Length",
+            "19200001"
+          ]
+        ],
+        "body": {
+          "not_sent": true
+        }
+      },
+      "response": {
+        "status": 413,
+        "reason": "Request Entity Too Large",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "24"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f617564696f227d",
+          "json": {
+            "code": "invalid_audio"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_audio"
+      }
+    },
+    {
+      "name": "upload_unknown_request",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {},
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-2/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 404,
+        "reason": "Not Found",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "28"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22726571756573745f6e6f745f666f756e64227d",
+          "json": {
+            "code": "request_not_found"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "request_not_found"
+      }
+    },
+    {
+      "name": "upload_after_start_deadline",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "upload_start_expired"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 404,
+        "reason": "Not Found",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "28"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22726571756573745f6e6f745f666f756e64227d",
+          "json": {
+            "code": "request_not_found"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "request_not_found"
+      }
+    },
+    {
+      "name": "upload_second_upload",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "uploading"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 404,
+        "reason": "Not Found",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "28"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22726571756573745f6e6f745f666f756e64227d",
+          "json": {
+            "code": "request_not_found"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "request_not_found"
+      }
+    },
+    {
+      "name": "upload_wrong_content_type",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "text/plain"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "26"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f72657175657374227d",
+          "json": {
+            "code": "invalid_request"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "upload_while_stopping",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "stopping"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 503,
+        "reason": "Service Unavailable",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "26"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a227365727665725f73746f7070696e67227d",
+          "json": {
+            "code": "server_stopping"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "server_stopping"
+      }
+    },
+    {
+      "name": "upload_cancelled",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "reserved",
+        "during_upload": "delete"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ],
+          "open": true
+        }
+      },
+      "response": {
+        "status": 409,
+        "reason": "Conflict",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "20"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a2263616e63656c6c6564227d",
+          "json": {
+            "code": "cancelled"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "cancelled"
+      }
+    },
+    {
+      "name": "upload_server_stopping",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "reserved",
+        "during_upload": "stop"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ],
+          "open": true
+        }
+      },
+      "response": {
+        "status": 503,
+        "reason": "Service Unavailable",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "26"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a227365727665725f73746f7070696e67227d",
+          "json": {
+            "code": "server_stopping"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "server_stopping"
+      }
+    },
+    {
+      "name": "upload_reservation_deadline",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "reserved",
+        "during_upload": "reservation_deadline"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ],
+          "open": true
+        }
+      },
+      "response": {
+        "status": 504,
+        "reason": "Gateway Timeout",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "28"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22646561646c696e655f6578636565646564227d",
+          "json": {
+            "code": "deadline_exceeded"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "deadline_exceeded"
+      }
+    },
+    {
+      "name": "upload_model_missing",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "reserved",
+        "model": "missing"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 503,
+        "reason": "Service Unavailable",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "24"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a226d6f64656c5f6d697373696e67227d",
+          "json": {
+            "code": "model_missing"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "model_missing"
+      }
+    },
+    {
+      "name": "upload_model_invalid",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "reserved",
+        "model": "corrupt"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 503,
+        "reason": "Service Unavailable",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "24"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a226d6f64656c5f696e76616c6964227d",
+          "json": {
+            "code": "model_invalid"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "model_invalid"
+      }
+    },
+    {
+      "name": "upload_isolation_unavailable",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "reserved",
+        "network_isolation": "required",
+        "isolation": "unavailable"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 503,
+        "reason": "Service Unavailable",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "32"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a2269736f6c6174696f6e5f756e617661696c61626c65227d",
+          "json": {
+            "code": "isolation_unavailable"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "isolation_unavailable"
+      }
+    },
+    {
+      "name": "upload_worker_failed",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "reserved",
+        "engine": "crash"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 500,
+        "reason": "Internal Server Error",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "24"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22776f726b65725f6661696c6564227d",
+          "json": {
+            "code": "worker_failed"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "worker_failed"
+      }
+    },
+    {
+      "name": "upload_result_too_large",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "reserved",
+        "engine": {
+          "text_repeat": {
+            "unit": "a",
+            "count": 70000
+          }
+        }
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 500,
+        "reason": "Internal Server Error",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "27"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22726573756c745f746f6f5f6c61726765227d",
+          "json": {
+            "code": "result_too_large"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "result_too_large"
+      }
+    },
+    {
+      "name": "upload_computation_deadline",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "reserved",
+        "engine": "stall"
+      },
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 504,
+        "reason": "Gateway Timeout",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "28"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22646561646c696e655f6578636565646564227d",
+          "json": {
+            "code": "deadline_exceeded"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "deadline_exceeded"
+      }
+    },
+    {
+      "name": "upload_unknown_code",
+      "consumers": [
+        "client"
+      ],
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 500,
+        "reason": "Internal Server Error",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "22"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a226675747572655f636f6465227d",
+          "json": {
+            "code": "future_code"
+          }
+        }
+      },
+      "client": {
+        "outcome": "generic_failure"
+      }
+    },
+    {
+      "name": "upload_known_code_wrong_status",
+      "consumers": [
+        "client"
+      ],
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 500,
+        "reason": "Internal Server Error",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "15"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a2262757379227d",
+          "json": {
+            "code": "busy"
+          }
+        }
+      },
+      "client": {
+        "outcome": "generic_failure"
+      }
+    },
+    {
+      "name": "upload_success_status_without_text",
+      "consumers": [
+        "client"
+      ],
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "15"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a2262757379227d",
+          "json": {
+            "code": "busy"
+          }
+        }
+      },
+      "client": {
+        "outcome": "generic_failure"
+      }
+    },
+    {
+      "name": "upload_text_not_string",
+      "consumers": [
+        "client"
+      ],
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "reason": "OK",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "13"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b2274657874223a6e756c6c7d",
+          "json": {
+            "text": null
+          }
+        }
+      },
+      "client": {
+        "outcome": "generic_failure"
+      }
+    },
+    {
+      "name": "upload_plain_text_error",
+      "consumers": [
+        "client"
+      ],
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 500,
+        "reason": "Internal Server Error",
+        "headers": [
+          [
+            "content-type",
+            "text/plain; charset=utf-8"
+          ],
+          [
+            "content-length",
+            "21"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "496e7465726e616c20536572766572204572726f72"
+        }
+      },
+      "client": {
+        "outcome": "generic_failure"
+      }
+    },
+    {
+      "name": "upload_invalid_request",
+      "consumers": [
+        "client"
+      ],
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "26"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f72657175657374227d",
+          "json": {
+            "code": "invalid_request"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "upload_too_large",
+      "consumers": [
+        "client"
+      ],
+      "request": {
+        "method": "PUT",
+        "target": "/v1/requests/fixture-request-1/audio",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/octet-stream"
+          ],
+          [
+            "Transfer-Encoding",
+            "chunked"
+          ]
+        ],
+        "body": {
+          "chunks": [
+            "0000003e000040bf0000803f"
+          ],
+          "open": true
+        }
+      },
+      "response": {
+        "status": 413,
+        "reason": "Request Entity Too Large",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "24"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f617564696f227d",
+          "json": {
+            "code": "invalid_audio"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_audio"
+      }
+    },
+    {
+      "name": "admit_missing_request_id",
+      "consumers": [
+        "client"
+      ],
+      "request": {
+        "method": "POST",
+        "target": "/v1/requests",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Length",
+            "0"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 201,
+        "reason": "Created",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "68"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6e6669675f67656e65726174696f6e223a22666978747572652d636f6e6669672d31222c226d6f64656c5f6964223a227177656e332d6173722d302e3662227d",
+          "json": {
+            "config_generation": "fixture-config-1",
+            "model_id": "qwen3-asr-0.6b"
+          }
+        }
+      },
+      "client": {
+        "outcome": "generic_failure"
+      }
+    },
+    {
+      "name": "admit_bad_request_id",
+      "consumers": [
+        "client"
+      ],
+      "request": {
+        "method": "POST",
+        "target": "/v1/requests",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Length",
+            "0"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 201,
+        "reason": "Created",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "93"
+          ]
+        ],
+        "body": {
+          "hex": "7b22726571756573745f6964223a222e2e2f737461747573222c22636f6e6669675f67656e65726174696f6e223a22666978747572652d636f6e6669672d31222c226d6f64656c5f6964223a227177656e332d6173722d302e3662227d",
+          "json": {
+            "request_id": "../status",
+            "config_generation": "fixture-config-1",
+            "model_id": "qwen3-asr-0.6b"
+          }
+        }
+      },
+      "client": {
+        "outcome": "generic_failure"
+      }
+    },
+    {
+      "name": "admit_extra_field",
+      "consumers": [
+        "client"
+      ],
+      "request": {
+        "method": "POST",
+        "target": "/v1/requests",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Length",
+            "0"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 201,
+        "reason": "Created",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "118"
+          ]
+        ],
+        "body": {
+          "hex": "7b22726571756573745f6964223a22666978747572652d726571756573742d31222c22636f6e6669675f67656e65726174696f6e223a22666978747572652d636f6e6669672d31222c226d6f64656c5f6964223a227177656e332d6173722d302e3662222c226675747572655f6669656c64223a317d",
+          "json": {
+            "request_id": "fixture-request-1",
+            "config_generation": "fixture-config-1",
+            "model_id": "qwen3-asr-0.6b",
+            "future_field": 1
+          }
+        }
+      },
+      "client": {
+        "outcome": "admitted"
+      }
+    },
+    {
+      "name": "cancel_reserved",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "DELETE",
+        "target": "/v1/requests/fixture-request-1",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 204,
+        "reason": "No Content",
+        "headers": [],
+        "body": {
+          "empty": true
+        }
+      },
+      "client": {
+        "outcome": "cancel_acknowledged"
+      }
+    },
+    {
+      "name": "cancel_unknown",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {},
+      "request": {
+        "method": "DELETE",
+        "target": "/v1/requests/fixture-request-2",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 204,
+        "reason": "No Content",
+        "headers": [],
+        "body": {
+          "empty": true
+        }
+      },
+      "client": {
+        "outcome": "cancel_acknowledged"
+      }
+    },
+    {
+      "name": "cancel_while_stopping",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "stopping"
+      },
+      "request": {
+        "method": "DELETE",
+        "target": "/v1/requests/fixture-request-1",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 204,
+        "reason": "No Content",
+        "headers": [],
+        "body": {
+          "empty": true
+        }
+      },
+      "client": {
+        "outcome": "cancel_acknowledged"
+      }
+    },
+    {
+      "name": "cancel_with_body",
+      "consumers": [
+        "server"
+      ],
+      "given": {
+        "state": "reserved"
+      },
+      "request": {
+        "method": "DELETE",
+        "target": "/v1/requests/fixture-request-1",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Type",
+            "application/json"
+          ],
+          [
+            "Content-Length",
+            "2"
+          ]
+        ],
+        "body": {
+          "hex": "7b7d",
+          "json": {}
+        }
+      },
+      "response": {
+        "status": 400,
+        "reason": "Bad Request",
+        "headers": [
+          [
+            "content-type",
+            "application/json"
+          ],
+          [
+            "content-length",
+            "26"
+          ],
+          [
+            "connection",
+            "close"
+          ]
+        ],
+        "body": {
+          "hex": "7b22636f6465223a22696e76616c69645f72657175657374227d",
+          "json": {
+            "code": "invalid_request"
+          }
+        }
+      },
+      "client": {
+        "outcome": "failure",
+        "code": "invalid_request"
+      }
+    },
+    {
+      "name": "stop",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {},
+      "request": {
+        "method": "POST",
+        "target": "/v1/stop",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Length",
+            "0"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 202,
+        "reason": "Accepted",
+        "headers": [
+          [
+            "content-length",
+            "0"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "client": {
+        "outcome": "stop_acknowledged"
+      }
+    },
+    {
+      "name": "stop_repeated",
+      "consumers": [
+        "server",
+        "client"
+      ],
+      "given": {
+        "state": "stopping"
+      },
+      "request": {
+        "method": "POST",
+        "target": "/v1/stop",
+        "headers": [
+          [
+            "Host",
+            "localhost"
+          ],
+          [
+            "Content-Length",
+            "0"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "response": {
+        "status": 202,
+        "reason": "Accepted",
+        "headers": [
+          [
+            "content-length",
+            "0"
+          ]
+        ],
+        "body": {
+          "empty": true
+        }
+      },
+      "client": {
+        "outcome": "stop_acknowledged"
+      }
+    }
+  ],
+  "result_size_cases": [
+    {
+      "name": "ascii_at_limit",
+      "text_repeat": {
+        "unit": "a",
+        "count": 65525
+      },
+      "rest_body_bytes": 65536,
+      "fits": true
+    },
+    {
+      "name": "ascii_over_limit",
+      "text_repeat": {
+        "unit": "a",
+        "count": 65526
+      },
+      "rest_body_bytes": 65537,
+      "fits": false
+    },
+    {
+      "name": "newline_escape_over_limit",
+      "text_repeat": {
+        "unit": "\n",
+        "count": 32763
+      },
+      "rest_body_bytes": 65537,
+      "fits": false
+    },
+    {
+      "name": "two_byte_utf8_over_limit",
+      "text_repeat": {
+        "unit": "λ",
+        "count": 32763
+      },
+      "rest_body_bytes": 65537,
+      "fits": false
+    }
+  ]
+}
