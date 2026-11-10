@@ -51,6 +51,9 @@ final class SocketRequest: DictationRequest {
         configuration.redirectConfiguration = .disallow
         configuration.timeout = .init(connect: .seconds(5))
         configuration.httpVersion = .http1Only
+        // A refused connect (no server, or a stale socket) fails at once instead of
+        // retrying with backoff until the bound, so the helper can still start it.
+        configuration.connectionPool.retryConnectionEstablishment = false
         // POSIX sockets for http+unix. App-lifetime: static storage is never deinitialized.
         return HTTPClient(eventLoopGroup: MultiThreadedEventLoopGroup.singleton, configuration: configuration)
     }()
