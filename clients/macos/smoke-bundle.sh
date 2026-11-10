@@ -36,21 +36,22 @@ while IFS= read -r binary; do
     case " $(lipo -archs "$binary") " in *' arm64 '*) ;; *) fail "not arm64: ${binary#"$app"/}" ;; esac
     # Only system libraries and loader-relative paths inside the bundle.
     # Process substitution keeps these loops, and so `fail`, in this shell.
-    own=$(otool -D "$binary" | tail -n +2)
+    # -arch arm64: one slice of a universal binary; dependency lines start with a tab.
+    own=$(otool -D -arch arm64 "$binary" | tail -n +2)
     while read -r dependency; do
         [ "$dependency" != "$own" ] || continue
         case "$dependency" in
             /usr/lib/*|/System/Library/*|@rpath/*|@loader_path/*|@executable_path/*) ;;
             *) fail "absolute loader dependency $dependency in ${binary#"$app"/}" ;;
         esac
-    done < <(otool -L "$binary" | tail -n +2 | awk '{ print $1 }')
+    done < <(otool -L -arch arm64 "$binary" | awk '/^\t/ { print $1 }')
     while read -r rpath; do
         case "$rpath" in
             @loader_path*|@executable_path*) ;;
             /usr/lib/swift) [ "$binary" = "$contents/MacOS/HagigShell" ] || fail "rpath $rpath in ${binary#"$app"/}" ;;
             *) fail "loader search path $rpath in ${binary#"$app"/}" ;;
         esac
-    done < <(otool -l "$binary" | awk '/cmd LC_RPATH/ { path = 1; next } path && $1 == "path" { print $2; path = 0 }')
+    done < <(otool -l -arch arm64 "$binary" | awk '/cmd LC_RPATH/ { path = 1; next } path && $1 == "path" { print $2; path = 0 }')
 done <<< "$machos"
 echo "Verified $count Mach-O files: signed, arm64, system or bundle-relative loader paths."
 # Where a checkout path could steer imports or execution. (The Swift shell may
@@ -107,9 +108,11 @@ server=$(lsof -t "$scratch/run/hagig/server.lock")
 [ "$(ps -ww -o command= -p "$server")" = "$interpreter -I -m hagig.server" ] ||
     fail 'server is not the bundled interpreter'
 # Every executable or library the server has mapped is the bundle's or the system's.
+lsof -p "$server" -Ffn | awk '/^f/ { text = ($0 == "ftxt") } /^n/ && text { print substr($0, 2) }'
 while read -r name; do
     case "$name" in
-        "$app"/*|/usr/lib/*|/usr/share/*|/System/*|/private/var/db/dyld/*) ;;
+        # The OS's logging-preference cache is mapped into processes that log; not code.
+        "$app"/*|/usr/lib/*|/usr/share/*|/System/*|/private/var/db/dyld/*|/Library/Preferences/Logging/*) ;;
         *) fail "server mapped $name" ;;
     esac
 done < <(lsof -p "$server" -Ffn | awk '/^f/ { text = ($0 == "ftxt") } /^n/ && text { print substr($0, 2) }')
