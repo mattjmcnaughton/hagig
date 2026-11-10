@@ -8,16 +8,15 @@ AVAudioEngine/AVAudioConverter capture and the REST API v1 contract in
 `backend/PROTOCOL.md` (#44), spoken by `SocketRequest` with swift-server
 AsyncHTTPClient over `http+unix://` (#46). Backend and wire changes are owned by
 the backend; there is no Swift TOML parser, inference engine or normal-operation
-fake fallback. Older synthetic-only and Rust-backend (#9) descriptions below are
-historical evidence notes.
+fake fallback. Older synthetic-only descriptions below are historical evidence
+notes.
 
-Normal operation requires the paired real backend, an explicitly installed model
-and native helper packaging (see the local experiment below). Bundle assembly
-requires explicit prepared native input, never a controlled-helper fallback.
-Hosted integration evidence is not physical-Mac acceptance (#21/#23 remain
+Normal operation requires the paired bundled backend (see the local bundle
+below) and an explicitly installed model. There is no controlled-helper
+fallback. Hosted integration evidence is not physical-Mac acceptance (#21/#23 remain
 open). Resolve `hagig` only at `Contents/Helpers/hagig`. Only when no server
 answers on the socket (absent, or stale after a crash) does Swift run that helper
-once with `start` (a seam; bundled Python startup is #48), then retry status
+once with `start` (in the bundle, the Python CLI's `start`), then retry status
 within the one 5 s startup bound. Helper exit 2 (TDD §9 usage/configuration) shows
 the configuration issue. The server's lock owns stale-socket cleanup; Swift never
 removes or repairs runtime files. No ambient PATH. Swift computes the socket exactly like
@@ -131,222 +130,155 @@ Preview error and Quit live below the shared surface. No global shortcut exists.
 Normal `swift run HagigShell` has no paired Contents/Helpers/hagig and must fail
 safely, not substitute demo success. Use the bundle for real integration.
 
-## Prepared native bundle (#21 experimental integration)
+## Local bundle (#48): app plus bundled Python backend
 
-From the clone root on an Apple Silicon Mac, native arm64 shell and Xcode 16.4,
-use an absolute already prepared Contents directory. The #9 contract was tested
-at db18603fa2fcdfe8d53a1485cf05c5705c639589 with
-`backend/tests/prepare_macos_candidate.sh` and Rust 1.90.0. Preparation acquires
-native assets/crate sources: it is a separate explicitly approved operation,
-never an implicit bundle step. Use that script and `backend/model-manifest.json`
-as the source of pins and layout; do not invent new versions/assets here.
+Python, managed with uv, owns the server, worker and CLI (`backend/`); Swift owns
+the app. `clients/macos/bundle.sh` assembles both into one ignored, ad-hoc-signed
+`clients/macos/.build/Hagig.app`. This is bundle feasibility for #23, not its
+final recipe or physical-Mac acceptance.
 
-```sh
-bash clients/macos/bundle.sh run /absolute/prepared/Contents
-# Or build only, for iteration/CI:
-bash clients/macos/bundle.sh build /absolute/prepared/Contents
-# Launch an already built bundle without rebuilding:
-open clients/macos/.build/Hagig.app
-```
-
-These are alternative build commands, not consecutive commands: an existing
-output is always refused (including symlinks). No Homebrew, release download,
-`/Applications` copy, certificates or notarization credentials are required.
-The default Xcode path is `/Applications/Xcode_16.4.app/Contents/Developer`;
-`DEVELOPER_DIR` may select another installation of exactly Xcode 16.4. The builder
-does not run Cargo, download native/model assets or install a model. It builds
-HagigShell, copies five explicit native files, and signs staged copies inside-out.
-Prepared inputs remain unchanged. Output is ignored under `clients/macos/.build/`.
-
-### Local source experiment after the gated merges
-
-Unusable since #46: this recipe pairs the app with the Rust db18603 helper, which
-speaks the removed framed protocol, so every Record fails with Server unavailable.
-#48 replaces it with the Python server bundle. Kept as history.
-
-Use an Apple Silicon Mac with Xcode 16.4 and Rust 1.90.0 already installed
-(`backend/rust-toolchain.toml` selects that Rust toolchain). Apple supports
-Xcode 16.4 only on macOS 15.3 through 26.1.x
-([system requirements](https://developer.apple.com/xcode/system-requirements)),
-and `bundle.sh` requires exactly Xcode 16.4. Check `sw_vers -productVersion`
-first: on a newer macOS, stop rather than edit the version check; selecting a
-different Xcode is an unapproved toolchain change, not a local workaround. This is an opt-in
-experimental build, not adoption or physical-Mac acceptance. Preparation and the
-explicit model install below acquire the existing pinned native/model/tokenizer
-assets (about 3.15 GB plus locked crate sources); neither app launch nor bundle
-assembly acquires or repairs them. No Homebrew, release binary, `/Applications`
-installation, public signing or notarization is involved. These commands are a
-local recipe, not a claim that they have executed successfully on this head.
-
-From a terminal, clone the merged source, prepare the exact backend in a separate
-detached worktree, and assemble a new app. Keep this terminal's variables for
-launch, stop and optional cleanup:
+Prerequisites, from the clone root on an Apple Silicon Mac (native arm64 shell):
+Xcode 16.4 (Apple supports it on macOS 15.3 through 26.1.x; on a newer macOS stop
+rather than edit the version check) and uv (the version `python-backend.yml`
+pins, 0.12.9). uv downloads the locked wheels and, when absent, the uv-managed
+Python 3.12; that `uv sync` is the build's only network step. No Homebrew,
+`/Applications` copy, certificates or notarization credentials are needed.
 
 ```sh
-git clone https://github.com/mattjmcnaughton/hagig.git hagig
-cd hagig
 export DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer
-prep=$(mktemp -d "${TMPDIR:-/tmp}/hagig-local.XXXXXX")
-export RUNNER_TEMP="$prep"
-git fetch origin db18603fa2fcdfe8d53a1485cf05c5705c639589
-git worktree add --detach "$prep/backend-source" db18603fa2fcdfe8d53a1485cf05c5705c639589
-(cd "$prep/backend-source/backend" && bash tests/prepare_macos_candidate.sh)
-native="$prep/hagig-issue9-native"
-bash clients/macos/bundle.sh build "$native/Contents"
-app="$PWD/clients/macos/.build/Hagig.app"
-runtime=$(mktemp -d /private/tmp/hg-local.XXXXXX)
-export XDG_RUNTIME_DIR="$runtime"
-export XDG_CONFIG_HOME="$prep/local-config"
-export XDG_DATA_HOME="$native/data"
-"$app/Contents/Helpers/hagig" model install parakeet-tdt-0.6b-v2-int8-v1
-"$app/Contents/MacOS/HagigShell"
+bash clients/macos/bundle.sh build   # or `run` to also open the new bundle
+open clients/macos/.build/Hagig.app  # launch an already built bundle
 ```
 
-Run each command only after its predecessor succeeds; stop and diagnose failure,
-never retry with isolation disabled. The foreground terminal launch preserves
-the explicit private environment (unlike relying on LaunchServices environment
-inheritance). No config file is needed: editor defaults to Standard and isolation
-to Required. Use intentional Record, Stop, review/edit, explicit Copy and Dismiss;
-the first real Record may ask for Microphone permission. Never grant Accessibility
-or Input Monitoring for this path. Known model-quality and #6/#25 privacy gates,
-physical microphone/device/permission/rebuild and second-device clipboard checks
-remain open. Local clipboard managers/destinations may retain explicit Copy.
-
-Quit the shell before cleanup. Its service is shared by clients using this same
-private runtime; coordinate those clients, then stop the paired helper. The model
-data is intentionally retained for further experiments until this optional cleanup:
-
-```sh
-if "$app/Contents/Helpers/hagig" stop; then
-  git worktree remove "$prep/backend-source" && rm -rf -- "$prep" "$runtime"
-else
-  printf '%s\n' 'Stop failed: retain app, model and runtime; do not dispose or replace them.' >&2
-fi
-```
-
-Only use those variables in the original terminal with the same exported private
-environment. Cleanup removes the dedicated model data, so a subsequent experiment
-needs another explicit install; it does not remove the assembled app or clone.
-Do not delete or replace app/model bytes under a live service. The whole-bundle
-backup/rollback procedure below applies before any rebuild; no automatic upgrade,
-service kill, recording history or model acquisition is introduced by launch.
-
-Layout (all paths relative to the bundle):
+Layout (paths relative to the bundle):
 
 ```text
 Hagig.app/Contents/Info.plist
 Hagig.app/Contents/MacOS/HagigShell
-Hagig.app/Contents/Helpers/hagig
-Hagig.app/Contents/Helpers/hagig-worker
-Hagig.app/Contents/Helpers/hagig-inference-worker
-Hagig.app/Contents/Frameworks/libsherpa-onnx-c-api.dylib
-Hagig.app/Contents/Frameworks/libonnxruntime.dylib
+Hagig.app/Contents/Helpers/hagig                      # sh: execs the interpreter below
+Hagig.app/Contents/Resources/LICENSE                  # root LICENSE (the package has none)
+Hagig.app/Contents/Resources/python/bin/python3.12    # uv-managed python-build-standalone
+Hagig.app/Contents/Resources/python/lib/python3.12/   # stdlib, precompiled
+Hagig.app/Contents/Resources/python/lib/python3.12/site-packages/   # the locked environment
+    hagig/ ...  launcher/seatbelt-v1.sb  (fastapi, uvicorn, numpy, ...)
 ```
 
-Bundle identity is `com.mattjmcnaughton.hagig`. The shell starts/attaches through
-its paired CLI. CLI/bootstrap must link only system libraries; only the isolated
-native helper links inference. Helpers retain `@executable_path/../Frameworks`,
-and dylibs retain `@loader_path`. No native loader rewrite or unused C++ dylib.
-Model installation is explicit and separate. For five already acquired assets:
+How it is built, and why:
+
+- `sync_backend` in `bundle.sh` is the one place that picks the environment:
+  `uv sync --frozen --no-dev --no-editable --managed-python` into a staging
+  directory. When #47 adds engine groups or extras, change that one command.
+- uv environments are not relocatable: a venv's `pyvenv.cfg` records its
+  interpreter's absolute path, uv adds a `_virtualenv` shim, and the project's
+  `direct_url.json` names the checkout. So the bundle does not ship the venv.
+  It copies the managed interpreter itself (python-build-standalone finds its
+  prefix from its own location) and copies the venv's `site-packages` into that
+  interpreter's own `site-packages`, minus the shim and `direct_url.json`. Every
+  Hagig process runs `python -I` (`cli.SERVER_COMMAND`, `launcher.WORKER_COMMAND`),
+  which ignores `PYTHON*` variables and the user site and sees exactly those
+  packages. A `.pth` file other than the shim is refused, so nothing extends
+  `sys.path`. Headers, docs, build configuration, pip/ensurepip, IDLE, Tcl/Tk and
+  the other `bin/` scripts (build-host shebangs) are left out.
+- The non-editable install puts the Seatbelt profile at
+  `site-packages/launcher/seatbelt-v1.sb` through a hatch wheel `force-include`
+  in `backend/pyproject.toml`, so `launcher.SEATBELT_PROFILE`
+  (`<package parent>/launcher/seatbelt-v1.sb`) resolves inside the bundle with no
+  code change; the source stays at `backend/src/launcher/`. `bundle.sh` refuses
+  to publish when the profile is absent, and required mode still fails closed
+  with `isolation_unavailable` if it goes missing later.
+- `compileall` with `unchecked-hash` precompiles the stdlib and packages, so no
+  process writes `__pycache__` into the signed bundle; the smoke checks the bundle
+  is byte-identical after a run. Recorded source names use a neutral prefix.
+- Signing is local and ad hoc, inside out: every Mach-O file under
+  `Resources/python` (the interpreter, `.so` and `.dylib`), then the helper and
+  `HagigShell`, then the app, then `codesign --verify --deep --strict`.
+  `install_name_tool` removes SwiftPM's `@loader_path` rpath from the shell only.
+  Ad-hoc signing is not Developer ID, notarization, Gatekeeper approval, a TCC
+  grant or permission stability across rebuilds.
+- `Contents/Helpers/hagig` resolves `Contents` from its own path (not a symlink
+  to it), sets `UV_OFFLINE=1` and `UV_PYTHON_DOWNLOADS=never` defensively and
+  execs `python3.12 -I -B` on `hagig.cli`. It uses no uv, PATH, PYTHONPATH or
+  checkout path. The app runs it with `start` only when no server answers; exit 2
+  is a configuration error (for example a missing `[model] id`).
+- Known build-host residue: python-build-standalone's `_sysconfigdata*.py`
+  records the build machine's uv Python directory. Nothing loads it to run
+  Hagig (it serves builds); the smoke only rejects references to the checkout.
+
+Configuration and models. `model.id` is required (see `backend/AGENTS.md`):
+
+```toml
+# $XDG_CONFIG_HOME/hagig/config.toml (default ~/.config/hagig/config.toml)
+[model]
+id = "qwen3-asr-0.6b"  # or "qwen3-asr-1.7b"; "whisper-large-v3-turbo" on Apple Silicon
+```
+
+Installing a model is a separate explicit network step through the paired CLI,
+`.../Contents/Helpers/hagig model install <id>` with one of those three IDs.
+It is still a `not_implemented` stub until #47, and real engines arrive with #49,
+so this bundle cannot transcribe yet: every request answers `model_missing`.
+
+Stop and relaunch. The server is per user and outlives the app. Before
+rebuilding or replacing a bundle: Quit the shell, coordinate with other clients
+of the same server, then intentionally run that bundle's
+`Contents/Helpers/hagig stop` and require success (the builder never stops it).
+Move the **whole** stopped bundle aside to an unused path (for example
+`clients/macos/.build/Hagig.previous.app`), build again and relaunch with `open`.
+Never replace individual files under a live server; keep the old bundle for
+rollback and stop the new one before restoring it. An existing output is always
+refused (including symlinks). A preexisting `bundle.lock` is refused; after an
+interruption, confirm no builder remains, then `rmdir` it. Failed staging is
+cleaned. If a client reports `incompatible_api`, stop that server with the build
+that started it.
+
+Checks:
 
 ```sh
-clients/macos/.build/Hagig.app/Contents/Helpers/hagig model install parakeet-tdt-0.6b-v2-int8-v1 --from /absolute/preacquired/assets
+python3 clients/macos/test_bundle.py           # Linux/macOS stand-ins, NOT native evidence
+bash clients/macos/smoke-bundle.sh /abs/moved/Hagig.app   # macOS, bundle outside the checkout
+bash clients/macos/bundle-proof.sh /abs/moved/Hagig.app /abs/new/evidence
 ```
 
-Default Required isolation is retained; failure never retries Disabled. Missing
-model/helper/library must fail, never use fake success or automatic downloads.
-#9's functional experimental evidence is not privacy/adoption, signed-app or
-physical-Mac acceptance. #6/#25, quality failures and microphone/TCC checks remain
-separate gates.
+`smoke-bundle.sh` refuses a bundle inside the checkout. It verifies the plist
+and signatures, checks every Mach-O is signed, arm64 and links only system or
+bundle-relative paths, and rejects any `Resources` or `Helpers` file naming the
+checkout (the Swift shell may embed source paths as diagnostic strings). Under
+`env -i` with private XDG paths (no PATH, uv or PYTHONPATH) it runs the helper's
+`start`, reads `GET /v1/status` through the CLI and with `curl --unix-socket`
+(`network_isolation: required`), checks the server process is the bundled
+interpreter and maps no code outside the bundle and the system, and expects
+`transcribe backend/tests/fixtures/speech.wav` to print `model_missing` and exit
+1. Without a model the server never launches a worker (`model_missing` comes
+first), so the smoke then runs the server's own `Launcher().argv("required")`
+with the bundled interpreter: `/usr/bin/sandbox-exec -f` the profile inside the
+bundle, then the bundled worker, which must write its ready line and exit 0 at
+EOF. That shows the profile resolves and the worker starts under it; it is not
+network-denial or inference evidence. It then stops the server, briefly runs the
+relocated `HagigShell` and checks the bundle files are unchanged.
+`bundle-proof.sh` copies the relocated bundle three times and breaks one property
+in each: a `.pth` link to the checkout replacing the packaged `hagig` (the CLI
+still runs, so runtime success alone would miss it), a missing Seatbelt profile
+(`isolation_unavailable`) and an unsigned `pydantic_core` extension. The smoke
+must refuse each for that reason, and the original must pass again afterwards.
 
-Before rebuilding/replacing any paired bundle: Quit its shell, coordinate
-with other clients using the per-user server, then **intentionally** run that
-bundle's `Contents/Helpers/hagig stop` and require success. Stop affects shared
-work; the builder never does it for you. Move the **whole** stopped bundle to a
-new unused backup path (for example `mv clients/macos/.build/Hagig.app
-clients/macos/.build/Hagig.previous.app` only if the latter does not exist), then
-build again. Never replace individual live helper files. Keep the old bundle
-for rollback; quit/stop the new pair before restoring the old one. A preexisting
-`bundle.lock` is refused; after interruption, confirm no bundle builder remains
-before removing that empty lock directory with `rmdir`. Failed build staging is
-disposable and cleaned; any incomplete published output must be inspected and
-moved aside, not blindly deleted. No automatic upgrade or service killing exists.
+`BundledBackendTests` (opt-in: absolute `HAGIG_BUNDLED_APP` and
+`HAGIG_INTEGRATION_WAV`; both unset skips, one set fails) is the app against the
+bundled server. With a private short runtime and config setting `model.id`, it
+drives `DictationController` and the real `SocketRequest`, whose helper start
+launches the server through `Contents/Helpers/hagig`. A file capture streams
+`speech.wav` through the production converter into the open upload (not a
+microphone), and the test expects the `.issue(.modelMissing)` state with no
+transcript. A second test omits `model.id` and expects the helper's exit 2 to
+show `.issue(.configuration)` without starting a server. Each stops its own
+server and prints `BUNDLED_BACKEND_CLEANUP_COMPLETE`; a failed stop keeps the
+runtime directory.
 
-Before signing, Xcode's `install_name_tool` removes SwiftPM's `@loader_path`
-search entry from the staged shell only; `/usr/lib/swift` is retained. Native
-helper/dylib loader commands remain unchanged. The native smoke still
-rejects unexpected dependencies/search paths and verifies actual relocated launch.
-Removal failure aborts assembly; the SwiftPM build output is left unchanged.
-Nested helpers and the outer app are ad-hoc signed inside-out, then verified.
-Ad-hoc signing is not Developer ID, notarization, Gatekeeper approval, TCC grant,
-permission stability across rebuilds, or worker-isolation proof. Diagnose launch
-or signing failures; do not disable Gatekeeper. Info.plist contains the Microphone
-usage description for intentional Record. No Accessibility/Input Monitoring
-request. Stable identity alone does not establish TCC continuity; physical
-denial/grant/rebuild and public signing/notarization remain acceptance gates.
-
-Checks (from clone root):
-
-```sh
-python3 clients/macos/test_bundle.py   # stdlib disposable PATH stand-ins, NOT native evidence
-bash clients/macos/smoke-bundle.sh    # macOS only, after build-only above
-```
-
-The native smoke copies the bundle away from the checkout into a disposable path
-with spaces, checks arm64/scoped loader paths and signatures, validates real
-inference/Required/idle service capabilities using private temporary paths,
-then launches the relocated shell executable briefly and terminates only that
-owned PID. Its cleanup stops only its isolated service and preserves scratch on
-stop failure. It does not touch the user's live runtime. It is not a terminal
-LaunchServices interaction test or runtime-free physical-Mac installation proof.
-`macos-build.yml` keeps the packaging stand-in contracts always on. Its finite
-PR32 real-backend job was removed with the Rust backend (#43); #48 restores
-backend bundle checks, so no run claims native smoke or real-backend evidence. D27 permitted only that PR32 run to reuse the
-pinned native/model/tokenizer acquisition (about 3.15 GB), hash verification and
-disposal; it is not permission for downloads on other PR or main builds. Running
-it for another branch needs a new explicit owner grant. Linux stand-ins are not
-native signing/loader proof. Full #23 acceptance remains blocked on inference
-adoption (#6/#25) and owner physical-Mac launch/relocation/TCC/rebuild checks.
-
-`RealBackendTests` targeted the removed Rust helper and was deleted in #46;
-real-backend app integration against the Python server is #48's. The historical
-notes below describe that removed test. It took absolute `HAGIG_INTEGRATION_HELPER`,
-`HAGIG_INTEGRATION_DATA_HOME` and `HAGIG_INTEGRATION_WAV`. Use a signed relocated
-helper, isolated explicitly installed model data and #9's existing synthetic WAV.
-It exercises production conversion/controller/socket, real review, CLI busy,
-isolated-pasteboard Copy and cancellation/reconnect. Injected audio is not a
-physical microphone or app pointer test. All unset means skip; partial setup
-fails. It passed once on PR32 head 83d63f8 (macOS-build run 42540022130):
-candidate, missing-copied-Frameworks counterfactual (expected workerFailed) and
-restored runs, with cleanup markers. That finite hosted run is not repeated on
-main. For the D27 run, first execute #9's preparation script from its separate
-exact db18603 backend checkout, then explicitly install with private paths:
-
-```sh
-root="${RUNNER_TEMP:?}/hagig-issue9-native"
-XDG_DATA_HOME="$root/data" XDG_CONFIG_HOME="$root/install-config" \
-  "$root/Contents/Helpers/hagig" model install parakeet-tdt-0.6b-v2-int8-v1
-```
-
-The installer verifies the manifest pins, including the original tokenizer
-archive, and removes the archive before publish. Independently verify all five
-installed sizes/hashes and absence of retained install staging using #9's
-`backend/tests/exercise_macos_candidate.sh` logic; do not run that entire script
-before this test, because its exit trap deletes the model data. Never upload
-models/native bytes. Supply the relocated signed app helper, `$root/data` and
-the exact backend's `backend/tests/fixtures/speech.wav` to XCTest. The test creates
-its own private short runtime/config, sets `[editor] mode='vim'`, inherits the
-Required isolation default (no disabled override), and owns only that service.
-It stops the service on success/error, removes the runtime only after successful
-stop, and prints `REAL_BACKEND_CLEANUP_COMPLETE` then. A failed stop retains its
-runtime for the outer cleanup gate; no cleanup marker means failure. The outer
-job records each phase before invoking XCTest and requires that marker in every
-invoked phase's log before disposal. On interruption, compile/setup failure or
-missing marker, fail cleanup and retain the dedicated assets on the runner
-(never upload them); do not delete model/app bytes beneath a possibly live pair
-or kill an unverified PID. Only after the cleanup gate passes, dispose of the
-dedicated model/archive/preparation and relocated copies. Upload only bounded
-synthetic text evidence.
+`macos-build.yml`'s `bundle-smoke` job runs all of this on macos-15: stand-ins,
+build, relocation to `$RUNNER_TEMP/relocated app`, hiding uv's private
+interpreter and cache directories, the smoke, the app integration (two tests,
+none skipped, two cleanup markers), an app counterfactual against a copy without
+the `hagig` package (must fail with `serverUnavailable`) and `bundle-proof.sh`.
+It uploads text logs only, never bundle bytes. Hosted runs are not physical-Mac
+launch, LaunchServices, TCC, microphone or rebuild-permission acceptance.
 
 `bash clients/macos/client-proof.sh /absolute/new/evidence` runs preregistered
 client-only candidate/mutant/restoration in a disposable worktree with unchanged
@@ -423,7 +355,8 @@ Both workflows select `macos-15` and the installed `/Applications/Xcode_16.4.app
 explicitly; neither follows `macos-latest`. GitHub's image itself is mutable: record
 the environment, do not claim an immutable OS pin or Apple Silicon acceptance.
 Actions are SHA-pinned, credentials are not persisted, permissions are read-only,
-`macos-build.yml` jobs time out after 20 minutes (60 for client semantics, which
+`macos-build.yml` jobs time out after 20 minutes (45 for the bundle smoke, which
+builds the app twice, and 60 for client semantics, which
 rebuilds per experiment), and artifact retention is three days. Its build-test job
 fails if `swift package resolve` would change the committed `Package.resolved`.
 The manual `macos-screenshots.yml` still allows ten minutes, which may be too
