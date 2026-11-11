@@ -17,6 +17,7 @@ macOS tools: `sandbox-exec` with a test-only profile, `log show` and `ps`.
   dropped single attempts entirely.
 """
 
+import asyncio
 import ctypes
 import json
 import os
@@ -28,16 +29,18 @@ import tempfile
 import time
 from pathlib import Path
 
+from hagig.services.supervisor import Supervisor, WorkerSettings
+
 PYTHON = sys.executable
 HAGIG = str(Path(sys.executable).parent / "hagig")
 SPEECH = Path(__file__).resolve().parents[1] / "fixtures" / "speech.wav"
 EVIDENCE = os.environ.get("HAGIG_EVIDENCE_DIR")
 _DNS_SOCKET = '(literal "/private/var/run/mDNSResponder")'
-PROFILES = {
-    "block": "(version 1)\n(allow default)\n"
+BLOCK_PROFILE = (
+    "(version 1)\n(allow default)\n"
     "(deny network-outbound (remote ip))\n"
-    f"(deny network-outbound {_DNS_SOCKET})\n",
-}
+    f"(deny network-outbound {_DNS_SOCKET})\n"
+)
 
 
 def record(name: str, data: object) -> None:
@@ -121,6 +124,19 @@ def processes() -> list[tuple[int, int, str]]:
     return rows
 
 
+def transcribe_once(settings: WorkerSettings, audio: bytes) -> str:
+    """One request through a real Supervisor, shut down even on failure."""
+
+    async def run() -> str:
+        supervisor = Supervisor(settings)
+        try:
+            return await supervisor.transcribe("once", audio)
+        finally:
+            await supervisor.shutdown()
+
+    return asyncio.run(run())
+
+
 def rss_mib(pid: int) -> float | None:
     shown = subprocess.run(
         ["/bin/ps", "-o", "rss=", "-p", str(pid)], capture_output=True, text=True
@@ -145,8 +161,7 @@ class Stack:
         self.tmp.mkdir()
         self.config = root / "config" / "hagig" / "config.toml"
         self.config.parent.mkdir(parents=True)
-        for name, text in PROFILES.items():
-            (root / f"{name}.sb").write_text(text)
+        (root / "block.sb").write_text(BLOCK_PROFILE)
         self._clones: list[Path] = []
 
     def configure(
@@ -166,15 +181,15 @@ class Stack:
             f"[vocabulary]\nterms = {json.dumps(list(terms))}\n"
         )
 
-    def argv(self, args: tuple[str, ...], wrap: str | None) -> list[str]:
-        prefix = ["/usr/bin/sandbox-exec", "-f", str(self.root / f"{wrap}.sb")]
-        return [*(prefix if wrap else []), HAGIG, *args]
+    def argv(self, args: tuple[str, ...], block: bool) -> list[str]:
+        prefix = ["/usr/bin/sandbox-exec", "-f", str(self.root / "block.sb")]
+        return [*(prefix if block else []), HAGIG, *args]
 
     def cli(
-        self, *args: str, wrap: str | None = None, timeout: float = 600
+        self, *args: str, block: bool = False, timeout: float = 600
     ) -> subprocess.CompletedProcess:
         return subprocess.run(
-            self.argv(args, wrap),
+            self.argv(args, block),
             env=self.env,
             stdin=subprocess.DEVNULL,
             capture_output=True,
@@ -183,7 +198,7 @@ class Stack:
 
     def popen(self, *args: str) -> subprocess.Popen:
         return subprocess.Popen(
-            self.argv(args, None),
+            self.argv(args, False),
             env=self.env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,

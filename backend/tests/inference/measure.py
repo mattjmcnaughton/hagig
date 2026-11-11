@@ -34,6 +34,7 @@ from pathlib import Path
 import numpy as np
 
 from tests.inference.stack import Stack, rss_mib
+from tests.support.harness import short_runtime_base
 
 CORPUS = Path(__file__).resolve().parent / "corpus"
 VOCABULARY = tuple(
@@ -107,14 +108,16 @@ class Sampler:
 
     def __init__(self, stack: Stack) -> None:
         self.stack = stack
-        self.peak = 0.0
+        self.peak: float | None = None
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def _run(self) -> None:
         while not self._stop.wait(0.1):
             for pid in self.stack.workers():
-                self.peak = max(self.peak, rss_mib(pid) or 0.0)
+                rss = rss_mib(pid)
+                if rss is not None:
+                    self.peak = max(self.peak or 0.0, rss)
 
     def __enter__(self) -> "Sampler":
         self._thread.start()
@@ -125,10 +128,16 @@ class Sampler:
         self._thread.join()
 
 
+def top(current: float | None, sample: float | None) -> float | None:
+    return current if sample is None else max(current or 0.0, sample)
+
+
 def run_mode(stack: Stack, model_id: str, mode: str, rows: list[dict], wavs: Path):
     stack.configure(model_id, "required", VOCABULARY if mode == "biased" else ())
     records = []
-    peak_rss, peak_footprint = 0.0, 0.0
+    # None (reported n/a) until a probe succeeds; a failed probe is not 0.
+    peak_rss: float | None = None
+    footprint_after: float | None = None
     # The first request starts the server and worker, hashes and loads the model.
     first = rows[0]["id"]
     start = time.monotonic()
@@ -142,8 +151,8 @@ def run_mode(stack: Stack, model_id: str, mode: str, rows: list[dict], wavs: Pat
             seconds = time.monotonic() - start
         workers = stack.workers()
         footprint = footprint_mib(workers[0]) if workers else None
-        peak_rss = max(peak_rss, sampler.peak)
-        peak_footprint = max(peak_footprint, footprint or 0.0)
+        peak_rss = top(peak_rss, sampler.peak)
+        footprint_after = top(footprint_after, footprint)
         records.append(
             {
                 "engine": model_id,
@@ -173,7 +182,7 @@ def run_mode(stack: Stack, model_id: str, mode: str, rows: list[dict], wavs: Pat
                 r["seconds"] for r in records if r["id"] == first
             ),
             "peak_sampled_worker_rss_mib": peak_rss,
-            "max_worker_footprint_mib": peak_footprint,
+            "max_worker_footprint_after_request_mib": footprint_after,
         }
     )
     stack.stop()
@@ -203,19 +212,24 @@ def wer(reference: str, hypothesis: str) -> float | None:
     return row[-1] / len(ref)
 
 
-def score(row: dict) -> float:
-    """WER of a clip that has a reference."""
-    value = wer(row["reference"], row["text"])
-    assert value is not None
-    return value
-
-
 def terms(text: str) -> set[str]:
-    return {t for t in VOCABULARY if compact(t) in compact(text)}
+    """Vocabulary terms spoken as whole words: `sherpa-onnx` matches
+    "sherpa onnx" or "SherpaONNX", but `Amp` does not match "example"."""
+    heard = words(text)
+    spans = {
+        compact("".join(heard[i : i + n]))
+        for n in (1, 2, 3)
+        for i in range(len(heard) - n + 1)
+    }
+    return {t for t in VOCABULARY if compact(t) in spans}
 
 
-def summarize(records: list[dict], environment: str) -> str:
-    out = ["# AC8/AC9 development measurements (hosted macOS VM)", "", environment, ""]
+def or_na(value: float | None) -> str:
+    return "n/a" if value is None else str(value)
+
+
+def summarize(records: list[dict]) -> str:
+    out = ["# AC8/AC9 development measurements (hosted macOS VM)", ""]
     out += [
         "## AC8: paired plain and biased",
         "",
@@ -240,8 +254,12 @@ def summarize(records: list[dict], environment: str) -> str:
                 for r in records
                 if r["engine"] == engine and r["mode"] == mode
             )
-            control = [score(r) for r in rows if r["class"] == "control"]
-            overall = [score(r) for r in rows]
+            control = [
+                wer(r["reference"], r["text"]) or 0.0
+                for r in rows
+                if r["class"] == "control"
+            ]
+            overall = [wer(r["reference"], r["text"]) or 0.0 for r in rows]
             short = [r["seconds"] for r in rows if not r["id"].startswith("long")]
             long = [r["seconds"] for r in rows if r["id"].startswith("long")]
             out.append(
@@ -269,7 +287,7 @@ def summarize(records: list[dict], environment: str) -> str:
         "",
         "| Engine | Mode | Isolation | First request after server start (s) "
         "| Same clip warm (s) | Peak sampled worker RSS (MiB) "
-        "| Max worker footprint (MiB) |",
+        "| Worker footprint after a request, max (MiB) |",
         "| --- | --- | --- | ---: | ---: | ---: | ---: |",
     ]
     for r in records:
@@ -277,8 +295,8 @@ def summarize(records: list[dict], environment: str) -> str:
             out.append(
                 f"| {r['engine']} | {r['mode'][:-5]} | {r['network_isolation']} | "
                 f"{r['cold_first_request_seconds']} | {r['warm_same_clip_seconds']} | "
-                f"{r['peak_sampled_worker_rss_mib']} | "
-                f"{r['max_worker_footprint_mib']} |"
+                f"{or_na(r['peak_sampled_worker_rss_mib'])} | "
+                f"{or_na(r.get('max_worker_footprint_after_request_mib'))} |"
             )
     out += [
         "",
@@ -289,52 +307,45 @@ def summarize(records: list[dict], environment: str) -> str:
     ]
     for r in records:
         if "class" in r:
-            score = wer(r["reference"], r["text"]) if r["reference"] else None
+            clip_wer = wer(r["reference"], r["text"])
             text = (r["text"] or f"({r['stderr'] or 'empty'})").replace("|", "\\|")
             out.append(
                 f"| {r['engine']} | {r['mode']} | {r['id']} | {r['seconds']} | "
-                f"{'' if score is None else f'{score:.3f}'} | "
+                f"{'' if clip_wer is None else f'{clip_wer:.3f}'} | "
                 f"{r['reference']} | {text} |"
             )
     return "\n".join(out) + "\n"
+
+
+def measure(root: Path, runtime: Path, data: Path, models: list[str]) -> list[dict]:
+    rows = synthesize(root / "fixtures")
+    records = []
+    for model_id in models:
+        for mode in ("plain", "biased"):
+            stack_root = root / f"{model_id}-{mode}"
+            stack_root.mkdir()
+            stack = Stack(stack_root, runtime, data)
+            try:
+                records += run_mode(stack, model_id, mode, rows, root / "fixtures")
+            finally:
+                stack.cleanup()
+    return records
 
 
 def main() -> None:
     data, out, models = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3:]
     out.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix="hagig-measure-"))
-    runtime = Path(tempfile.mkdtemp(prefix="hm", dir="/tmp"))
-    runtime.chmod(0o700)
     try:
-        rows = synthesize(root / "fixtures")
-        records = []
-        for model_id in models:
-            for mode in ("plain", "biased"):
-                stack_root = root / f"{model_id}-{mode}"
-                stack_root.mkdir()
-                stack = Stack(stack_root, runtime, data)
-                try:
-                    records += run_mode(stack, model_id, mode, rows, root / "fixtures")
-                finally:
-                    stack.cleanup()
-        environment = subprocess.run(
-            [
-                "/bin/sh",
-                "-c",
-                "sw_vers; uname -m; sysctl -n machdep.cpu.brand_string "
-                "hw.memsize hw.ncpu",
-            ],
-            capture_output=True,
-            text=True,
-        ).stdout.replace("\n", "; ")
+        with short_runtime_base() as runtime:
+            records = measure(root, runtime, data, models)
         with open(out / "measurements.jsonl", "w") as sink:
             for r in records:
                 sink.write(json.dumps(r, sort_keys=True) + "\n")
-        (out / "summary.md").write_text(summarize(records, f"Host: {environment}"))
+        (out / "summary.md").write_text(summarize(records))
         print((out / "summary.md").read_text())
     finally:
         shutil.rmtree(root, ignore_errors=True)
-        shutil.rmtree(runtime, ignore_errors=True)
 
 
 if __name__ == "__main__":

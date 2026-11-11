@@ -10,7 +10,6 @@ test process, so the IPv4 and IPv6 controls do not depend on the runner's
 external routes. A result arriving at all shows that pipe IPC works.
 """
 
-import asyncio
 import json
 import os
 import socket
@@ -22,8 +21,8 @@ import pytest
 
 from hagig.launcher import SEATBELT_PROFILE, Launcher, worker_env
 from hagig.manifest import parse_manifest
-from hagig.services.supervisor import Supervisor, WorkerSettings
-from tests.inference.stack import dns_lookups, log_mark, record
+from hagig.services.supervisor import WorkerSettings
+from tests.inference.stack import dns_lookups, log_mark, record, transcribe_once
 from tests.support.harness import SUPPORT
 from tests.support.models import FILES, synthetic_manifest, write_installation
 
@@ -38,12 +37,11 @@ def listen(family, host, stack):
     return sock.getsockname()[1]
 
 
-def probe(tmp_path, mode, ports, prefix=()):
-    models = tmp_path / f"models-{mode}-{len(prefix)}"
+def probe(tmp_path, mode, ports):
+    models = tmp_path / f"models-{mode}"
     manifest = parse_manifest(synthetic_manifest("qwen3-asr-0.6b"))
     write_installation(models, manifest, FILES, "v-" + "0" * 32)
     command = (
-        *prefix,
         sys.executable,
         "-I",
         str(SUPPORT / "probe_worker.py"),
@@ -57,15 +55,7 @@ def probe(tmp_path, mode, ports, prefix=()):
         manifest=manifest,
         vocabulary=(),
     )
-
-    async def run():
-        supervisor = Supervisor(settings)
-        try:
-            return await supervisor.transcribe("probe", AUDIO)
-        finally:
-            await supervisor.shutdown()
-
-    return json.loads(asyncio.run(run()))
+    return json.loads(transcribe_once(settings, AUDIO))
 
 
 @pytest.fixture
@@ -87,6 +77,13 @@ def test_seatbelt_denies_worker_networking_and_the_control_connects(tmp_path, po
     control_lookups = dns_lookups(mark)
     record("probe-required", {**required, "dns_lookups": required_lookups})
     record("probe-disabled-control", {**control, "dns_lookups": control_lookups})
+    record(
+        "gpu",
+        {
+            "required": [required["mps"], required["metal"]],
+            "disabled": [control["mps"], control["metal"]],
+        },
+    )
 
     assert required["sandboxed"] != 0
     for name in ("loopback_v4", "loopback_v6", "external_v4", "external_v6"):
@@ -104,22 +101,8 @@ def test_seatbelt_denies_worker_networking_and_the_control_connects(tmp_path, po
     # The observer the other tests rely on sees the control's lookup.
     assert control_lookups != []
 
-
-def test_gpu_paths_inside_the_sandboxed_worker_match_the_unsandboxed_worker(
-    tmp_path, ports
-):
-    """MPS (PyTorch) and Metal (MLX) from inside the real worker process, with
-    and without Seatbelt. Reported as observed; equality is the claim."""
-    required = probe(tmp_path, "required", ports)
-    control = probe(tmp_path, "disabled", ports)
-    record(
-        "gpu",
-        {
-            "required": [required["mps"], required["metal"]],
-            "disabled": [control["mps"], control["metal"]],
-        },
-    )
-    assert required["sandboxed"] != 0 and control["sandboxed"] == 0
+    # GPU paths from inside the same worker processes: MPS (PyTorch) and Metal
+    # (MLX) are reported as observed; equality with the control is the claim.
     assert required["mps"] == control["mps"]
     assert required["metal"] == control["metal"]
     assert required["metal"]["computed"] is True
