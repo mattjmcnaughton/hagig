@@ -10,7 +10,6 @@ here is a finding, not a blind spot. Each stack has a private, initially
 empty HOME and TMPDIR, so cache writes there would be visible.
 """
 
-import asyncio
 import hashlib
 import importlib
 import json
@@ -23,10 +22,11 @@ from pathlib import Path
 
 import pytest
 
+import hagig
 from hagig.launcher import Launcher, worker_env
 from hagig.manifest import load_manifest
 from hagig.models import RECORD_NAME, ModelError, installed_model
-from hagig.services.supervisor import Supervisor, WorkerSettings
+from hagig.services.supervisor import WorkerSettings
 from hagig.wav import read_wav
 from tests.inference.stack import (
     SPEECH,
@@ -36,6 +36,7 @@ from tests.inference.stack import (
     processes,
     record,
     sandboxed,
+    transcribe_once,
     written,
 )
 from tests.support.harness import SUPPORT, wait_for
@@ -43,9 +44,9 @@ from tests.support.harness import SUPPORT, wait_for
 MODELS = ["qwen3-asr-0.6b", "whisper-large-v3-turbo"]
 
 
-def transcribe(stack, wav=SPEECH, wrap=None):
+def transcribe(stack, wav=SPEECH, block=False):
     start = time.monotonic()
-    result = stack.cli("transcribe", str(wav), wrap=wrap)
+    result = stack.cli("transcribe", str(wav), block=block)
     return result, round(time.monotonic() - start, 2)
 
 
@@ -83,42 +84,44 @@ def test_cli_transcribes_with_the_worker_under_seatbelt(stack, model_id):
     assert written(stack.home, stack.tmp) == []
 
 
-@pytest.mark.parametrize("wrap", [None, "block"])
+BLOCK = pytest.mark.parametrize("block", [False, True], ids=["open", "blocked"])
+
+
+@BLOCK
 @pytest.mark.parametrize("model_id", MODELS)
-def test_cli_transcribes_in_disabled_mode_without_networking(stack, model_id, wrap):
+def test_cli_transcribes_in_disabled_mode_without_networking(stack, model_id, block):
     """Disabled mode with networking available (observed: no lookups, no
     writes) and with it blocked for the whole stack (still transcribes)."""
     stack.configure(model_id, "disabled")
     mark = log_mark()
-    result, seconds = transcribe(stack, wrap=wrap)
+    result, seconds = transcribe(stack, block=block)
     workers = stack.workers()
     lookups = dns_lookups(mark)
     record(
-        f"disabled-transcribe-{model_id}-{wrap}",
+        f"disabled-transcribe-{model_id}-{'blocked' if block else 'open'}",
         {"text": result.stdout.decode(), "seconds": seconds, "dns_lookups": lookups},
     )
     assert heard(result)
     # Only the block profile sandboxes a disabled-mode worker.
-    assert len(workers) == 1 and sandboxed(workers[0]) == (wrap == "block")
+    assert len(workers) == 1 and sandboxed(workers[0]) == block
     assert lookups == []
     assert written(stack.home, stack.tmp) == []
 
 
-@pytest.mark.parametrize("wrap", [None, "block"])
-@pytest.mark.parametrize("model_id", MODELS)
-def test_a_missing_model_fails_without_any_download(stack, tmp_path, model_id, wrap):
+@BLOCK
+def test_a_missing_model_fails_without_any_download(stack, tmp_path, block):
     """No installation: model_missing with networking available and blocked,
     no lookup, and nothing written to the data directory, HOME or TMPDIR.
     The server answers before launching any worker, so required mode's
     Seatbelt is not involved and the whole stack can be wrapped."""
     empty = tmp_path / "empty-data"
     empty.mkdir()
-    stack.configure(model_id, "required", data=empty)
+    stack.configure("qwen3-asr-0.6b", "required", data=empty)
     mark = log_mark()
-    result, _ = transcribe(stack, wrap=wrap)
+    result, _ = transcribe(stack, block=block)
     lookups = dns_lookups(mark)
     record(
-        f"missing-{model_id}-{wrap}",
+        f"missing-{'blocked' if block else 'open'}",
         {"stderr": result.stderr.decode(), "dns_lookups": lookups},
     )
     assert (result.returncode, result.stdout, result.stderr) == (
@@ -156,12 +159,12 @@ def unloadable_whisper(home):
     (version / RECORD_NAME).write_text(json.dumps(document, indent=2) + "\n")
 
 
-NETWORK = [("disabled", None), ("disabled", "block"), ("required", None)]
+NETWORK = [("disabled", False), ("disabled", True), ("required", False)]
 
 
-@pytest.mark.parametrize(("isolation", "wrap"), NETWORK)
+@pytest.mark.parametrize(("isolation", "block"), NETWORK)
 @pytest.mark.parametrize("case", ["qwen-corrupt-weights", "whisper-unloadable-weights"])
-def test_an_invalid_model_fails_without_any_download(stack, case, isolation, wrap):
+def test_an_invalid_model_fails_without_any_download(stack, case, isolation, block):
     """A same-size corrupt Qwen file fails the worker's hash check; Whisper
     weights with a matching record fail inside the engine. Both are
     model_invalid with networking available, blocked for the whole stack,
@@ -177,11 +180,12 @@ def test_an_invalid_model_fails_without_any_download(stack, case, isolation, wra
         home = stack.clone(model_id)
         unloadable_whisper(home)
     stack.configure(model_id, isolation, data=home)
+    before = written(home)
     mark = log_mark()
-    result, _ = transcribe(stack, wrap=wrap)
+    result, _ = transcribe(stack, block=block)
     lookups = dns_lookups(mark)
     record(
-        f"invalid-{case}-{isolation}-{wrap}",
+        f"invalid-{case}-{isolation}-{'blocked' if block else 'open'}",
         {"stderr": result.stderr.decode(), "dns_lookups": lookups},
     )
     assert (result.returncode, result.stdout, result.stderr) == (
@@ -191,6 +195,8 @@ def test_an_invalid_model_fails_without_any_download(stack, case, isolation, wra
     )
     assert lookups == []
     assert written(stack.home, stack.tmp) == []
+    # Nothing was fetched or repaired into the data directory either.
+    assert written(home) == before
 
 
 @pytest.mark.parametrize("mode", ["required", "disabled"])
@@ -220,16 +226,7 @@ def test_the_worker_reads_only_local_files_and_opens_no_sockets(
         manifest=manifest,
         vocabulary=("Hagig", "Ghostty"),
     )
-    audio = read_wav(SPEECH).astype("<f4").tobytes()
-
-    async def run():
-        supervisor = Supervisor(settings)
-        try:
-            return await supervisor.transcribe("audit", audio)
-        finally:
-            await supervisor.shutdown()
-
-    text = asyncio.run(run())
+    text = transcribe_once(settings, read_wav(SPEECH).astype("<f4").tobytes())
     events = json.loads(audit.read_bytes())
     prefixes = (str(version.resolve()), sys.prefix, sys.base_prefix, "/dev/")
     elsewhere = sorted(
@@ -263,9 +260,16 @@ def test_the_worker_reads_only_local_files_and_opens_no_sockets(
         if path not in removed and Path(path).name != TORCH_CACHE_DIR
     ] == []
     assert written(stack.home, stack.tmp) == []
-    # Nothing is read from a Hub, torch or tiktoken cache or the user's home.
-    markers = ("/.cache/", "huggingface", "tiktoken", str(stack.home))
-    assert [p for p in elsewhere if any(m in p for m in markers)] == []
+    # Beyond the installation and Python itself, only Hagig's own code, this
+    # test's shim, the OS version file (platform.mac_ver) and a /proc probe
+    # that fails on macOS: no Hub, torch or tiktoken cache, no home directory.
+    allowed = (
+        str(Path(hagig.__file__).resolve().parent),
+        str(SUPPORT / "audited_worker.py"),
+        "/System/Library/CoreServices/SystemVersion.plist",
+        "/proc/self/maps",
+    )
+    assert [p for p in elsewhere if not os.path.realpath(p).startswith(allowed)] == []
 
 
 @pytest.mark.parametrize("module", ["qwen3_asr", "mlx_whisper"])

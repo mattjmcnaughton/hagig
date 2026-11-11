@@ -43,8 +43,10 @@ def test_the_real_worker_command_verifies_the_installation_at_load(tmp_path):
 
     # Valid files: the real worker loads past verification to the engine. The
     # portable environment has no engine stack (worker_failed); with the
-    # qwen3-asr extra, the engine cannot load these synthetic files.
-    engine = "model_invalid" if importlib.util.find_spec("torch") else "worker_failed"
+    # qwen3-asr extra (torch and transformers), the engine cannot load these
+    # synthetic files (model_invalid).
+    stack = all(importlib.util.find_spec(m) for m in ("torch", "transformers"))
+    engine = "model_invalid" if stack else "worker_failed"
     assert asyncio.run(attempt()) == engine
     weights = version / "model.safetensors"
     data = bytearray(weights.read_bytes())
