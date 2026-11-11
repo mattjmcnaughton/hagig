@@ -11,7 +11,8 @@ for this engine (hosted macOS VMs report no supported Metal GPU), so it is not
 selected until a physical-Mac run shows it produces correct text.
 
 Nothing here prints, logs or raises text that could carry a prompt, vocabulary
-or transcript: failures are `EngineError` codes raised outside any `except`.
+or transcript: a load failure is `ModelError("model_invalid")` raised outside
+any `except`.
 """
 
 import math
@@ -19,22 +20,19 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from hagig.worker import EngineError
+from hagig.engines import vocabulary_prompt
+from hagig.models import ModelError
+from hagig.wav import SAMPLE_RATE
 
 if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
-SAMPLE_RATE = 16_000
 DEVICE = "cpu"
 # Generous for dictation (about 8 tokens per second of audio) while bounding a
 # runaway decode on silence or noise.
 _BASE_TOKENS = 32
 _TOKENS_PER_SECOND = 8
-
-
-def vocabulary_prompt(vocabulary: Sequence[str]) -> str | None:
-    return f"Vocabulary: {', '.join(vocabulary)}." if vocabulary else None
 
 
 class Engine:
@@ -53,10 +51,13 @@ class Engine:
         hf_logging.disable_progress_bar()
         loaded = None
         try:
-            processor = AutoProcessor.from_pretrained(model_dir, local_files_only=True)
+            processor = AutoProcessor.from_pretrained(
+                model_dir, local_files_only=True, trust_remote_code=False
+            )
             model = AutoModelForMultimodalLM.from_pretrained(
                 model_dir,
                 local_files_only=True,
+                trust_remote_code=False,
                 use_safetensors=True,
                 dtype=torch.bfloat16,
             )
@@ -66,7 +67,7 @@ class Engine:
         except Exception:
             pass
         if loaded is None:
-            raise EngineError("model_invalid")
+            raise ModelError("model_invalid")
         self._processor, self._model = loaded
 
     def transcribe(
