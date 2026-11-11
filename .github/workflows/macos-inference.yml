@@ -1,0 +1,93 @@
+name: macOS inference
+
+# #49: both real engines behind the worker Protocol on a hosted Apple Silicon
+# VM. The real CLI, server and worker transcribe under the real Seatbelt
+# policy; a test-only probe worker checks network denial against an
+# unsandboxed control and MPS/Metal access; missing and corrupt models,
+# worker death and an audit-hooked worker are checked; then AC8/AC9
+# development measurements run through the CLI. Models come from pinned,
+# hash-verified `hagig model install` (the only intended download), cached
+# like model-install.yml. Synthetic fixtures only; hosted timings are not
+# representative of a physical Mac.
+on:
+  push:
+    branches: ['py/**']
+    paths:
+      - 'backend/**'
+      - '.github/workflows/macos-inference.yml'
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/macos-inference.yml'
+
+permissions:
+  contents: read
+
+env:
+  UV_PYTHON_PREFERENCE: only-managed
+
+jobs:
+  inference:
+    name: Real engines under Seatbelt (macos-15)
+    runs-on: macos-15
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.12.9'
+          enable-cache: false
+      - name: Set paths
+        run: |
+          echo "DATA=$RUNNER_TEMP/cached-data" >> "$GITHUB_ENV"
+          echo "EVIDENCE=$RUNNER_TEMP/inference-evidence" >> "$GITHUB_ENV"
+          mkdir "$RUNNER_TEMP/inference-evidence"
+      - name: Sync both engines and the test tools
+        run: uv sync --frozen --extra qwen3-asr --extra mlx-whisper
+      - name: Record environment
+        run: |
+          {
+            uname -a; sw_vers; sysctl -n machdep.cpu.brand_string hw.memsize hw.ncpu
+            system_profiler SPDisplaysDataType | grep -E 'Chipset|Metal' || true
+            .venv/bin/python -c 'import platform, sys; print(sys.version); print(platform.platform())'
+            .venv/bin/python -c 'import torch, transformers, mlx.core as mx; print("torch", torch.__version__, "transformers", transformers.__version__, "mlx", mx.__version__)'
+            git rev-parse HEAD
+            shasum -a 256 src/launcher/seatbelt-v1.sb src/hagig/manifests/*.json
+          } | tee "$EVIDENCE/environment.txt"
+      - name: Restore installed models
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/cached-data
+          key: models-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/src/hagig/manifests/*.json') }}
+      - name: Install models (explicit network step; re-hashes a cached install)
+        timeout-minutes: 30
+        run: |
+          for id in qwen3-asr-0.6b whisper-large-v3-turbo; do
+            XDG_DATA_HOME="$DATA" .venv/bin/hagig model install "$id"
+          done
+      - name: Engine, isolation, failure and recovery evidence
+        timeout-minutes: 30
+        run: |
+          HAGIG_INFERENCE_DATA="$DATA" HAGIG_EVIDENCE_DIR="$EVIDENCE" \
+            .venv/bin/python -m pytest -v -rA tests/inference 2>&1 | tee "$EVIDENCE/pytest.log"
+          if grep -E '[0-9]+ skipped' "$EVIDENCE/pytest.log"; then exit 1; fi
+      - name: AC8/AC9 development measurements (required isolation)
+        timeout-minutes: 20
+        run: |
+          .venv/bin/python -m tests.inference.measure "$DATA" "$EVIDENCE/measure" \
+            qwen3-asr-0.6b whisper-large-v3-turbo 2> "$EVIDENCE/measure.log"
+          cat "$EVIDENCE/measure/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload synthetic text evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: inference-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/inference-evidence/
+          if-no-files-found: warn
+          retention-days: 3

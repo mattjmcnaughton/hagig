@@ -1,0 +1,5 @@
+Hagig
+Ghostty
+sherpa-onnx
+Parakeet
+Amp
