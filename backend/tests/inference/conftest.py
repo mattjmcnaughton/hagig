@@ -17,20 +17,14 @@ from tests.inference.stack import Stack
 from tests.support.harness import short_runtime_base
 
 DATA = os.environ.get("HAGIG_INFERENCE_DATA", "")
-HERE = Path(__file__).resolve().parent
 
 
-def pytest_collection_modifyitems(config, items):
-    reason = None
+@pytest.fixture(autouse=True)
+def _real_engines_only():
     if not DATA:
-        reason = "set HAGIG_INFERENCE_DATA to run the real-engine evidence"
-    elif not DATA.startswith("/") or sys.platform != "darwin":
-        reason = "real-engine evidence needs macOS and an absolute data directory"
-    if reason is None:
-        return
-    for item in items:
-        if HERE in Path(str(item.fspath)).resolve().parents:
-            item.add_marker(pytest.mark.skip(reason=reason))
+        pytest.skip("set HAGIG_INFERENCE_DATA to run the real-engine evidence")
+    if not DATA.startswith("/") or sys.platform != "darwin":
+        pytest.skip("real-engine evidence needs macOS and an absolute data directory")
 
 
 @pytest.fixture

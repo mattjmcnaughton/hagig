@@ -120,4 +120,4 @@ class Probe:
 
 from hagig.worker import main  # noqa: E402
 
-main({"qwen3-asr": Probe, "mlx-whisper": Probe})
+main({"qwen3-asr": Probe})
