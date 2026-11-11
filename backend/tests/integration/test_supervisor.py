@@ -1,6 +1,7 @@
 """Supervisor behavior that HTTP cannot time precisely, with the real fake worker."""
 
 import asyncio
+import importlib.util
 import os
 import signal
 import struct
@@ -40,9 +41,11 @@ def test_the_real_worker_command_verifies_the_installation_at_load(tmp_path):
         finally:
             await sup.wait_reaped()
 
-    # Valid files: the real worker loads past verification to the engine
-    # import, which fails until #49 adds the engines.
-    assert asyncio.run(attempt()) == "worker_failed"
+    # Valid files: the real worker loads past verification to the engine. The
+    # portable environment has no engine stack (worker_failed); with the
+    # qwen3-asr extra, the engine cannot load these synthetic files.
+    engine = "model_invalid" if importlib.util.find_spec("torch") else "worker_failed"
+    assert asyncio.run(attempt()) == engine
     weights = version / "model.safetensors"
     data = bytearray(weights.read_bytes())
     data[0] ^= 1

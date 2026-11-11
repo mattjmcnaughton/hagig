@@ -197,4 +197,7 @@ def main(engines: Mapping[str, Callable[[], Engine]] = ENGINES) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # `python -m hagig.worker` runs this file as `__main__`; engines import
+    # `hagig.worker` for EngineError, so serve from that one module, or their
+    # errors would be another class and every code would be worker_failed.
+    importlib.import_module("hagig.worker").main()
