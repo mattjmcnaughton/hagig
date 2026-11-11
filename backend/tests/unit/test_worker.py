@@ -7,7 +7,7 @@ import struct
 import pytest
 
 from hagig.models import ModelError
-from hagig.worker import EngineError, run
+from hagig.worker import run
 
 READY = b"HAGIG-WORKER-READY-v1\n"
 
@@ -137,9 +137,9 @@ def test_warm_worker_serves_several_requests_until_stdin_closes():
 @pytest.mark.parametrize(
     ("raised", "code"),
     [
-        (EngineError("model_missing"), "model_missing"),
-        (EngineError("model_invalid"), "model_invalid"),
-        (EngineError("something_else"), "worker_failed"),
+        (ModelError("model_missing"), "model_missing"),
+        (ModelError("model_invalid"), "model_invalid"),
+        (ModelError("something_else"), "worker_failed"),
         (RuntimeError("boom with secret path /x"), "worker_failed"),
     ],
 )

@@ -25,10 +25,9 @@ import pytest
 
 from hagig.launcher import Launcher, worker_env
 from hagig.manifest import load_manifest
-from hagig.models import RECORD_NAME, installed_model
+from hagig.models import RECORD_NAME, ModelError, installed_model
 from hagig.services.supervisor import Supervisor, WorkerSettings
 from hagig.wav import read_wav
-from hagig.worker import EngineError
 from tests.inference.stack import (
     SPEECH,
     TORCH_CACHE_DIR,
@@ -278,7 +277,7 @@ def test_engines_report_unloadable_files_as_model_invalid(tmp_path, module, file
         for name in ("config.json", "model.safetensors", "weights.safetensors"):
             (model_dir / name).write_bytes(b"\xff" * 64)
     engine = importlib.import_module(f"hagig.engines.{module}").Engine()
-    with pytest.raises(EngineError) as raised:
+    with pytest.raises(ModelError) as raised:
         engine.load(model_dir)
     assert raised.value.code == "model_invalid"
     # Raised outside the handler: no library error text is chained on.

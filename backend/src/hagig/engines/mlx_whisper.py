@@ -21,26 +21,24 @@ Download fallbacks, closed here rather than trusted to the offline variables:
 
 Nothing here prints (`verbose=None` disables the progress bar and segment
 output), logs or raises text that could carry a prompt, vocabulary or
-transcript: failures are `EngineError` codes raised outside any `except`.
+transcript: a load failure is `ModelError("model_invalid")` raised outside
+any `except`.
 """
 
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
-from hagig.worker import EngineError
+from hagig.engines import vocabulary_prompt
+from hagig.models import ModelError
 
 if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
 
-def vocabulary_prompt(vocabulary: Sequence[str]) -> str | None:
-    return f"Vocabulary: {', '.join(vocabulary)}." if vocabulary else None
-
-
 def _refuse_download(*_args: object, **_kwargs: object) -> NoReturn:
-    raise EngineError("model_invalid")
+    raise ModelError("model_invalid")
 
 
 class Engine:
@@ -63,7 +61,7 @@ class Engine:
             except Exception:
                 pass
         if model is None:
-            raise EngineError("model_invalid")
+            raise ModelError("model_invalid")
         ModelHolder.model, ModelHolder.model_path = model, path
         self._path = path
 

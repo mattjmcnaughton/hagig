@@ -182,9 +182,9 @@ before_exit)`):
   EOF at a frame boundary (the exit request) exits 0.
 - `main()` sets the offline variables, moves fd 1 to stderr so stray prints
   cannot corrupt the protocol, and serves the real `ENGINES`
-  (`hagig.engines.qwen3_asr`, `hagig.engines.mlx_whisper`). Run as
-  `-m hagig.worker` the file is `__main__`, so it serves from the imported
-  `hagig.worker` module: engines raise that module's `EngineError`.
+  (`hagig.engines.qwen3_asr`, `hagig.engines.mlx_whisper`). It also points fd
+  0 and `sys.stdin` at `/dev/null` after taking the protocol stream, so no
+  library prompt can read frames.
 - The server launches it with `asyncio.create_subprocess_exec` in a new
   session, `close_fds`, `cwd="/"`, stderr to `/dev/null` and an environment of
   `HOME`, `TMPDIR`, `PATH=/usr/bin:/bin` and the four offline/telemetry
@@ -207,7 +207,8 @@ worker `Engine` Protocol, selected through the closed `ENGINES` table; only the
 selected one is imported, and the server never imports either.
 
 - `qwen3_asr`: transformers 5.22.2 on torch 2.15.0. `AutoProcessor` and
-  `AutoModelForMultimodalLM` `from_pretrained(dir, local_files_only=True)`,
+  `AutoModelForMultimodalLM` `from_pretrained(dir, local_files_only=True,
+  trust_remote_code=False)`,
   the model with `use_safetensors=True` and `dtype=torch.bfloat16`; never
   `trust_remote_code`. transformers logging is set to errors and its progress
   bars off. `apply_transcription_request(audio=<array>, prompt=..., language=
@@ -222,7 +223,8 @@ selected one is imported, and the server never imports either.
   silently loses its first terms. `load` refuses a missing directory itself,
   replaces mlx-whisper's `snapshot_download` with a function that refuses,
   and seeds `ModelHolder` so `transcribe` never loads by name.
-- A load failure is `EngineError("model_invalid")`, raised outside the
+- A load failure is `hagig.models.ModelError("model_invalid")` (engines never
+  import `hagig.worker`, which runs as `__main__`), raised outside the
   handler; a missing engine stack (`ImportError`), `MemoryError` and any
   transcription failure are `worker_failed`. Nothing prints or logs; worker
   stderr is discarded anyway.
@@ -489,7 +491,8 @@ Three separate records (constitution §6); none is a privacy certification.
    - Qwen loads with a directory path and `local_files_only=True`, so
      transformers resolves every file in that directory and raises rather than
      calling the Hub; the installed configs have no `auto_map`, and
-     `trust_remote_code` is never passed. The processor gets a NumPy array:
+     `trust_remote_code=False` is explicit (with `None`, transformers would
+     prompt on stdin for an `auto_map`; the worker's stdin is `/dev/null`). The processor gets a NumPy array:
      `load_audio` would fetch a string as a URL or path.
    - mlx-whisper's `load_model` calls `huggingface_hub.snapshot_download` for a
      path that does not exist; the engine checks the directory, replaces that
@@ -510,7 +513,9 @@ Three separate records (constitution §6); none is a privacy certification.
    A Python audit hook on the real worker records no socket event and no
    process creation; the only writes are torch's import-time probe file and
    empty cache directory (see **Engines**); every model file read is in the
-   installation directory. Private, initially empty `HOME` and `TMPDIR` stay
+   installation directory, and every other read is Python itself, Hagig's own
+   code, `/System/Library/CoreServices/SystemVersion.plist` or a failed
+   `/proc/self/maps` probe (asserted as an allowlist). Private, initially empty `HOME` and `TMPDIR` stay
    empty apart from that directory. The kernel's Sandbox violation reports
    were tried as an observer and rejected: on hosted VMs they dropped single
    attempts entirely. The audit hook does not see native code (PyTorch, MLX,
@@ -546,3 +551,14 @@ physical-Mac evidence separate. A workflow file is not evidence that a job ran.
   when it was reversed. Fake-engine results are not transcription evidence; the
   hosted macos-15 Seatbelt launch test shows only that the worker starts and
   speaks over its pipes under `seatbelt-v1.sb`, not network denial (#49).
+- 2026-11-11, hosted `macos-inference.yml`
+  [run 42932600046](https://github.com/mattjmcnaughton/hagig/actions/runs/42932600046)
+  at `5edfe23` (Apple M1 Virtual, macOS 15.8.2, 3 vCPU, 7 GiB; torch 2.15.0,
+  transformers 5.22.2, MLX 0.32.4), #49: `tests/inference` passed 27/27
+  (required-mode CLI transcription with both engines, network denial against
+  the unsandboxed control, MPS unavailable in both modes and MLX Metal
+  computing in both, missing and invalid models with no lookup, worker kill
+  and recovery, audit hook). Every measurement clip ran; the summary step
+  then failed on a `measure.py` bug (fixed later), so the AC8/AC9 table was
+  rebuilt from that run's `measurements.jsonl`. Hosted VM, not physical-Mac
+  evidence; later heads: see the branch's runs.
