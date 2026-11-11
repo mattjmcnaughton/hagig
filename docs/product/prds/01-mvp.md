@@ -67,7 +67,8 @@ the target, pastes and submits; Hagig never inspects, focuses or injects keys th
 
 Public distribution (#24) is separate, not a source-build prerequisite. The local
 app build (#23), terminal launch, relocation, native loading, ad-hoc signing as
-needed and permissions remain planned alpha work, not implemented commands.
+needed and permissions remain alpha work; a scripted local bundle (#48) exists
+without a validated launch recipe.
 
 ## 3. User workflows
 
@@ -183,7 +184,8 @@ exclude failures or imply safety/privacy, cancellation or silence gates are opti
 ### Evidence mapping and current gaps
 
 These are required evidence plans, not results. The synthetic native shell covers
-foundations only; the Python backend is planned and no inference is adopted.
+foundations only; the Python backend and both engines run with hosted macOS
+development evidence (#43–#49), but no inference is adopted.
 #10 owns final combined acceptance after #23's artifact;
 #24 distribution does not block a source build.
 

@@ -20,13 +20,15 @@ adopted [constitution](docs/CONSTITUTION.md) and design documents, it contains:
 - **Python backend (#43-#45):** a per-user server, isolated inference worker and
   CLI in `backend/`, serving a REST API over a private Unix socket and tested
   with a test-only fake engine. Model manifests and explicit `hagig model
-  install` exist (#47); real engines (#49) do not, so nothing transcribes yet. See
+  install` exist (#47). Qwen3-ASR and mlx-whisper run behind the worker
+  interface under Seatbelt on hosted macOS (#49); neither has passed its
+  adoption gate, and both produce text on silence (AC9 open). See
   [backend guidance](backend/AGENTS.md); the
   [technical design](docs/technical/tdds/01-mvp.md) owns its contract.
 - **Local app bundle (#48, toward #23):** `clients/macos/bundle.sh` assembles an
   ignored, ad-hoc-signed `Hagig.app` with the uv-managed Python interpreter and
   the frozen backend environment, including both engines' dependencies; the
-  app starts the bundled server through `Contents/Helpers/hagig`. Without a model, requests answer `model_missing`. See
+  app starts the bundled server through `Contents/Helpers/hagig`. Without a model, requests answer `model_missing`; with one installed through the bundle, hosted CI gets a real transcript in the app. See
   the [local bundle guidance](clients/macos/AGENTS.md#local-bundle-48-app-plus-bundled-python-backend).
 
 Native state renders and a synthetic interaction recording were inspected. None
@@ -93,7 +95,7 @@ validation gates; accuracy
 and latency require measurements, not first-working-app numeric gates. None is
 an established capability of this repository.
 
-Planned backend configuration is human-editable TOML at
+Backend configuration is human-editable TOML at
 `$XDG_CONFIG_HOME/hagig/config.toml`, defaulting to
 `~/.config/hagig/config.toml`, including on macOS. Validated model, editor,
 isolation and vocabulary settings are frozen for the server lifetime; apply edits

@@ -2,10 +2,14 @@
 
 Status: copy-only alpha implementation design, not a working alpha. The native
 synthetic shell exists; see [native guidance](../../../clients/macos/AGENTS.md).
-The Python backend, REST API, real transcription, TOML integration, editable
-review and local `.app` assembly described below are planned, not implemented.
-Agreed scope is in the PRD; unimplemented details below remain proposals unless
-explicitly identified as settled owner choices.
+The Python backend (server, worker, CLI, TOML configuration, explicit model
+installation and both engines), the REST API, the Swift REST client and local
+`.app` assembly are implemented with hosted macOS evidence; see
+[backend guidance](../../../backend/AGENTS.md). That is development evidence,
+not alpha acceptance: no engine has passed the §2 adoption gate, and the
+physical-Mac evidence in §13 is still missing. Agreed scope is in the PRD;
+details below that are not implemented remain proposals unless explicitly
+identified as settled owner choices.
 
 Read the [constitution](../../CONSTITUTION.md) and [MVP PRD](../../product/prds/01-mvp.md) first. This
 document does not certify dependency privacy or model performance.
@@ -153,7 +157,8 @@ Neural Engine acceleration without observing the actual path.
 
 ## 3. Configuration and filesystem locations
 
-Use TOML only for the alpha. Proposed schema (not implemented yet):
+Use TOML only for the alpha. Schema (`model.id` is required; owner decision
+2026-11-10, pending the physical-Mac choice of a default engine):
 
 ```toml
 # $XDG_CONFIG_HOME/hagig/config.toml
@@ -460,7 +465,7 @@ destination. Respect reduced motion, native accessibility names and model displa
 
 ## 9. CLI contract
 
-Planned alpha command surface (typer); none of it is implemented yet:
+Alpha command surface (typer):
 
 ```text
 hagig start
@@ -611,11 +616,16 @@ No review can substitute for these still-unverified facts:
 
 - Qwen3-ASR size, the default engine, and each engine's latency, memory and
   long-input behavior on a physical Mac.
-- MPS and Metal access from the worker under `seatbelt-v1.sb`.
+- MPS access from the worker under `seatbelt-v1.sb`. Hosted macOS VMs report no
+  MPS device in either isolation mode; MLX Metal works under the policy there
+  (#49).
 - Silence/noise behavior for AC9: the biased model echoes its prompt on silence.
 - Seatbelt enforcement for the Python worker, and Hugging Face/transformers
-  offline behavior under it.
-- A relocatable, signed bundle of the uv-managed interpreter and environment.
+  offline behavior under it, on a physical Mac. Hosted macOS evidence (#49)
+  shows outbound IPv4, IPv6 and DNS denied in the sandboxed worker against an
+  unsandboxed control; the Python audit hook cannot observe native code.
+- The relocated, ad-hoc-signed bundle (#48) on a physical Mac with TCC
+  permissions; hosted relocation evidence exists.
 - The AsyncHTTPClient and Python dependency privacy reviews.
 - Native capture/editor/clipboard routing and cancellation boundary behavior.
 - Validated local app build/terminal launch recipe, hosted exact-head evidence,
