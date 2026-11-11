@@ -6,9 +6,9 @@ contract) first. Configuration, paths, the server lock, WAV decoding, the REST
 server, the worker protocol and the CLI (`start`, `status`, `stop`,
 `transcribe`) are implemented and tested with a test-only fake engine (#45).
 Model manifests, `hagig model install` and load-time model checks are
-implemented (#47). Real engines (#49) are not. The app bundle (#48), which
-syncs both engine extras, is described in `clients/macos/AGENTS.md`.
-Fake-engine success is not transcription evidence.
+implemented (#47), and so are the two real engines (#49; see **Engines**).
+The app bundle (#48), which syncs both engine extras, is described in
+`clients/macos/AGENTS.md`. Fake-engine success is not transcription evidence.
 
 ## Layout and boundaries
 
@@ -181,9 +181,10 @@ before_exit)`):
   over 64 KiB is `result_too_large`. Malformed input exits 1 without replying.
   EOF at a frame boundary (the exit request) exits 0.
 - `main()` sets the offline variables, moves fd 1 to stderr so stray prints
-  cannot corrupt the protocol, and serves the real `ENGINES`. Its modules
-  (`hagig.engines.qwen3_asr`, `hagig.engines.mlx_whisper`) arrive with #49;
-  until then selecting one fails `load` with `worker_failed`.
+  cannot corrupt the protocol, and serves the real `ENGINES`
+  (`hagig.engines.qwen3_asr`, `hagig.engines.mlx_whisper`). Run as
+  `-m hagig.worker` the file is `__main__`, so it serves from the imported
+  `hagig.worker` module: engines raise that module's `EngineError`.
 - The server launches it with `asyncio.create_subprocess_exec` in a new
   session, `close_fds`, `cwd="/"`, stderr to `/dev/null` and an environment of
   `HOME`, `TMPDIR`, `PATH=/usr/bin:/bin` and the four offline/telemetry
@@ -200,6 +201,38 @@ before_exit)`):
   signals are sent only while unreaped. Any stdout byte or EOF while idle
   retires the worker. There is no automatic retry; the next request launches
   a fresh worker.
+
+**Engines** (TDD section 2; `engines/`, #49). Two in-tree modules behind the
+worker `Engine` Protocol, selected through the closed `ENGINES` table; only the
+selected one is imported, and the server never imports either.
+
+- `qwen3_asr`: transformers 5.22.2 on torch 2.15.0. `AutoProcessor` and
+  `AutoModelForMultimodalLM` `from_pretrained(dir, local_files_only=True)`,
+  the model with `use_safetensors=True` and `dtype=torch.bfloat16`; never
+  `trust_remote_code`. transformers logging is set to errors and its progress
+  bars off. `apply_transcription_request(audio=<array>, prompt=..., language=
+  "English")`, greedy, at most 32 + 8 tokens per second of audio. The prompt is
+  `Vocabulary: a, b.`, or none with no vocabulary. Device: CPU. PyTorch MPS has
+  not been seen working for this engine (hosted VMs have no supported Metal
+  device), so it is not selected; a physical-Mac run decides.
+- `mlx_whisper`: mlx-whisper 0.4.3 on MLX 0.32.4, `load_model(dir, float16)`
+  on MLX's default device (Metal on Apple Silicon), `transcribe(audio,
+  language="en", initial_prompt=..., verbose=None)` with the same prompt text.
+  mlx-whisper keeps only the prompt's last 223 tokens, so a long vocabulary
+  silently loses its first terms. `load` refuses a missing directory itself,
+  replaces mlx-whisper's `snapshot_download` with a function that refuses,
+  and seeds `ModelHolder` so `transcribe` never loads by name.
+- A load failure is `EngineError("model_invalid")`, raised outside the
+  handler; a missing engine stack (`ImportError`), `MemoryError` and any
+  transcription failure are `worker_failed`. Nothing prints or logs; worker
+  stderr is discarded anyway.
+- Known model behavior, not filtered (AC9 open risk): on digital silence and
+  white noise both engines can return text. Biased Qwen returns its own
+  vocabulary prompt; Whisper returns "Thank you." and similar. Biased Whisper
+  has also rendered a spoken word as "Vocabulary".
+- Local writes: importing torch's `_dynamo` (through transformers) creates an
+  empty `$TMPDIR/torchinductor_<user>` directory, after `tempfile` creates and
+  deletes one probe file there. Content-free; recorded, not prevented.
 
 **Models** (TDD sections 2 and 4; manifests, `models.py`, `installer.py`):
 
@@ -322,10 +355,17 @@ real filesystem, lock and socket behavior, `tests/e2e` for the real server and
 CLI over the real socket. `tests/support/` holds the test-only fake engine
 (`fake_worker.py`, the real `hagig.worker.main` with a fake table and a
 frame-tampering writer, scripted through a control directory),
-`harness.py` (isolated XDG users, raw socket requests) and
-`serve_fake.py`, which runs the real server with that worker command injected.
-Neither is importable from the package, configuration, the CLI or the
-environment. Tests never touch the network, the
+`harness.py` (isolated XDG users, raw socket requests),
+`serve_fake.py`, which runs the real server with that worker command injected,
+`probe_worker.py` (the real worker with a probe engine that attempts
+networking and MPS/Metal from inside the worker) and `audited_worker.py` (the
+real worker and real `ENGINES` under a Python audit hook). None is importable
+from the package, configuration, the CLI or the environment.
+`tests/inference/` is opt-in real-engine evidence for macOS
+(`HAGIG_INFERENCE_DATA` = an XDG data directory with both models installed;
+otherwise skipped) and `tests/inference/measure.py` the AC8/AC9 measurement;
+`.github/workflows/macos-inference.yml` runs both. They touch the network on
+purpose (connectivity controls) and are not portable tests. Tests never touch the network, the
 real `/tmp/hagig-<uid>` or user configuration; derive expected values
 independently (for example the stdlib `wave` module decodes `speech.wav`).
 
@@ -406,8 +446,9 @@ imports huggingface-hub (`load_models.py`) and tiktoken (`tokenizer.py`), and
 it contains a named-model download, a Hub fallback and `upload_to_hub`. With
 a local `--torch-name-or-path` and no `--upload-name` none of them is
 reached (source inspection of the pinned file and mlx-whisper 0.4.3), and it
-runs with the offline variables set. Not yet inspected beyond this inventory
-(constitution §6).
+runs with the offline variables set. The engines' own load and transcribe
+paths are audited below (#49); the rest of these transitives is not inspected
+beyond this inventory (constitution §6).
 
 Locked transitives (see `uv tree --frozen`): annotated-doc, annotated-types,
 anyio, click, colorama (Windows only), h11, httptools, idna, markdown-it-py,
@@ -438,6 +479,49 @@ Findings to carry forward (source inspection only, not runtime observation):
   `socket`, `requests` and `httpx` imports found none outside the HTTP stack
   (starlette, uvicorn, anyio, h11, httptools, websockets). This is a finite
   source check, not a privacy certification (constitution §6).
+
+### Engine auto-download audit (#49)
+
+Three separate records (constitution §6); none is a privacy certification.
+
+1. **Source inspection** (transformers 5.22.2, huggingface-hub 2.4.0,
+   mlx-whisper 0.4.3, tiktoken 0.14.0, as locked):
+   - Qwen loads with a directory path and `local_files_only=True`, so
+     transformers resolves every file in that directory and raises rather than
+     calling the Hub; the installed configs have no `auto_map`, and
+     `trust_remote_code` is never passed. The processor gets a NumPy array:
+     `load_audio` would fetch a string as a URL or path.
+   - mlx-whisper's `load_model` calls `huggingface_hub.snapshot_download` for a
+     path that does not exist; the engine checks the directory, replaces that
+     name with a refusal and seeds `ModelHolder`, so `transcribe` never loads.
+     `load_audio` (ffmpeg subprocess) runs only for string input; the engine
+     passes an array. The tokenizer reads mlx-whisper's bundled
+     `assets/*.tiktoken` into `tiktoken.Encoding` directly; tiktoken's
+     downloading path (`get_encoding` → `load_tiktoken_bpe` →
+     `read_file_cached` → `requests.get`, cached under `TIKTOKEN_CACHE_DIR` or
+     the temp directory) is never called. `timing.py`'s numba JIT is not
+     cached to disk and runs only for word timestamps, which are off.
+   - hf-xet is reached only through Hub downloads, which no engine path calls.
+     Hub telemetry is off in offline mode and with `HF_HUB_DISABLE_TELEMETRY`.
+2. **Runtime observation** (`tests/inference`, networking available, disabled
+   mode): mDNSResponder's per-client lookup log shows no lookup by any Hagig
+   process while both engines load and transcribe, or while a missing or
+   invalid model fails (a probe's lookup does show, so the observer works).
+   A Python audit hook on the real worker records no socket event and no
+   process creation; the only writes are torch's import-time probe file and
+   empty cache directory (see **Engines**); every model file read is in the
+   installation directory. Private, initially empty `HOME` and `TMPDIR` stay
+   empty apart from that directory. The kernel's Sandbox violation reports
+   were tried as an observer and rejected: on hosted VMs they dropped single
+   attempts entirely. The audit hook does not see native code (PyTorch, MLX,
+   tokenizers, hf-xet) that never calls into Python; a direct-IP connection
+   from native code would show in neither observer.
+3. **Blocked-network operation**: both engines transcribe with the worker
+   under `seatbelt-v1.sb` (required mode) and, in disabled mode, with the whole
+   CLI, server and worker under a test-only profile denying outbound IP and
+   the DNS resolver's socket. Missing and invalid models give `model_missing`
+   and `model_invalid` with networking available and blocked, and write
+   nothing to the data directory.
 
 ## Evidence log
 
