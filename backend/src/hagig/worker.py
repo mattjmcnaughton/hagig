@@ -37,7 +37,7 @@ class Engine(Protocol):
     """One in-tree inference engine (TDD section 2)."""
 
     def load(self, model_dir: Path) -> None:
-        """Load the model from a local directory, or raise EngineError."""
+        """Load the model from a local directory, or raise ModelError."""
         ...
 
     def transcribe(
@@ -47,16 +47,7 @@ class Engine(Protocol):
         ...
 
 
-class EngineError(Exception):
-    """An engine failure with a stable code (`model_missing`, `model_invalid`)."""
-
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
-        self.code = code
-
-
-# The closed set of engines; only the selected one is ever imported. The
-# modules arrive with #49, so selecting one before then fails the load.
+# The closed set of engines; only the selected one is ever imported.
 ENGINES: Mapping[str, Callable[[], Engine]] = {
     "qwen3-asr": lambda: importlib.import_module("hagig.engines.qwen3_asr").Engine(),
     "mlx-whisper": lambda: importlib.import_module(
@@ -145,7 +136,7 @@ def _serve(
         verify(Path(load["model_dir"]))
         engine = engines[load["engine"]]()
         engine.load(Path(load["model_dir"]))
-    except (EngineError, ModelError) as error:
+    except ModelError as error:
         code = error.code if error.code in LOAD_CODES else "worker_failed"
     except Exception:
         code = "worker_failed"
@@ -193,11 +184,13 @@ def main(engines: Mapping[str, Callable[[], Engine]] = ENGINES) -> None:
     os.dup2(2, 1)
     sys.stdout = sys.stderr
     protocol_in = os.fdopen(os.dup(0), "rb")
+    # Nothing else may read the protocol stream (a library prompt, `input()`).
+    devnull = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(devnull, 0)
+    os.close(devnull)
+    sys.stdin = open(os.devnull)  # noqa: SIM115 - lives as long as the process
     raise SystemExit(run(protocol_in, protocol_out, engines))
 
 
 if __name__ == "__main__":
-    # `python -m hagig.worker` runs this file as `__main__`; engines import
-    # `hagig.worker` for EngineError, so serve from that one module, or their
-    # errors would be another class and every code would be worker_failed.
-    importlib.import_module("hagig.worker").main()
+    main()
