@@ -100,7 +100,7 @@ jobs:
           { sw_vers; uname -m; xcodebuild -version; swift --version; uv --version; git rev-parse HEAD; df -h "$RUNNER_TEMP"; } | tee "$EVIDENCE/environment.txt"
       - name: Script contracts (tool stand-ins, not native proof)
         run: python3 clients/macos/test_bundle.py
-      - name: Build the bundle (uv sync is the only network step)
+      - name: Build the bundle (uv sync is its only network step)
         timeout-minutes: 30
         run: |
           bash clients/macos/bundle.sh build 2>&1 | tee "$EVIDENCE/build.log"
@@ -120,8 +120,16 @@ jobs:
         run: |
           data="$RUNNER_TEMP/bundle-data"
           mkdir -m 700 "$data" "$RUNNER_TEMP/bundle-home"
-          env -i HOME="$RUNNER_TEMP/bundle-home" XDG_DATA_HOME="$data" \
-            "$RELOCATED/Contents/Helpers/hagig" model install qwen3-asr-0.6b 2>&1 | tee "$EVIDENCE/model-install.log"
+          # Install is idempotent and hash-verifies every file, so up to three
+          # attempts ride out a Hugging Face hiccup without trusting a partial one.
+          for attempt in 1 2 3; do
+            if env -i HOME="$RUNNER_TEMP/bundle-home" XDG_DATA_HOME="$data" \
+              "$RELOCATED/Contents/Helpers/hagig" model install qwen3-asr-0.6b > "$EVIDENCE/model-install.log" 2>&1; then
+              break
+            fi
+            echo "install attempt $attempt failed"; cat "$EVIDENCE/model-install.log"; sleep 30
+          done
+          cat "$EVIDENCE/model-install.log"
           grep -Fx installed "$EVIDENCE/model-install.log"
           codesign --verify --deep --strict "$RELOCATED"
           echo "HAGIG_BUNDLED_DATA=$data" >> "$GITHUB_ENV"
