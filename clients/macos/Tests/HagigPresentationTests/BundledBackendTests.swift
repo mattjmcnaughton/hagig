@@ -31,7 +31,9 @@ private final class FileCapture: NativeCapture {
 /// The app against the bundled Python server, through `Contents/Helpers/hagig`
 /// of a built, relocated Hagig.app (#48). Opt-in: set the absolute
 /// `HAGIG_BUNDLED_APP` and `HAGIG_INTEGRATION_WAV`; both unset skips, one fails.
-/// No model is installed, so a request must end in `model_missing`.
+/// Without a model a request must end in `model_missing`. With
+/// `HAGIG_BUNDLED_DATA` (an XDG data directory where the bundle's own helper
+/// installed `qwen3-asr-0.6b`), a request must end in a real transcript (#49).
 final class BundledBackendTests: XCTestCase {
     private struct Setup {
         let helper: URL
@@ -43,7 +45,8 @@ final class BundledBackendTests: XCTestCase {
     /// requests use the bundled helper. Teardown stops only this test's server,
     /// also after a failure, and keeps the runtime directory if stop fails.
     @MainActor
-    private func prepare(config: String, presentation: Presentation) throws -> Setup {
+    private func prepare(config: String, presentation: Presentation,
+                         data: String? = nil) throws -> Setup {
         let supplied = ProcessInfo.processInfo.environment
         let app = supplied["HAGIG_BUNDLED_APP"], wav = supplied["HAGIG_INTEGRATION_WAV"]
         if app == nil, wav == nil { throw XCTSkip("Requires a built, relocated Hagig.app and a WAV") }
@@ -62,7 +65,7 @@ final class BundledBackendTests: XCTestCase {
         let environment = ["HOME": root.appendingPathComponent("home").path,
                            "XDG_RUNTIME_DIR": root.path,
                            "XDG_CONFIG_HOME": root.appendingPathComponent("config").path,
-                           "XDG_DATA_HOME": root.appendingPathComponent("data").path]
+                           "XDG_DATA_HOME": data ?? root.appendingPathComponent("data").path]
         let helper = URL(fileURLWithPath: appPath).appendingPathComponent("Contents/Helpers/hagig")
         let wavURL = URL(fileURLWithPath: wavPath)
         let controller = DictationController(presentation: presentation,
@@ -101,6 +104,35 @@ final class BundledBackendTests: XCTestCase {
         let idle = try await statusJSON(setup)
         XCTAssertEqual(idle["state"] as? String, "idle")
         XCTAssertEqual(idle["worker"] as? String, "absent")
+    }
+
+    /// Real inference: the bundled server launches its worker under Seatbelt and
+    /// Qwen3-ASR 0.6B transcribes speech.wav ("Open the project and run the
+    /// tests") into review. Never copied: review is explicit-Copy only.
+    @MainActor
+    func testRecordingGetsATranscriptFromAnInstalledModel() async throws {
+        guard let data = ProcessInfo.processInfo.environment["HAGIG_BUNDLED_DATA"] else {
+            throw XCTSkip("Requires HAGIG_BUNDLED_DATA with qwen3-asr-0.6b installed")
+        }
+        XCTAssertTrue(data.hasPrefix("/"))
+        let model = Presentation()
+        let setup = try prepare(config: "[model]\nid = \"qwen3-asr-0.6b\"\n",
+                                presentation: model, data: data)
+        setup.controller.record()
+        try await wait(seconds: 10) { model.stage != .awaitingAdmission }
+        XCTAssertEqual(model.stage, .recording)
+        setup.controller.stop()
+        // Cold: server start, worker launch, hashing about 1.5 GB, load, decode.
+        try await wait(seconds: 150) { model.stage != .transcribing }
+        XCTAssertEqual(model.stage, .fallback)
+        let text = try XCTUnwrap(model.transcript)
+        XCTAssertTrue(text.lowercased().contains("project"), "expected speech.wav's words")
+        XCTAssertFalse(model.copied)
+        let status = try await statusJSON(setup)
+        XCTAssertEqual(status["network_isolation"] as? String, "required")
+        XCTAssertEqual(status["worker"] as? String, "running")
+        XCTAssertEqual(status["state"] as? String, "idle")
+        print("BUNDLED_TRANSCRIPT_RECEIVED")
     }
 
     @MainActor

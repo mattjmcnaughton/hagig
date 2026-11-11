@@ -64,12 +64,15 @@ jobs:
   # #48: build Hagig.app with the uv-managed interpreter and the frozen backend
   # environment, move it outside the checkout, hide uv's interpreters and cache,
   # then run the relocation smoke, its counterfactuals and the app against the
-  # bundled server. No model is installed: requests must answer model_missing.
+  # bundled server. #49: the bundle's own helper then installs qwen3-asr-0.6b,
+  # and the app gets a real transcript from it; without a model, requests
+  # answer model_missing.
   bundle-smoke:
     runs-on: macos-15
-    # A release HagigShell build, a debug test build of SwiftNIO/BoringSSL, and
-    # about 1.5 GB of interpreter and engines to compile, sign and check (#47).
-    timeout-minutes: 90
+    # A release HagigShell build, a debug test build of SwiftNIO/BoringSSL,
+    # about 1.5 GB of interpreter and engines to compile, sign and check (#47),
+    # and a 1.6 GB model download with real inference (#49).
+    timeout-minutes: 110
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     defaults:
@@ -112,17 +115,28 @@ jobs:
       - name: Relocation smoke (signatures, loader paths, status, model_missing, Seatbelt, stop)
         timeout-minutes: 15
         run: bash clients/macos/smoke-bundle.sh "$RELOCATED" 2>&1 | tee "$EVIDENCE/smoke.log"
+      - name: Install qwen3-asr-0.6b with the bundled helper (explicit network step)
+        timeout-minutes: 20
+        run: |
+          data="$RUNNER_TEMP/bundle-data"
+          mkdir -m 700 "$data" "$RUNNER_TEMP/bundle-home"
+          env -i HOME="$RUNNER_TEMP/bundle-home" XDG_DATA_HOME="$data" \
+            "$RELOCATED/Contents/Helpers/hagig" model install qwen3-asr-0.6b 2>&1 | tee "$EVIDENCE/model-install.log"
+          grep -Fx installed "$EVIDENCE/model-install.log"
+          codesign --verify --deep --strict "$RELOCATED"
+          echo "HAGIG_BUNDLED_DATA=$data" >> "$GITHUB_ENV"
       - name: App against the bundled server through Contents/Helpers/hagig
         working-directory: clients/macos
         timeout-minutes: 25
         run: |
           HAGIG_BUNDLED_APP="$RELOCATED" HAGIG_INTEGRATION_WAV="$GITHUB_WORKSPACE/backend/tests/fixtures/speech.wav" \
             swift test --filter BundledBackendTests 2>&1 | tee "$EVIDENCE/integration.log"
-          grep -E 'Executed 2 tests, with 0 failures' "$EVIDENCE/integration.log"
+          grep -E 'Executed 3 tests, with 0 failures' "$EVIDENCE/integration.log"
           if grep -E 'skipped|Skipped' "$EVIDENCE/integration.log"; then exit 1; fi
-          test "$(grep -c BUNDLED_BACKEND_CLEANUP_COMPLETE "$EVIDENCE/integration.log")" = 2
+          test "$(grep -c BUNDLED_BACKEND_CLEANUP_COMPLETE "$EVIDENCE/integration.log")" = 3
+          grep -F BUNDLED_TRANSCRIPT_RECEIVED "$EVIDENCE/integration.log"
       - name: Counterfactuals (checkout link, missing profile, unsigned extension, no backend package)
-        timeout-minutes: 45
+        timeout-minutes: 50
         run: bash clients/macos/bundle-proof.sh "$RELOCATED" "$EVIDENCE/proof"
       - name: Upload bounded text evidence (no bundle bytes)
         if: always()

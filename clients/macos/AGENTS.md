@@ -228,9 +228,11 @@ id = "qwen3-asr-0.6b"  # or "qwen3-asr-1.7b"; "whisper-large-v3-turbo" on Apple 
 Installing a model is a separate explicit network step through the paired CLI,
 `.../Contents/Helpers/hagig model install <id>` with one of those three IDs
 (#47; models land in `$XDG_DATA_HOME/hagig/models/<id>/current`). The bundle
-build asserts it carries the three manifests, but no model install has been run
-from the bundle. Real engines arrive with #49, so this bundle cannot transcribe
-yet; without a model every request answers `model_missing`.
+build asserts it carries the three manifests. `bundle-smoke` installs
+`qwen3-asr-0.6b` with the relocated bundle's own helper (a real pinned
+download) and the app then transcribes with it (#49); Whisper's install from
+the bundle, which runs the MLX conversion with the bundled interpreter, is not
+exercised there. Without a model every request answers `model_missing`.
 
 Stop and relaunch. The server is per user and outlives the app. Before
 rebuilding or replacing a bundle: Quit the shell, coordinate with other clients
@@ -283,13 +285,19 @@ What each check proves (the scripts own the mechanics):
   the bundled server: `DictationController` and the real `SocketRequest` start it
   through `Contents/Helpers/hagig`, a file capture streams `speech.wav` through
   the production converter (not a microphone), and the result is the
-  `.issue(.modelMissing)` state with no transcript. Without `model.id`, the
+  `.issue(.modelMissing)` state with no transcript. With `HAGIG_BUNDLED_DATA`
+  (the data directory the bundle's helper installed `qwen3-asr-0.6b` into; unset
+  skips that one test) the same path ends in review (`.fallback`) with a real
+  transcript containing "project", nothing copied, and the server reporting
+  `network_isolation: required` with its worker running: real inference in the
+  bundled worker under Seatbelt (CPU Qwen). Without `model.id`, the
   helper's exit 2 shows `.issue(.configuration)` and starts no server. Each test
   stops only its own server and prints `BUNDLED_BACKEND_CLEANUP_COMPLETE`.
 
 `macos-build.yml`'s `bundle-smoke` job runs them all on macos-15 after moving the
 bundle to `$RUNNER_TEMP/relocated app` and hiding uv's private interpreter and
-cache directories. `bundle-proof.sh` makes its copies as APFS clones (`cp -c`). It uploads text logs only, never bundle bytes. Hosted runs are
+cache directories, installing `qwen3-asr-0.6b` through the relocated helper
+under `env -i` (then re-verifying the seal) before the app tests. `bundle-proof.sh` makes its copies as APFS clones (`cp -c`). It uploads text logs only, never bundle bytes. Hosted runs are
 not physical-Mac launch, LaunchServices, TCC, microphone or rebuild-permission
 acceptance.
 

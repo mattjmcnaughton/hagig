@@ -99,6 +99,12 @@ mkdir "$output/restored"
 smoke "$app" > "$output/restored/smoke.log" 2>&1
 grep -Fx BUNDLE_SMOKE_PASSED "$output/restored/smoke.log" > /dev/null
 app_test "$app" > "$output/restored/app.log" 2>&1
-grep -E 'Executed 2 tests, with 0 failures' "$output/restored/app.log" > /dev/null
+# The real-transcript test runs only with HAGIG_BUNDLED_DATA (an installed model).
+if [ -n "${HAGIG_BUNDLED_DATA:-}" ]; then
+    executed='Executed 3 tests, with 0 failures'
+else
+    executed='Executed 3 tests, with 1 test skipped and 0 failures'
+fi
+grep -F "$executed" "$output/restored/app.log" > /dev/null
 echo 'restored: the original relocated bundle passes the smoke and the app test again'
 echo BUNDLE_PROOF_PASSED
