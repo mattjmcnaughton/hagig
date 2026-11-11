@@ -79,3 +79,8 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "A", "SIM", "TCH"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# The engine stacks are extras (macOS and the bundle), not in the portable
+# environment ty checks; their imports stay inside the engine modules.
+[tool.ty.analysis]
+allowed-unresolved-imports = ["torch", "transformers", "transformers.**", "mlx", "mlx.**", "mlx_whisper", "mlx_whisper.**"]
