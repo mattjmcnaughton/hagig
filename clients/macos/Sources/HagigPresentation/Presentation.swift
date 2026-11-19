@@ -3,32 +3,38 @@ import Combine
 
 public enum DemoIssue: String, CaseIterable {
     case modelMissing, microphonePermission, serverUnavailable, busy, workerFailed, deadlineExceeded
-    case microphoneUnavailable, configuration
+    case microphoneUnavailable, configuration, isolationUnavailable
 
     public var title: String {
         switch self {
-        case .modelMissing: return "Model missing"
-        case .microphonePermission: return "Microphone permission needed"
-        case .serverUnavailable: return "Server unavailable"
+        case .modelMissing: return "Model not installed"
+        case .microphonePermission: return "Microphone access is off"
+        case .serverUnavailable: return "Transcription service unavailable"
         case .busy: return "Another request is active"
         case .workerFailed: return "Worker stopped unexpectedly"
         case .deadlineExceeded: return "Transcription timed out"
         case .microphoneUnavailable: return "Microphone unavailable"
-        case .configuration: return "Configuration needs attention"
+        case .configuration: return "Settings need attention"
+        case .isolationUnavailable: return "Network isolation unavailable"
         }
     }
 
     public var recovery: String {
         switch self {
-        case .modelMissing: return "Explicitly install or repair the configured model, then retry. No download starts automatically."
+        case .modelMissing:
+            return "Hagig never downloads a model on its own. Install or repair the configured model yourself, then record again."
         case .microphonePermission:
-            return "Allow Microphone access for Hagig in macOS System Settings, then try a new recording."
+            return "In System Settings, open Privacy & Security, then Microphone, and allow Hagig. Then record again."
         case .serverUnavailable:
-            return "Check that the paired backend is installed and compatible, then retry. An existing server is never replaced automatically."
-        case .busy: return "Wait for the other request to finish, then try again. Nothing is queued."
-        case .workerFailed, .deadlineExceeded: return "Nothing delivered. Start a new recording to retry."
-        case .microphoneUnavailable: return "Recording was discarded. Check the input device and permission, then try again."
-        case .configuration: return "Check the backend configuration, intentionally stop the shared server, then relaunch. No settings were silently substituted."
+            return "The paired service did not answer, or the one running belongs to a different build. Stop that service with the build that started it, then record again. Hagig never replaces a running service."
+        case .busy: return "The service transcribes one request at a time and queues nothing. Wait for the other request to finish, then record again."
+        case .workerFailed: return "Nothing was delivered. Record again to start a fresh worker."
+        case .deadlineExceeded: return "Nothing was delivered. Record again to retry."
+        case .microphoneUnavailable: return "The recording was discarded. Check the input device, then record again."
+        case .configuration:
+            return "The service did not start because its settings file is missing or invalid. Fix the file, then record again. Hagig never substitutes settings."
+        case .isolationUnavailable:
+            return "The inference worker could not start inside its network sandbox, so it was not started. Hagig never falls back to an unsandboxed worker by itself."
         }
     }
 }
@@ -51,6 +57,16 @@ public final class Presentation: ObservableObject {
     @Published public private(set) var nearLimit = false
     /// The server's configured model alias from the last admission's status.
     @Published public private(set) var modelID: String?
+    /// The server's transcription language code from the same status.
+    @Published public private(set) var language: String?
+    /// When capture began, for the elapsed-time display.
+    @Published public private(set) var recordingStarted: Date?
+    /// Loudness of the most recent capture chunks (0...1, oldest first). A
+    /// bounded display value, never audio; discarded with the request.
+    @Published public private(set) var levels: [Float] = []
+    /// One stable, content-free line from the paired helper about a failure.
+    @Published public private(set) var issueDetail: String?
+    public static let levelCount = 44
     public private(set) var requestID: UUID?
     private var discardEditor: (() -> Void)?
 
@@ -68,13 +84,23 @@ public final class Presentation: ObservableObject {
         return id
     }
 
-    public func admit(requestID: UUID, editorMode: EditorMode, modelID: String) -> Bool {
+    public func admit(requestID: UUID, editorMode: EditorMode, modelID: String,
+                      language: String = "en", started: Date = Date()) -> Bool {
         guard self.requestID == requestID, stage == .awaitingAdmission else { return false }
         self.editorMode = editorMode
         self.modelID = modelID
+        self.language = language
         editorLabel = editorMode == .vim ? "Vim · Normal" : "Standard"
+        recordingStarted = started
         stage = .recording
         return true
+    }
+
+    /// One capture chunk's loudness, for the current recording only.
+    public func recordLevel(_ level: Float, requestID: UUID) {
+        guard self.requestID == requestID, stage == .recording, level.isFinite else { return }
+        levels.append(min(max(level, 0), 1))
+        if levels.count > Self.levelCount { levels.removeFirst(levels.count - Self.levelCount) }
     }
 
     public func warnNearLimit(requestID: UUID) {
@@ -87,6 +113,7 @@ public final class Presentation: ObservableObject {
         if let editorMode { self.editorMode = editorMode }
         editorLabel = self.editorMode == .vim ? "Vim · Normal" : "Standard"
         requestID = UUID()
+        recordingStarted = Date()
         stage = .recording
     }
 
@@ -98,6 +125,8 @@ public final class Presentation: ObservableObject {
     public func complete(requestID: UUID, text: String) {
         guard self.requestID == requestID, stage == .transcribing else { return }
         self.requestID = nil
+        levels = []
+        recordingStarted = nil
         // The server already maps whitespace-only text to ""; never normalize again.
         guard !text.isEmpty else {
             stage = .noSpeech
@@ -121,11 +150,15 @@ public final class Presentation: ObservableObject {
         transcript = nil
         copied = false
         nearLimit = false
+        levels = []
+        recordingStarted = nil
+        issueDetail = nil
         stage = .ready
     }
 
-    public func show(issue: DemoIssue) {
+    public func show(issue: DemoIssue, detail: String? = nil) {
         reset()
+        issueDetail = detail
         stage = .issue(issue)
     }
 

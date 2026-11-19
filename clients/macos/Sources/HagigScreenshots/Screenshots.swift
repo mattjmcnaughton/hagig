@@ -18,16 +18,32 @@ struct Screenshots {
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let names = arguments[1] == "proof" ? ["ready"] :
             ["ready", "awaitingAdmission", "recording", "nearLimit", "transcribing", "fallback", "copied", "cancelled", "noSpeech"] + DemoIssue.allCases.map(\.rawValue)
+        // Fixed synthetic inputs: a clock, a model alias, a helper path and a
+        // loudness curve. None is a measurement, a recording or a real path.
+        let clock = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        let setup = SetupGuide(helperPath: "/Applications/Hagig.app/Contents/Helpers/hagig")
         for name in names {
             // Bounded synthetic gallery: review exercises Standard and Vim,
             // multiline Unicode and the current edited buffer through shared UI.
-            let presentation = Presentation(editorMode: name == "copied" ? .vim : .standard)
+            let presentation = Presentation()
+            if !["ready", DemoIssue.configuration.rawValue].contains(name) {
+                // Every other state follows an admission, which names the model;
+                // a settings problem stops the service before any admission.
+                let id = presentation.reserve()
+                if name != "awaitingAdmission" {
+                    _ = presentation.admit(requestID: id, editorMode: name == "copied" ? .vim : .standard,
+                                           modelID: "qwen3-asr-0.6b",
+                                           started: clock.addingTimeInterval(name == "nearLimit" ? -287 : -12))
+                    for step in 0..<(name == "nearLimit" ? Presentation.levelCount : 30) {
+                        let phrase = abs(sin(Double(step) * 0.55)) * (0.35 + 0.5 * abs(sin(Double(step) * 0.13)))
+                        presentation.recordLevel(Float(step % 11 == 9 ? 0.04 : 0.12 + phrase), requestID: id)
+                    }
+                }
+            }
             if let issue = DemoIssue(rawValue: name) {
-                presentation.show(issue: issue)
-            } else if name == "awaitingAdmission" {
-                presentation.reserve()
-            } else if name != "ready" {
-                presentation.begin()
+                presentation.show(issue: issue, detail: issue == .configuration ?
+                    "config_invalid: model.id missing; set [model] id in /Users/you/.config/hagig/config.toml" : nil)
+            } else if !["ready", "awaitingAdmission"].contains(name) {
                 if name == "nearLimit", let id = presentation.requestID {
                     presentation.warnNearLimit(requestID: id)
                 }
@@ -43,7 +59,12 @@ struct Screenshots {
                 if name == "cancelled" { presentation.cancel() }
             }
             for dark in [false, true] {
-                let view = HagigView(presentation: presentation, animateActivity: false, copy: { _ in false })
+                // The view paints no surface: the popover does. This opaque
+                // backdrop stands in for that material so the images are legible;
+                // it is not what a popover looks like on any macOS.
+                let view = HagigView(presentation: presentation, animateActivity: false, clock: clock,
+                                     setup: setup, copy: { _ in false })
+                    .background(Color(nsColor: .windowBackgroundColor))
                     .environment(\.colorScheme, dark ? .dark : .light)
                 // ImageRenderer omits AppKit-backed controls. Cache the hosted native view
                 // instead; capture only its bounds, never the runner's desktop.

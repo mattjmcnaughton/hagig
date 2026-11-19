@@ -5,16 +5,24 @@ import NIOCore
 import NIOHTTP1
 import NIOPosix
 
+/// More helper stderr than this is never its one configuration line; the rest is discarded.
+private let helperLineBytes = 1_024
+
 /// Settings the app takes from `GET /v1/status` for one admitted request.
 struct Admission: Equatable {
     let editorMode: EditorMode
     let modelID: String
+    var language = "en"
 }
 
 /// A request outcome other than text (backend/PROTOCOL.md, Client rules). `code`
 /// is a stable server code, a client-local code, or `generic_failure`.
 struct BackendFailure: Error, Equatable {
     let code: String
+    /// The paired helper's own stderr line for a configuration exit: a stable
+    /// code and the settings file's path (backend `cli._check_config`), never
+    /// file content. Shown to the user, never logged or parsed.
+    var detail: String?
     static let generic = BackendFailure(code: "generic_failure")
     /// The paired helper's TDD §9 usage/configuration exit (2).
     static let configuration = BackendFailure(code: "configuration")
@@ -26,7 +34,8 @@ struct BackendFailure: Error, Equatable {
         case "worker_failed", "result_too_large": return .workerFailed
         case "deadline_exceeded": return .deadlineExceeded
         case "invalid_audio": return .microphoneUnavailable
-        case "isolation_unavailable", "configuration": return .configuration
+        case "configuration": return .configuration
+        case "isolation_unavailable": return .isolationUnavailable
         default: return .serverUnavailable // incompatible_api, server_stopping, cancelled, generic...
         }
     }
@@ -113,7 +122,8 @@ final class SocketRequest: DictationRequest {
         }
         let body = self.body, ended = bodyEnded, wait = resultWait
         upload = Task { try await Self.upload(socket, admitted.request_id, body, ended: ended, wait: wait) }
-        return Admission(editorMode: status.settings.editor_mode, modelID: status.settings.model_id)
+        return Admission(editorMode: status.settings.editor_mode, modelID: status.settings.model_id,
+                         language: status.settings.language)
     }
 
     func finish() {
@@ -229,9 +239,25 @@ final class SocketRequest: DictationRequest {
         process.environment = environment
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        let errors = Pipe()
+        process.standardError = errors
         try process.run()
+        // Drain stderr while waiting. A helper that writes more than the pipe
+        // holds would otherwise block before exiting, and its configuration
+        // exit would surface as a startup timeout. Only the first bytes are kept.
+        let descriptor = errors.fileHandleForReading.fileDescriptor
+        let drainable = fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL) | O_NONBLOCK) == 0
+        var kept: [UInt8] = []
+        var chunk = [UInt8](repeating: 0, count: 16_384)
+        func drain() {
+            while drainable {
+                let count = Darwin.read(descriptor, &chunk, chunk.count)
+                guard count > 0 else { return }
+                kept.append(contentsOf: chunk[..<min(count, helperLineBytes + 1 - kept.count)])
+            }
+        }
         while process.isRunning, ContinuousClock.now < deadline, !Task.isCancelled {
+            drain()
             try? await Task.sleep(for: .milliseconds(10))
         }
         if process.isRunning {
@@ -246,8 +272,22 @@ final class SocketRequest: DictationRequest {
         }
         guard process.terminationReason == .exit, process.terminationStatus == 0 else {
             let usage = process.terminationReason == .exit && process.terminationStatus == 2
-            throw usage ? BackendFailure.configuration : BackendFailure.generic
+            guard usage else { throw BackendFailure.generic }
+            drain() // What the exited helper left in the pipe.
+            throw BackendFailure(code: BackendFailure.configuration.code, detail: helperLine(kept))
         }
+    }
+
+    /// What the exited helper wrote to stderr, when it is the single short line
+    /// its configuration exit prints. The pipe is only ever read without
+    /// blocking, so a descendant that kept it open cannot stall the app.
+    private nonisolated static func helperLine(_ bytes: [UInt8]) -> String? {
+        guard !bytes.isEmpty, bytes.count <= helperLineBytes,
+              let text = String(bytes: bytes, encoding: .utf8) else { return nil }
+        let lines = text.split(whereSeparator: \.isNewline).filter { !$0.allSatisfy(\.isWhitespace) }
+        guard lines.count == 1, let line = lines.first, line.count <= 400,
+              !line.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) else { return nil }
+        return String(line)
     }
 
     // MARK: Exchanges

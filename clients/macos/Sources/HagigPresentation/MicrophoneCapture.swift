@@ -14,6 +14,7 @@ final class PCMRecording {
     private let outputFormat: AVAudioFormat
     private let sink: (Data) -> Void
     private var sent = 0
+    private var loudness: Float = 0
     private var failed = false
     private var closed = false
     private static let maximumBytes = 19_200_000
@@ -38,6 +39,13 @@ final class PCMRecording {
     var atLimit: Bool {
         lock.lock(); defer { lock.unlock() }
         return sent == Self.maximumBytes
+    }
+
+    /// The last accepted chunk's loudness, 0 (-55 dBFS RMS or quieter) to 1
+    /// (-10 dBFS or louder). For display only.
+    var level: Float {
+        lock.lock(); defer { lock.unlock() }
+        return loudness
     }
 
     func append(_ input: AVAudioPCMBuffer) throws {
@@ -71,8 +79,14 @@ final class PCMRecording {
             throw CaptureFailure.invalidAudio
         }
         // Validate the entire converted chunk before accepting any of it.
-        for index in 0..<Int(output.frameLength) where !samples[index].isFinite || abs(samples[index]) > 1 {
-            throw CaptureFailure.invalidAudio
+        var energy: Float = 0
+        for index in 0..<Int(output.frameLength) {
+            guard samples[index].isFinite, abs(samples[index]) <= 1 else { throw CaptureFailure.invalidAudio }
+            energy += samples[index] * samples[index]
+        }
+        if output.frameLength > 0 {
+            let decibels = 10 * log10(max(energy / Float(output.frameLength), 1e-12))
+            loudness = min(max((decibels + 55) / 45, 0), 1)
         }
         let count = min(Int(output.frameLength), (Self.maximumBytes - sent) / 4)
         var chunk = Data(capacity: count * 4)
@@ -97,7 +111,7 @@ final class PCMRecording {
 /// writer or system clipboard is involved. Instantiate only after admission.
 @MainActor
 final class MicrophoneCapture {
-    enum Event { case warning, limit, failed }
+    enum Event { case warning, limit, failed, level(Float) }
     private let engine = AVAudioEngine()
     private var recording: PCMRecording?
     private var observer: NSObjectProtocol?
@@ -134,8 +148,10 @@ final class MicrophoneCapture {
             do {
                 try buffer.append(pcm)
                 let capped = buffer.atLimit
+                let level = buffer.level
                 Task { @MainActor [weak self] in
                     guard let self, self.recording === buffer else { return }
+                    self.event(.level(level))
                     if buffer.nearLimit { self.event(.warning) }
                     if capped { self.event(.limit) }
                 }

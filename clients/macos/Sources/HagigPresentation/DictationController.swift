@@ -71,7 +71,7 @@ public final class DictationController {
                 self.capture = capture
                 try capture.start()
                 guard presentation.admit(requestID: id, editorMode: admission.editorMode,
-                                         modelID: admission.modelID) else {
+                                         modelID: admission.modelID, language: admission.language) else {
                     capture.stop(); request.cancel(); return
                 }
             } catch { fail(error, id: id) }
@@ -116,13 +116,15 @@ public final class DictationController {
         case .warning: presentation.warnNearLimit(requestID: id)
         case .limit: stop()
         case .failed: fail(CaptureFailure.device, id: id)
+        case .level(let level): presentation.recordLevel(level, requestID: id)
         }
     }
 
     private func fail(_ error: Error, id: UUID) {
         guard presentation.requestID == id else { return }
         let issue: DemoIssue
-        if let failure = error as? BackendFailure { issue = failure.issue }
+        var detail: String?
+        if let failure = error as? BackendFailure { issue = failure.issue; detail = failure.detail }
         else if let failure = error as? CaptureFailure {
             switch failure {
             case .permission: issue = .microphonePermission
@@ -130,7 +132,7 @@ public final class DictationController {
             }
         } else { issue = .serverUnavailable }
         // Showing an error discards local generations/editor before releasing resources.
-        presentation.show(issue: issue)
+        presentation.show(issue: issue, detail: detail)
         request?.cancel(); request = nil
         capture?.stop(); capture = nil
     }

@@ -135,6 +135,43 @@ final class DictationTests: XCTestCase {
     }
 
     @MainActor
+    func testCaptureLevelsAndFailureDetailReachThePresentation() async throws {
+        let model = Presentation()
+        let request = ControlledRequest()
+        let capture = ControlledCapture()
+        var event: ((MicrophoneCapture.Event) -> Void)?
+        let controller = DictationController(presentation: model, makeRequest: { request },
+            permission: { true }, makeCapture: { _, callback in event = callback; return capture })
+        controller.record()
+        try await wait { request.admission != nil }
+        request.admission?.resume(returning: Self.standard)
+        try await wait { model.stage == .recording }
+        event?(.level(0.4))
+        XCTAssertEqual(model.levels, [0.4])
+        controller.stop()
+        event?(.level(0.9)) // A chunk queued behind Stop is not part of the trace.
+        XCTAssertEqual(model.levels, [0.4])
+        controller.cancel()
+
+        let failures: [(BackendFailure, DemoIssue, String?)] = [
+            (BackendFailure(code: "configuration", detail: "config_invalid: synthetic detail"),
+             .configuration, "config_invalid: synthetic detail"),
+            (BackendFailure(code: "isolation_unavailable"), .isolationUnavailable, nil),
+        ]
+        for (failure, issue, detail) in failures {
+            let refused = ControlledRequest()
+            let controller = DictationController(presentation: model, makeRequest: { refused },
+                permission: { true }, makeCapture: { _, _ in ControlledCapture() })
+            controller.record()
+            try await wait { refused.admission != nil }
+            refused.admission?.resume(throwing: failure)
+            try await wait { model.stage != .awaitingAdmission }
+            XCTAssertEqual(model.stage, .issue(issue))
+            XCTAssertEqual(model.issueDetail, detail)
+        }
+    }
+
+    @MainActor
     func testAnAnswerBeforeStopEndsTheRequest() async throws {
         // The server may answer before the body ends (deadline, stop, DELETE). Text
         // before Stop is not a result: the body never ended.

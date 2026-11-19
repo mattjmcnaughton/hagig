@@ -63,6 +63,21 @@ final class CaptureTests: XCTestCase {
         XCTAssertTrue(invalidStream.bytes.isEmpty, "an invalid chunk is never partly streamed")
     }
 
+    func testLevelIsEachChunksLoudnessOnAFixedScale() throws {
+        // 0 at -55 dBFS RMS or quieter, 1 at -10 dBFS or louder, linear in decibels:
+        // a constant 0.01 is -40 dBFS, one third of the way up.
+        let format = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1)!
+        let recording = try PCMRecording(format: format, sink: { _ in })
+        XCTAssertEqual(recording.level, 0)
+        let input = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1_600)!
+        input.frameLength = 1_600
+        for (amplitude, level): (Float, Float) in [(0.01, 1.0 / 3), (0, 0), (0.1, 35.0 / 45), (1, 1), (0.001, 0)] {
+            for i in 0..<1_600 { input.floatChannelData![0][i] = amplitude }
+            try recording.append(input)
+            XCTAssertEqual(recording.level, level, accuracy: 0.01, "amplitude \(amplitude)")
+        }
+    }
+
     func testWarningCapAndStopAreBounded() throws {
         let format = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1)!
         let input = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_000)!

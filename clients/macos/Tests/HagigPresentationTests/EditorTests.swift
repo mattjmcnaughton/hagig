@@ -42,7 +42,10 @@ final class EditorTests: XCTestCase {
             keys("a", in: view)
             XCTAssertEqual(view.modeLabel, "Vim · Insert")
             let standard = editor("seed", mode: .standard)
-            standard.setSelectedRange(NSRange(location: 4, length: 0))
+            // Standard opens after the dictated text, so typing continues it.
+            XCTAssertEqual(standard.selectedRange(), NSRange(location: 4, length: 0))
+            XCTAssertEqual(editor("se😀d").selectedRange(), NSRange(location: 0, length: 0), "Vim Normal starts at the top")
+            XCTAssertEqual(editor("se😀d", mode: .standard).selectedRange(), NSRange(location: 5, length: 0))
             standard.insertText("\n😀", replacementRange: standard.selectedRange())
             keys("\u{1b}", in: standard)
             XCTAssertEqual(standard.string, "seed\n😀")
