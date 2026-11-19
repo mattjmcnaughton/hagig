@@ -157,10 +157,30 @@ The upload connection owns the request (see Ownership and cancellation).
 Result text:
 
 - The text is the worker's text unchanged: Unicode, newlines and surrounding
-  whitespace are preserved. The one exception is whitespace-only text (Python
-  `str.isspace()`), which becomes `""`. The server does not sanitize text:
-  control, invisible and bidi characters pass through. How text is displayed or
-  made safe is up to each client.
+  whitespace are preserved, with the exceptions below. The server does not
+  sanitize text: control, invisible and bidi characters pass through. How text is
+  displayed or made safe is up to each client.
+- Three cases answer `""` (no-speech) instead of text, for every engine, with no
+  new field and no change of status:
+  1. Whitespace-only worker text (Python `str.isspace()`).
+  2. Audio with no signal. If the peak absolute sample of the whole upload is
+     below 10^(-60/20) = 0.001 of full scale (-60 dBFS), the server answers `""`
+     without launching or asking a worker, so the launch-time model and
+     isolation checks below do not run for it: a muted input answers no-speech
+     even when the model is missing. The check is only a guard for a muted or
+     dead input, not voice-activity detection: room noise from a live
+     microphone is far above the floor and still reaches the engine. The audio
+     is validated first (invalid audio is still `400`), and cancellation,
+     disconnect, stop and the deadlines act on this early answer as on any other.
+  3. A vocabulary echo. If the worker's text, case-folded and reduced to its
+     alphanumeric words (punctuation and whitespace ignored), is exactly the
+     configured vocabulary terms' words in order, optionally preceded by the
+     word "Vocabulary", it is the engine's prompt read back (biased Qwen does
+     this on silence). With an empty vocabulary this does nothing. Known cost: a
+     user who dictates exactly their whole vocabulary list and nothing else gets
+     no-speech. Text that merely contains the terms, or has only some of them or
+     a different order, passes through unchanged. The server compares against
+     its own frozen configuration; the vocabulary is not logged or returned.
 - `{"text":""}` is successful no-speech. It authorizes no review, no Copy and no
   CLI output. Clients do not normalize text again.
 - The whole serialized response, `{"text":"..."}` in the encoding above, must be
@@ -484,7 +504,9 @@ test configuration selects.
 Server tests require the listed status and body, and each listed response header
 with its value (names are case-insensitive). They ignore `reason` and extra
 headers such as `date`. For valid uploads, the engine must receive exactly the
-body bytes.
+body bytes. Uploads that expect engine text carry audio with signal (peak at
+least 0.001): silent audio is answered `{"text":""}` without the engine (see
+Result text).
 
 Client tests drive the client against a peer that serves the response bytes
 exactly as given. The peer checks the client's method, target (placeholders

@@ -22,7 +22,9 @@ adopted [constitution](docs/CONSTITUTION.md) and design documents, it contains:
   with a test-only fake engine. Model manifests and explicit `hagig model
   install` exist (#47). Qwen3-ASR and mlx-whisper run behind the worker
   interface under Seatbelt on hosted macOS (#49); neither has passed its
-  adoption gate, and both produce text on silence (AC9 open). See
+  adoption gate. The server answers no-speech for a muted input and for an echo
+  of the vocabulary prompt, but not for room noise from a real microphone or
+  Whisper's "Thank you." on noise (AC9 partly open). See
   [backend guidance](backend/AGENTS.md); the
   [technical design](docs/technical/tdds/01-mvp.md) owns its contract.
 - **Local app bundle (#48, toward #23):** `clients/macos/bundle.sh` assembles an

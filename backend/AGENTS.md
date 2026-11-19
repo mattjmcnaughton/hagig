@@ -169,7 +169,8 @@ before_exit)`):
   inputs so tests do not wait 330 or 120 s.
 - The audio buffer is held in memory once, validated per chunk as it arrives
   in stream order (a bad sample before the cap byte is `400`, the first byte
-  over the cap `413`, whatever the chunking), and written to the worker; the request releases it and the slot in one
+  over the cap `413`, whatever the chunking; the same pass records the peak
+  |sample|), and written to the worker unless it is silent; the request releases it and the slot in one
   `finally`, after any retired worker is reaped.
 
 **Worker** (`hagig.worker.run(stdin, stdout, engines)`):
@@ -228,10 +229,19 @@ selected one is imported, and the server never imports either.
   handler; a missing engine stack (`ImportError`), `MemoryError` and any
   transcription failure are `worker_failed`. Nothing prints or logs; worker
   stderr is discarded anyway.
-- Known model behavior, not filtered (AC9 open risk): on digital silence and
-  white noise both engines can return text. Biased Qwen returns its own
-  vocabulary prompt; Whisper returns "Thank you." and similar. Biased Whisper
-  has also rendered a spoken word as "Vocabulary".
+- Known model behavior (AC9 partly open): on digital silence and white noise
+  both engines can return text. Biased Qwen returns its own vocabulary prompt;
+  Whisper returns "Thank you." and similar. Biased Whisper has also rendered a
+  spoken word as "Vocabulary". The server now answers no-speech (`{"text":""}`,
+  PROTOCOL.md "Result text") for two cases only, in `services/requests.py`: an
+  upload whose peak |sample| is below `SILENCE_PEAK` (-60 dBFS = 0.001; never
+  reaches a worker, so a muted input answers no-speech even with the model
+  missing) and a worker text that is exactly the configured vocabulary read back
+  (case, punctuation and an optional leading "Vocabulary" ignored; a user who
+  dictates only their whole list gets no-speech). Still open: this is not
+  voice-activity detection, so real-microphone room noise still reaches the
+  engine, and Whisper's "Thank you." on non-silent noise is not filtered; no
+  physical-Mac evidence. Linux fake-engine tests prove the server's own logic only.
 - Local writes: importing torch's `_dynamo` (through transformers) creates an
   empty `$TMPDIR/torchinductor_<user>` directory, after `tempfile` creates and
   deletes one probe file there. Content-free; recorded, not prevented.

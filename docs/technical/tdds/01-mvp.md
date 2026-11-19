@@ -119,7 +119,10 @@ representative. Both sizes recovered 9 of 9 vocabulary terms with the prompt and
 1.5–2 seconds per clip and recovered 6 of 9 terms with the prompt and 3 without.
 Both engines produced text on digital silence (biased Qwen echoes its prompt), an
 open risk for PRD AC9; the owner chose not to run a further silence check in the
-spike (2026-11-10). A physical-Mac run chooses the Qwen size and the default engine.
+spike (2026-11-10). The server now answers no-speech for audio whose peak is
+below -60 dBFS and for a worker text that is exactly the configured vocabulary
+(section 6); room noise from a real microphone and Whisper's "Thank you." on
+non-silent noise still reach the user. A physical-Mac run chooses the Qwen size and the default engine.
 
 The adoption spike must establish:
 
@@ -325,7 +328,12 @@ be measured.
 The result's serialized response must fit 64 KiB; otherwise fail with
 `result_too_large` and never truncate. Preserve Unicode and newlines; normalize
 whitespace-only recognition to `""`, which is successful no-speech and authorizes
-no review, Copy or stdout. Proposed codes and statuses: `invalid_request` 400,
+no review, Copy or stdout. The same `""` answers audio whose peak |sample| is
+below 10^(-60/20) = 0.001 (no worker is launched; this is a muted-input guard,
+not voice-activity detection) and a worker text that is exactly the configured
+vocabulary terms in order, ignoring case, punctuation and a leading
+"Vocabulary" (the prompt echoed back; a user dictating only their whole list
+gets no-speech). Proposed codes and statuses: `invalid_request` 400,
 `invalid_audio` 400 or 413, `request_not_found` 404, `busy` 409, `cancelled` 409,
 `model_missing`/`model_invalid`/`isolation_unavailable`/`server_stopping` 503,
 `worker_failed`/`result_too_large` 500, `deadline_exceeded` 504,
@@ -619,7 +627,10 @@ No review can substitute for these still-unverified facts:
 - MPS access from the worker under `seatbelt-v1.sb`. Hosted macOS VMs report no
   MPS device in either isolation mode; MLX Metal works under the policy there
   (#49).
-- Silence/noise behavior for AC9: the biased model echoes its prompt on silence.
+- Silence/noise behavior for AC9: digital silence and an echo of the vocabulary
+  prompt now answer no-speech in the server (Linux fake-engine tests); real
+  microphone room noise, Whisper's "Thank you." on non-silent noise and a
+  physical-Mac run remain unverified.
 - Seatbelt enforcement for the Python worker, and Hugging Face/transformers
   offline behavior under it, on a physical Mac. Hosted macOS evidence (#49)
   shows outbound IPv4, IPv6 and DNS denied in the sandboxed worker against an

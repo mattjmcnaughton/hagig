@@ -7,6 +7,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import wave
 from pathlib import Path
 
 import pytest
@@ -54,6 +55,27 @@ def test_no_speech_succeeds_with_empty_stdout(server):
         server.engine(text=text)
         result = hagig(server, "transcribe", str(wav_copy(server)))
         assert (result.returncode, result.stdout, result.stderr) == (0, b"", b"")
+
+
+def test_a_silent_wav_is_no_speech_without_a_worker(server):
+    path = server.root / "silent.wav"
+    with wave.open(str(path), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(16000)
+        out.writeframes(bytes(2 * 16000))
+    server.engine(text="Fixture.")
+    result = hagig(server, "transcribe", str(path))
+    assert (result.returncode, result.stdout, result.stderr) == (0, b"", b"")
+    assert server.pids() == []
+
+
+def test_an_echo_of_the_vocabulary_is_no_speech(server):
+    server.engine(text="Vocabulary: Hagig, Ghostty-secret-term.")
+    result = hagig(server, "transcribe", str(wav_copy(server)))
+    assert (result.returncode, result.stdout, result.stderr) == (0, b"", b"")
+    # speech.wav is audible, so the engine ran and its echo was dropped.
+    assert len(server.pids()) == 1
 
 
 def test_busy_exits_3(server):

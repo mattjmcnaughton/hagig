@@ -8,8 +8,9 @@ exactly once, after any worker the request retired has been reaped.
 """
 
 import asyncio
+import re
 import secrets
-from collections.abc import Awaitable, Callable, MutableMapping
+from collections.abc import Awaitable, Callable, MutableMapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,6 +31,17 @@ from hagig.contract import (
 from hagig.services.supervisor import Supervisor, WorkerError
 
 AUDIO_TYPE = "application/octet-stream"
+
+# Audio whose peak |sample| is below this is a muted or dead input, answered as
+# no-speech without a worker. 10**(-60/20) = 0.001, -60 dBFS: far below
+# conversational speech even from a distant or quiet microphone, so real speech
+# is not rejected, and far above the exact zeros (or a few LSBs of dither) a
+# muted device produces. It is not voice-activity detection: room noise from a
+# live microphone sits well above it and still reaches the engine.
+SILENCE_PEAK = 10 ** (-60 / 20)
+
+# The prompt prefix the Qwen engine puts before the vocabulary (`Vocabulary: a, b.`).
+_PROMPT_WORD = "vocabulary"
 
 Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
 
@@ -201,15 +213,17 @@ class RequestService:
                 raise RequestError("invalid_request")
             if content_length is not None and content_length > MAX_AUDIO_BYTES:
                 raise RequestError("invalid_audio", 413)
-            audio = await self._receive_audio(active, receive)
+            audio, peak = await self._receive_audio(active, receive)
             # The reservation ends with the body; computation starts.
             active.reservation_timer.cancel()
-            return await self._compute(active, audio, receive)
+            return await self._compute(active, audio, peak, receive)
         finally:
             await self._supervisor.wait_reaped()
             self._release(active)
 
-    async def _receive_audio(self, active: _Active, receive: Receive) -> bytearray:
+    async def _receive_audio(
+        self, active: _Active, receive: Receive
+    ) -> tuple[bytearray, float]:
         validator = AudioValidator()
         while True:
             message = await _first(active.cancelled, asyncio.ensure_future(receive()))
@@ -217,14 +231,20 @@ class RequestService:
                 raise DisconnectedError()
             validator.feed(message.get("body", b""))
             if not message.get("more_body", False):
-                return validator.finish()
+                return validator.finish(), validator.peak
+
+    async def _transcribe(self, request_id: str, audio: bytearray, peak: float) -> str:
+        # Silent audio never reaches the worker: none is launched, so the model
+        # and isolation checks (which run per launch) do not apply, as for any
+        # request a warm worker serves.
+        if is_silent(peak):
+            return ""
+        return await self._supervisor.transcribe(request_id, audio)
 
     async def _compute(
-        self, active: _Active, audio: bytearray, receive: Receive
+        self, active: _Active, audio: bytearray, peak: float, receive: Receive
     ) -> bytes:
-        work = asyncio.ensure_future(
-            self._supervisor.transcribe(active.request_id, audio)
-        )
+        work = asyncio.ensure_future(self._transcribe(active.request_id, audio, peak))
         del audio
         # After the body, receive() only returns when the client disconnects.
         disconnect = asyncio.ensure_future(receive())
@@ -245,8 +265,11 @@ class RequestService:
                 text = work.result()
             except WorkerError as failure:
                 raise RequestError(failure.code) from None
-            # The one change to the worker's text (PROTOCOL.md, Result text).
-            return result_body("" if text.isspace() else text)
+            # The only changes to the worker's text (PROTOCOL.md, Result text).
+            terms = self._config.vocabulary.terms
+            if text.isspace() or echoes_vocabulary(text, terms):
+                text = ""
+            return result_body(text)
         finally:
             for task in (work, disconnect):
                 task.cancel()
@@ -267,6 +290,29 @@ async def _first(
     return task.result()
 
 
+def is_silent(peak: float) -> bool:
+    """Whether the audio's peak |sample| is below the no-signal floor."""
+    return peak < SILENCE_PEAK
+
+
+def echoes_vocabulary(text: str, terms: Sequence[str]) -> bool:
+    """Whether `text` is just the vocabulary terms, in order, read back.
+
+    Compared as case-folded alphanumeric words, so case, punctuation and
+    whitespace do not matter, with or without the prompt's leading
+    "Vocabulary". Nothing else matches: not a prefix, a reordering or the terms
+    inside a longer text. With no vocabulary this is always False.
+    """
+    expected = [word for term in terms for word in _words(term)]
+    if not expected:
+        return False
+    return _words(text) in (expected, [_PROMPT_WORD, *expected])
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[^\W_]+", text.casefold())
+
+
 def result_body(text: str) -> bytes:
     """The serialized `{"text": ...}` response; it must fit 64 KiB, untruncated."""
     body = encode_json({"text": text})
@@ -280,6 +326,8 @@ class AudioValidator:
 
     def __init__(self) -> None:
         self._audio = bytearray()
+        # Largest |sample| so far, from the same pass that validates them.
+        self.peak = 0.0
 
     def feed(self, chunk: bytes) -> None:
         # Bytes are judged in stream order: samples before the cap are checked
@@ -294,8 +342,11 @@ class AudioValidator:
         if end > start:
             # Slicing copies, so no buffer export pins the growing bytearray.
             samples = np.frombuffer(self._audio[start:end], dtype="<f4")
-            if not (np.isfinite(samples).all() and (np.abs(samples) <= 1).all()):
+            peak = float(np.abs(samples).max())
+            # NaN and infinity fail the comparison too (NaN propagates through max).
+            if not peak <= 1:
                 raise RequestError("invalid_audio")
+            self.peak = max(self.peak, peak)
         if over_cap:
             raise RequestError("invalid_audio", 413)
 
