@@ -15,8 +15,10 @@ adopted [constitution](docs/CONSTITUTION.md) and design documents, it contains:
   only after backend admission, audio stays in memory as canonical PCM, and a
   Unix-socket client talks to the service. Review is editable (Standard or
   bounded Vim), Copy/Cut are explicit and current-host-only, and the shell shares
-  its SwiftUI views with the native screenshot harness. See
-  [native guidance](clients/macos/AGENTS.md).
+  its SwiftUI views with the native screenshot harness. The surface shows the
+  capture's own level and elapsed time, the menu-bar item shows the state, and a
+  missing settings file, missing model or denied microphone access each show the
+  step that fixes it. See [native guidance](clients/macos/AGENTS.md).
 - **Python backend (#43-#45):** a per-user server, isolated inference worker and
   CLI in `backend/`, serving a REST API over a private Unix socket and tested
   with a test-only fake engine. Model manifests and explicit `hagig model
@@ -33,7 +35,12 @@ adopted [constitution](docs/CONSTITUTION.md) and design documents, it contains:
   app starts the bundled server through `Contents/Helpers/hagig`. Without a model, requests answer `model_missing`; with one installed through the bundle, hosted CI gets a real transcript in the app. See
   the [local bundle guidance](clients/macos/AGENTS.md#local-bundle-48-app-plus-bundled-python-backend).
 
-Native state renders and a synthetic interaction recording were inspected. None
+Native state renders and a synthetic interaction recording were inspected. On
+2026-11-19 the bundle built below was also driven end to end on a hosted macOS
+15.7.5 virtual machine, with synthesized speech played into a virtual audio
+device: both engines transcribed into review, Copy wrote the edited text, and
+silence, Cancel, a missing settings file, a missing model and denied microphone
+access each ended in the state described. That is development evidence. None
 of this is acceptance of physical microphone capture, permissions, devices or
 rebuilds, second-device clipboard locality, model quality, privacy or inference
 adoption. No inference candidate has passed its adoption gate. Owner physical-Mac
@@ -47,6 +54,33 @@ intended, not a claim that the alpha works today.
 
 The [product prototype](docs/product/prototypes/README.md) preserves the reviewed
 UI concept as an editable, standalone browser simulation, not native app code.
+
+## Run the experimental build
+
+On an Apple Silicon Mac with Xcode 16.4 and uv, from the clone root:
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer
+bash clients/macos/bundle.sh build
+
+mkdir -p ~/.config/hagig
+printf '[model]\nid = "qwen3-asr-0.6b"\n' > ~/.config/hagig/config.toml
+clients/macos/.build/Hagig.app/Contents/Helpers/hagig model install qwen3-asr-0.6b
+
+open clients/macos/.build/Hagig.app
+```
+
+The build downloads the locked Python packages; `model install` is the one
+explicit model download. Nothing else uses the network. Click the microphone in
+the menu bar and choose Record; macOS asks for microphone access the first time.
+The app is signed ad hoc, so macOS asks again after each rebuild. Right-click the
+menu-bar item to quit. The service keeps running after the app quits, to stay
+warm: stop it with `.../Contents/Helpers/hagig stop`, and always before
+rebuilding (see the
+[local bundle guidance](clients/macos/AGENTS.md#local-bundle-48-app-plus-bundled-python-backend)).
+`whisper-large-v3-turbo` and `qwen3-asr-1.7b` install the same way; add
+`[editor]` `mode = "vim"` or `[vocabulary]` `terms = ["..."]` to the settings
+file and restart the service to apply them.
 
 ## Intended experience
 
