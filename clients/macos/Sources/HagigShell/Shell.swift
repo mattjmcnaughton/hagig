@@ -26,7 +26,7 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePopover)
         popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView:
+        let surface = NSHostingController(rootView:
             HagigView(presentation: presentation,
                       // Setup instructions name the paired helper only when it exists.
                       setup: SetupGuide(helperPath: FileManager.default.isExecutableFile(atPath: helper.path)
@@ -49,6 +49,12 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
                           if synthetic { presentation.cancel() } else { dictation.cancel() }
                       }, copy: Self.copy)
         )
+        // The popover takes its size from the view through preferredContentSize,
+        // which keeps it attached to the menu-bar item as states change height.
+        // Left to resize its own window, the hosting view built with the macOS 26
+        // SDK grows upward from a fixed bottom edge, over the menu bar.
+        surface.sizingOptions = .preferredContentSize
+        popover.contentViewController = surface
         // Handle active cancellation before normal popover key processing.
         // Only events delivered to this app, and never review-mode Escape.
         escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -58,8 +64,12 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
             return nil
         }
         // The menu-bar item is the only sign of work while the popover is closed.
-        // @Published delivers the new stage before storing it, hence the argument.
-        stageObserver = presentation.$stage.sink { [weak self] stage in self?.reflect(stage) }
+        // @Published delivers the new stage before storing it. Reflect it one
+        // main-queue turn later: AppKit work done before the value is stored made
+        // macOS 26 render the popover with the old stage and never again, leaving
+        // "Ready" on screen after a failure. Stages still arrive in order.
+        stageObserver = presentation.$stage.receive(on: DispatchQueue.main)
+            .sink { [weak self] stage in self?.reflect(stage) }
         // Explicit test/demo mode is never selected by a backend/capture failure.
         guard synthetic else { return }
         demoWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 300),
