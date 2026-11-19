@@ -106,4 +106,60 @@ final class PresentationTests: XCTestCase {
             }
         }
     }
+
+    func testLevelsFollowOnlyTheLiveRecordingAndLeaveWithIt() async {
+        await MainActor.run {
+            let model = Presentation()
+            let stale = model.reserve()
+            model.recordLevel(0.5, requestID: stale) // Admission has not started capture.
+            XCTAssertEqual(model.levels, [])
+            model.cancel()
+            let live = model.reserve()
+            let started = Date(timeIntervalSinceReferenceDate: 1_000)
+            XCTAssertTrue(model.admit(requestID: live, editorMode: .standard, modelID: "synthetic-model",
+                                      language: "en", started: started))
+            XCTAssertEqual(model.recordingStarted, started)
+            XCTAssertEqual(model.language, "en")
+            model.recordLevel(0.9, requestID: stale)
+            model.recordLevel(.nan, requestID: live)
+            XCTAssertEqual(model.levels, [])
+            for level: Float in [-1, 0.25, 7] { model.recordLevel(level, requestID: live) }
+            XCTAssertEqual(model.levels, [0, 0.25, 1], "levels are clamped to the display range")
+            for step in 0..<100 { model.recordLevel(Float(step) / 100, requestID: live) }
+            XCTAssertEqual(model.levels.count, Presentation.levelCount)
+            XCTAssertEqual(model.levels.first, Float(100 - Presentation.levelCount) / 100)
+            XCTAssertEqual(model.levels.last, 0.99)
+            model.release()
+            model.recordLevel(0.5, requestID: live) // Capture is over; the trace is frozen.
+            XCTAssertEqual(model.levels.last, 0.99)
+            model.complete(requestID: live, text: "Synthetic result")
+            XCTAssertEqual(model.levels, [])
+            XCTAssertNil(model.recordingStarted)
+        }
+    }
+
+    func testIssueDetailAndSetupInstructions() async {
+        await MainActor.run {
+            let model = Presentation()
+            model.show(issue: .configuration, detail: "config_invalid: synthetic detail")
+            XCTAssertEqual(model.issueDetail, "config_invalid: synthetic detail")
+            model.show(issue: .busy)
+            XCTAssertNil(model.issueDetail, "a detail never outlives its own issue")
+            model.show(issue: .configuration, detail: "config_invalid: synthetic detail")
+            model.reset()
+            XCTAssertNil(model.issueDetail)
+        }
+        // The command is pasted into a shell: one quoted word for the helper,
+        // and only a plain alias after it.
+        let guide = SetupGuide(helperPath: "/Apps/My Hagig's.app/Contents/Helpers/hagig")
+        XCTAssertEqual(guide.installCommand(modelID: "qwen3-asr-0.6b"),
+                       "'/Apps/My Hagig'\\''s.app/Contents/Helpers/hagig' model install qwen3-asr-0.6b")
+        for unusable in ["", "x; rm -rf ~", "a b", "$(id)", "mod\u{e9}l"] {
+            XCTAssertNil(guide.installCommand(modelID: unusable), unusable)
+        }
+        XCTAssertNil(guide.installCommand(modelID: nil))
+        XCTAssertNil(SetupGuide().installCommand(modelID: "qwen3-asr-0.6b"))
+        XCTAssertEqual(modelDisplayName("whisper-large-v3-turbo"), "Whisper large-v3 turbo")
+        XCTAssertEqual(modelDisplayName("future-model-9"), "future-model-9")
+    }
 }

@@ -115,7 +115,9 @@ final class ReviewTextView: NSTextView, NSTextViewDelegate {
         setAccessibilityLabel("Transcript editor")
         string = text
         indexText()
-        setSelectedRange(NSRange(location: 0, length: 0))
+        // Standard review opens with the insertion point after the dictated text,
+        // so typing continues it; Vim Normal starts on the first character.
+        setSelectedRange(NSRange(location: mode == .standard ? (text as NSString).length : 0, length: 0))
         delegate = self
         modeChanged(modeLabel)
     }
@@ -133,6 +135,12 @@ final class ReviewTextView: NSTextView, NSTextViewDelegate {
     }
 
     func textDidChange(_ notification: Notification) { indexText(); changed(string) }
+
+    // Review opens ready to edit: typing and Vim keys need no click first.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if delegate != nil { window?.makeFirstResponder(self) }
+    }
 
     // No alternate drag/Services/rich-text exporter. Copy/Cut below are the only
     // enabled selection exports, through the presentation's guarded writer.

@@ -360,6 +360,40 @@ final class SocketTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: helper.marker))
     }
 
+    /// The helper's configuration exit prints one stable line (code and settings
+    /// path). Only that shape is passed on; anything else is dropped whole.
+    @MainActor
+    func testAConfigurationExitCarriesOnlyTheHelpersSingleShortLine() async throws {
+        let line = "config_invalid: model.id missing; set [model] id in /synthetic/hagig/config.toml"
+        let cases: [(stderr: String, detail: String?)] = [
+            ("printf '%s\\n' '\(line)' >&2", line),
+            ("printf '\\n  \\n%s\\n\\n' '\(line)' >&2", line),
+            (":", nil),
+            ("printf 'first line\\nsecond line\\n' >&2", nil),
+            ("printf 'synthetic \\033[31m escape\\n' >&2", nil),
+            ("head -c 401 /dev/zero | tr '\\0' x >&2", nil),
+            ("head -c 5000 /dev/zero | tr '\\0' x >&2", nil),
+            // More than a pipe holds: the helper must still reach its exit.
+            ("head -c 400000 /dev/zero | tr '\\0' x >&2", nil),
+            ("printf '\\377\\376\\n' >&2", nil),
+        ]
+        for (index, entry) in cases.enumerated() {
+            let base = try Base()
+            _ = try base.directory()
+            let script = base.path + "/helper-stderr-\(index)"
+            try "#!/bin/sh\n\(entry.stderr)\nexit 2\n".write(toFile: script, atomically: true, encoding: .utf8)
+            XCTAssertEqual(chmod(script, 0o700), 0)
+            let request = SocketRequest(helper: URL(fileURLWithPath: script), environment: ["XDG_RUNTIME_DIR": base.path])
+            do {
+                _ = try await request.reserve()
+                XCTFail("a configuration exit never admits (\(entry.stderr))")
+            } catch let failure as BackendFailure {
+                XCTAssertEqual(failure.code, "configuration", entry.stderr)
+                XCTAssertEqual(failure.detail, entry.detail, entry.stderr)
+            }
+        }
+    }
+
     @MainActor
     func testLaunchHelperRunsOnlyWhenNoServerAnswers() async throws {
         let base = try Base()
