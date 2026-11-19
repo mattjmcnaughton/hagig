@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hagig app icon source. A voice level trace that ends in a text caret, on
+     Apple's 1024-point icon grid (824-point rounded square, centred).
+     Hagig.icns is rendered from this file; see clients/macos/AGENTS.md. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="ink" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2A4A94"/>
+      <stop offset="1" stop-color="#15223F"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.46" r="0.5">
+      <stop offset="0" stop-color="#4C74CC" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#4C74CC" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DDE6F5"/>
+    </linearGradient>
+    <linearGradient id="amber" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F8CB7C"/>
+      <stop offset="1" stop-color="#EBAA45"/>
+    </linearGradient>
+    <filter id="lift" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#0A1226" flood-opacity="0.45"/>
+    </filter>
+    <filter id="plate" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000000" flood-opacity="0.30"/>
+    </filter>
+  </defs>
+  <g filter="url(#plate)">
+    <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#ink)"/>
+  </g>
+  <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#glow)"/>
+  <g filter="url(#lift)">
+    <rect x="256" y="462" width="68" height="100" rx="34" fill="url(#paper)"/>
+    <rect x="352" y="402" width="68" height="220" rx="34" fill="url(#paper)"/>
+    <rect x="448" y="322" width="68" height="380" rx="34" fill="url(#paper)"/>
+    <rect x="544" y="382" width="68" height="260" rx="34" fill="url(#paper)"/>
+    <rect x="640" y="462" width="68" height="100" rx="34" fill="url(#paper)"/>
+    <rect x="740" y="302" width="28" height="420" rx="14" fill="url(#amber)"/>
+  </g>
+</svg>

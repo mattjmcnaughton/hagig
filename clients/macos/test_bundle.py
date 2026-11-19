@@ -26,7 +26,8 @@ class BundleContracts(unittest.TestCase):
         self.mac.mkdir(parents=True)
         (self.root / "backend").mkdir()
         (self.root / "LICENSE").write_text("MIT License (stand-in)\n")
-        for name in ("bundle.sh", "Info.plist", "smoke-bundle.sh"):
+        for name in ("bundle.sh", "Info.plist", "smoke-bundle.sh", "Resources/Hagig.icns"):
+            (self.mac / name).parent.mkdir(exist_ok=True)
             shutil.copy2(SOURCE / name, self.mac / name)
         self.tools = self.root / "tools"
         self.tools.mkdir()
@@ -153,6 +154,7 @@ esac
         site = "Resources/python/lib/python3.12/site-packages"
         self.assertEqual(files, sorted([
             "Info.plist", "MacOS/HagigShell", "Helpers/hagig", "Resources/LICENSE",
+            "Resources/Hagig.icns",
             "Resources/python/bin/python3.12",
             "Resources/python/lib/libpython3.12.dylib",
             "Resources/python/lib/python3.12/os.py",
