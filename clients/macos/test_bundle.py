@@ -14,7 +14,8 @@ import unittest
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parent
-SYNC = "sync --frozen --no-dev --no-editable --extra qwen3-asr --extra mlx-whisper"
+SYNC = ("sync --frozen --no-dev --no-editable --refresh-package hagig "
+        "--extra qwen3-asr --extra mlx-whisper")
 
 
 class BundleContracts(unittest.TestCase):
@@ -24,7 +25,16 @@ class BundleContracts(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.mac = self.root / "clients/macos"
         self.mac.mkdir(parents=True)
-        (self.root / "backend").mkdir()
+        # The checkout's backend source, which the stand-in uv installs unchanged,
+        # with what a wheel build leaves out lying beside it.
+        source = self.root / "backend/src"
+        (source / "hagig/__pycache__").mkdir(parents=True)
+        (source / "launcher").mkdir()
+        (source / "hagig/__init__.py").write_text("pkg")
+        (source / "hagig/_native.cpython-312-darwin.so").write_text("MACHO ext")
+        (source / "launcher/seatbelt-v1.sb").write_text("(version 1)")
+        for ignored in ("__pycache__/stale.pyc", ".DS_Store", ".__init__.py.swp", "editor.swp", "old.pyc"):
+            (source / "hagig" / ignored).write_text("ignored")
         (self.root / "LICENSE").write_text("MIT License (stand-in)\n")
         for name in ("bundle.sh", "Info.plist", "smoke-bundle.sh", "Resources/Hagig.icns"):
             (self.mac / name).parent.mkdir(exist_ok=True)
@@ -200,6 +210,43 @@ esac
                 self.assertNotEqual(self.run_bundle("run").returncode, 0)
                 self.assert_no_output()
                 del self.env[name]
+
+    def test_a_cached_backend_that_differs_from_the_checkout_never_publishes(self):
+        # uv keeps a built wheel of the project until pyproject.toml changes, so
+        # the installed package can be an earlier state of the checkout.
+        source = self.root / "backend/src"
+        edits = (("hagig/__init__.py", "edited since uv cached its wheel"),  # stale content
+                 ("hagig/added.py", "new module"),                           # missing from the wheel
+                 ("hagig/_native.cpython-312-darwin.so", None),              # deleted, still in the wheel
+                 ("launcher/seatbelt-v1.sb", "(version 1) edited"))          # stale force-included profile
+        for name, text in edits:
+            with self.subTest(file=name):
+                path = source / name
+                original = path.read_text() if path.exists() else None
+                path.write_text(text) if text is not None else path.unlink()
+                result = self.run_bundle("run")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("differ at hagig/", result.stderr)
+                self.assert_no_output()
+                path.write_text(original) if original is not None else path.unlink()
+        self.assertEqual(self.run_bundle().returncode, 0)
+        shutil.rmtree(self.output())
+
+        # An enumeration that fails part-way is a refusal, not a shorter comparison.
+        self.stub("find", """
+case "$*" in
+  *backend/src/hagig*) exit 1 ;;
+  *) exec /usr/bin/find "$@" ;;
+esac""")
+        result = self.run_bundle("run")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Could not list the backend files", result.stderr)
+        self.assert_no_output()
+        (self.tools / "find").unlink()
+
+        shutil.rmtree(source / "hagig")
+        self.assertNotEqual(self.run_bundle("run").returncode, 0)
+        self.assert_no_output()
 
     def test_failure_cleans_staging_and_does_not_publish_or_launch(self):
         for tool in ("swift", "uv", "install_name_tool", "codesign"):

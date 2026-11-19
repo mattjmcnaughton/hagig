@@ -22,9 +22,13 @@ output="$mac/.build/Hagig.app"
 # off Apple Silicon), a uv-managed (python-build-standalone) interpreter, and the
 # project installed as a wheel rather than an editable link to this checkout.
 # The variable, not --managed-python, which uv refuses beside an inherited one.
+# uv rebuilds a cached wheel of a local project only when its pyproject.toml
+# changes, so the project is refreshed explicitly: otherwise a rebuild after
+# editing or pulling backend source would bundle the earlier backend.
 sync_backend() {
     (cd -- "$root/backend" && UV_PROJECT_ENVIRONMENT="$1" UV_PYTHON_PREFERENCE=only-managed \
-        uv sync --frozen --no-dev --no-editable --extra qwen3-asr --extra mlx-whisper)
+        uv sync --frozen --no-dev --no-editable --refresh-package hagig \
+        --extra qwen3-asr --extra mlx-whisper)
 }
 
 fail() { echo "$*" >&2; exit 1; }
@@ -92,6 +96,28 @@ rm -f "$site/_virtualenv.py" "$site/_virtualenv.pth" "$site"/__pycache__/_virtua
 if [ -n "$(find "$python/lib" \( -name '*.pth' -o -name sitecustomize.py -o -name usercustomize.py \) -print -quit)" ]; then
     fail 'A .pth, sitecustomize or usercustomize file would run at startup; review it before bundling.'
 fi
+# The bundle must carry this checkout's backend, not a wheel uv cached from an
+# earlier state of it: the same files with the same bytes, in both directions.
+# The wheel is src/hagig plus the force-included Seatbelt profile
+# (backend/pyproject.toml). Bytecode and editor or Finder leftovers, which the
+# wheel build ignores, are not compared.
+package="$root/backend/src/hagig"
+[ -d "$package" ] || fail 'backend/src/hagig is missing from this checkout.'
+same_files() {
+    local file other list="$stage/backend-files"
+    find "$1" -type f ! -path '*/__pycache__/*' ! -name '*.py[cod]' ! -name '.*' \
+        ! -name '*.swp' ! -name '*.swo' ! -name '*~' -print0 > "$list" ||
+        fail 'Could not list the backend files to compare; nothing was published.'
+    while IFS= read -r -d '' file; do
+        other="$2/${file#"$1"/}"
+        if [ "$other" = "$package/seatbelt-v1.sb" ]; then other="$root/backend/src/launcher/seatbelt-v1.sb"; fi
+        cmp -s "$file" "$other" ||
+            fail "The bundled backend and this checkout differ at hagig/${file#"$1"/}; nothing was published."
+    done < "$list"
+    rm -f "$list"
+}
+same_files "$package" "$site/hagig"
+same_files "$site/hagig" "$package"
 interpreter="$python/bin/python$version"
 # Precompile everything so no process writes __pycache__ into the signed bundle.
 # Unchecked hashes stay valid however the copy changes file times. Strip the
