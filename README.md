@@ -40,7 +40,10 @@ Native state renders and a synthetic interaction recording were inspected. On
 15.7.5 virtual machine, with synthesized speech played into a virtual audio
 device: both engines transcribed into review, Copy wrote the edited text, and
 silence, Cancel, a missing settings file, a missing model and denied microphone
-access each ended in the state described. That is development evidence. None
+access each ended in the state described. On a hosted macOS 26.3.1 machine the
+synthetic demo was inspected too: built with Xcode 16.4, which the bundle
+script pins, the app keeps the earlier appearance there, and built with
+Xcode 26.3 it is drawn in Liquid Glass. That is development evidence. None
 of this is acceptance of physical microphone capture, permissions, devices or
 rebuilds, second-device clipboard locality, model quality, privacy or inference
 adoption. No inference candidate has passed its adoption gate. Owner physical-Mac

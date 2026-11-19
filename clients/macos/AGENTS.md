@@ -402,6 +402,39 @@ so `interaction-probe/run.sh` is evidence only from hosted CI. None of this is
 physical microphone, TCC-across-rebuilds, second-device clipboard, privacy or
 model-quality acceptance.
 
+macOS 26, 2026-11-19, on a hosted macOS 26.3.1 arm64 virtual machine (not a
+physical Mac), synthetic demo captured from the running app:
+
+- Built with Xcode 26.3 (Swift 6.2.4), the popover and controls are drawn in
+  Liquid Glass. Ready, Listening, Transcribing, Review in both editor modes,
+  Cancelled, No speech and the settings, model and microphone states were
+  inspected in light and dark with no clipped text. `swift build` and
+  `swift test` pass (49 run, 3 skipped, 0 failures).
+- Built with Xcode 16.4, which `bundle.sh` and CI pin, the same app keeps the
+  earlier appearance on macOS 26: it works, but it is not Liquid Glass. The
+  tests pass and `bundle.sh build` succeeded there. Showing Liquid Glass needs a
+  build with the macOS 26 SDK, which is an owner decision about the Xcode pin,
+  not something to change in passing.
+- Two shell defects found there are fixed in `Shell.swift`; keep both. Built
+  with the macOS 26 SDK, a hosting controller that resizes its own window grew
+  the popover upward over the menu bar, so the popover is sized through
+  `sizingOptions = .preferredContentSize`. On macOS 26 with either Xcode, a
+  stage set from a task left the popover on Ready because the menu-bar item was
+  updated while `@Published` was still delivering the value, so the stage is
+  reflected one main-queue turn later (`receive(on:)`).
+- With both fixes, under each Xcode: the tests pass, the popover stays under
+  the menu-bar item in every state, and a first run without a settings file
+  shows "Settings need attention" with the helper's line, twice in a row (the
+  Xcode 16.4 bundle; the Xcode 26.3 debug shell without a helper shows
+  "Transcription service unavailable").
+- Known and cosmetic: with `receive(on:)` the popover's top edge sits 2 to 3
+  points lower in the states whose menu-bar symbol is the waveform or the
+  triangle, under either Xcode. The arrow stays attached and nothing is
+  clipped. The cause was not found.
+
+Reduce Transparency, Increase Contrast, the near-limit and copied states and a
+real dictation were not checked on macOS 26.
+
 ## GitHub-hosted Mac evidence, in order
 
 1. Obtain explicit owner permission to commit/push and open a PR. No publishing
