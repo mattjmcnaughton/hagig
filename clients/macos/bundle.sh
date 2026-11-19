@@ -122,6 +122,8 @@ printf '%s\n' "${template//@VERSION@/$version}" > "$helper"
 chmod 755 "$app/Contents/MacOS/HagigShell" "$app/Contents/Helpers/hagig"
 # The Python package carries no license text of its own.
 cp "$root/LICENSE" "$app/Contents/Resources/LICENSE"
+# CFBundleIconFile: the icon macOS shows in the microphone prompt and Finder.
+cp "$mac/Resources/Hagig.icns" "$app/Contents/Resources/Hagig.icns"
 cp "$mac/Info.plist" "$app/Contents/Info.plist"
 plutil -lint "$app/Contents/Info.plist"
 

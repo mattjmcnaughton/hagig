@@ -10,6 +10,8 @@
     <string>Hagig</string>
     <key>CFBundleExecutable</key>
     <string>HagigShell</string>
+    <key>CFBundleIconFile</key>
+    <string>Hagig</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

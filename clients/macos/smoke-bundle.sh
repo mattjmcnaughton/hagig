@@ -26,6 +26,7 @@ echo '== Static: signatures, architectures, loader paths, checkout references'
 plutil -lint "$contents/Info.plist"
 codesign --verify --deep --strict --verbose=2 "$app"
 [ -f "$contents/Resources/LICENSE" ] || fail 'LICENSE missing'
+[ -f "$contents/Resources/Hagig.icns" ] || fail 'app icon (CFBundleIconFile Hagig) missing'
 machos=$(find "$app" -type f -exec file {} + | sed -n 's/:[[:space:]].*Mach-O.*$//p' |
     sed 's/ (for architecture [^)]*)$//' | LC_ALL=C sort -u)
 [ -n "$machos" ] || fail 'no Mach-O files found'
