@@ -5,6 +5,7 @@ socket, sent byte for byte, and its status, listed headers and body checked.
 """
 
 import json
+import struct
 import sys
 import time
 from pathlib import Path
@@ -21,6 +22,8 @@ FIXTURES = json.loads(
 SERVER_EXCHANGES = [e for e in FIXTURES["exchanges"] if "server" in e["consumers"]]
 FIXTURE_ID = "fixture-request-1"
 FIXTURE_CONFIG = "fixture-config-1"
+# Audible: all-zero audio is answered as no-speech without a worker.
+AUDIO = struct.pack("<2f", 0.5, -0.25)
 
 
 def request_bytes(exchange, request_id):
@@ -126,7 +129,7 @@ def test_server_exchange(exchange, home):
     home.start_server(**server_options(given))
 
     if given.get("worker") == "running":
-        assert home.transcribe(bytes(8)).status_code == 200
+        assert home.transcribe(AUDIO).status_code == 200
     engine = given.get("engine")
     if engine is not None:
         home.engine(**engine_control(engine))
