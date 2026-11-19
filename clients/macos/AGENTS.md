@@ -41,8 +41,10 @@ An early server response ends the request. Cancel/Escape invalidates main-actor
 visibility first, then closes the upload without ending its body and without
 waiting for any reply. A failed or empty capture is discarded the same way.
 Device/configuration change and revoked access discard the request. Copy/Cut
-remain the preserved #22 currentHostOnly routes. The header shows the status's
-`settings.model_id` after admission, otherwise "Local model".
+remain the preserved #22 currentHostOnly routes. After admission the header shows
+the display name for the status's `settings.model_id` (an alias this build does
+not know is shown as it is) and the name of `settings.language`; before the first
+admission it shows neither.
 
 The synthetic editor harness is now explicit:
 `swift run HagigShell --synthetic-demo`. Only that flag creates demo controls;
@@ -60,8 +62,9 @@ an explicit test-only HTTP/1.1 peer on a real Unix socket that serves
 checkout, never copied into Swift): every client exchange, disconnects, the 5 s
 exchange bound, a six-second result, runtime-path rules and both cancel orderings
 at the delivery boundary. They use no personal audio/text.
-Ready proof remains two shared-view PNGs; representative gallery is now34 images
-(17 states × light/dark), adding admission, near-cap and recoverable client errors.
+Ready proof remains two shared-view PNGs; the representative gallery is 36 images
+(18 states × light/dark): ready, awaiting admission, recording, near limit,
+transcribing, fallback, copied, cancelled, no speech and the nine issues.
 Inspect Ready before every representative image, then execute AX/keyboard/pointer
 checks and inspect a complete moving-pointer clip. Hosted checks never establish
 physical microphone/TCC/grant-denial-rebuild, real inference or second-device
@@ -71,6 +74,54 @@ No native #21 evidence is established merely by these source changes.
 Read the root guidance, constitution, MVP PRD and TDD. The reviewed UI source is
 `docs/product/prototypes/`; its browser checks do not validate this native client.
 This is an experimental real-client candidate, not an accepted installed alpha.
+
+## Surface, menu-bar item and setup help
+
+`HagigView` paints no background. The popover supplies the material and shape,
+and the view uses only system colours, label styles and stock bordered and
+prominent buttons, so each macOS draws it in its own design language and follows
+Reduce Transparency, Increase Contrast and the accent colour. Do not add custom
+fills, gradients, shadows or a fixed colour scheme to it. The screenshot harness
+puts an opaque window-background colour behind the view so the PNGs are legible;
+that backdrop is not what a popover looks like, and the harness draws prominent
+buttons in their inactive-window style.
+
+- **Level trace.** `MicrophoneCapture` reports one loudness value per converted
+  chunk (0 at -55 dBFS, 1 at -10 dBFS) and `Presentation` keeps the newest 44 for
+  the current request only. The trace is that capture's own level, never a
+  generated animation, and is hidden from assistive technology; the elapsed time
+  beside it carries a spoken label. Levels and the start time are cleared when
+  the request ends.
+- **Keys.** Return is the default action where one exists (Record, Stop, Back to
+  ready); Escape cancels while preparing, recording or transcribing. In review
+  neither dismisses or copies: Return and Escape belong to the editor, Copy all is
+  Cmd-Shift-C and Dismiss is Cmd-Shift-D. The review editor is first responder
+  when it appears. Standard opens with the insertion point after the text; Vim
+  Normal starts on the first character. The mode label is shown only in Vim.
+- **Setup help.** A settings error shows the helper's own stderr line when it is
+  one short line without control characters (a stable code and the settings
+  path, never file content; see `backend/src/hagig/config.py`) and a minimal
+  settings file to copy. The helper's stderr is drained while it runs, keeping
+  at most 1 KiB, so a long error cannot block its exit. A missing model shows `'<helper>' model install <id>`,
+  only when the paired helper exists and the ID is a plain alias. Denied
+  microphone access shows Open Microphone Settings. Snippets are copied through
+  the same current-host-only writer as the transcript and are never executed.
+  `isolation_unavailable` has its own state and is never shown as a settings
+  error.
+- **Menu-bar item.** `ShellDelegate.reflect` sets the symbol, accessibility value
+  and tooltip from the stage; recording is drawn in the system red. The macOS
+  microphone prompt closes the transient popover. Only for a Record chosen
+  while access was undecided, so that the prompt was shown for that request,
+  does the shell show the popover again when the answer leads to recording or
+  to the microphone-access state. A popover closed any other way stays closed:
+  results, errors and a recording that starts while the user is in another
+  application never reopen it or take focus. Opening the popover from the menu
+  bar makes Hagig key so the keys above work; the shell never activates another
+  application.
+- **Icon.** `Resources/AppIcon.svg` is the source. `bash make-icon.sh` renders
+  the committed `Resources/Hagig.icns` with sips and iconutil; run it only after
+  editing the SVG, then inspect the result. `bundle.sh` copies the committed file
+  and never renders.
 
 ## Boundaries
 
@@ -158,6 +209,7 @@ Hagig.app/Contents/Info.plist
 Hagig.app/Contents/MacOS/HagigShell
 Hagig.app/Contents/Helpers/hagig                      # sh: execs the interpreter below
 Hagig.app/Contents/Resources/LICENSE                  # root LICENSE (the package has none)
+Hagig.app/Contents/Resources/Hagig.icns               # CFBundleIconFile, from Resources/
 Hagig.app/Contents/Resources/python/bin/python3.12    # uv-managed python-build-standalone
 Hagig.app/Contents/Resources/python/lib/python3.12/   # stdlib, precompiled
 Hagig.app/Contents/Resources/python/lib/python3.12/site-packages/   # the locked environment
@@ -169,9 +221,16 @@ How it is built, and why:
 
 - `sync_backend` in `bundle.sh` is the one place that picks the environment:
   `UV_PYTHON_PREFERENCE=only-managed uv sync --frozen --no-dev --no-editable
-  --extra qwen3-asr --extra mlx-whisper` into a staging directory: #47's command
-  plus the two flags relocation needs (a wheel install, not an editable `.pth`
-  link to the checkout; and only a uv-managed interpreter).
+  --refresh-package hagig --extra qwen3-asr --extra mlx-whisper` into a staging
+  directory: #47's command plus the flags relocation needs (a wheel install, not
+  an editable `.pth` link to the checkout; and only a uv-managed interpreter).
+- uv rebuilds its cached wheel of a local project only when `pyproject.toml`
+  changes, so without `--refresh-package hagig` a rebuild after editing or
+  pulling backend source bundled the earlier backend (observed 2026-11-19). The
+  build also compares `backend/src/hagig` with the bundled package in both
+  directions, file for file and byte for byte (the force-included Seatbelt
+  profile against `src/launcher`; bytecode and editor or Finder leftovers are
+  skipped), and publishes nothing on a difference.
 - uv environments are not relocatable: a venv's `pyvenv.cfg` records its
   interpreter's absolute path, uv adds a `_virtualenv` shim, and the project's
   `direct_url.json` names the checkout. So the bundle does not ship the venv.
@@ -325,6 +384,24 @@ working path uses AppKit hosting/caching. These commands ran on the hosted Mac,
 not the Linux orb. Shell interaction, animation and physical-Mac checks remain
 unexecuted; still images are not evidence of those behaviors.
 
+Live run, 2026-11-19, on a hosted macOS 15.7.5 arm64 virtual machine with
+Xcode 16.4 (not a physical Mac): `bundle.sh build` from this tree, then the
+built app driven by pointer and keyboard with synthesized speech played into a
+virtual audio device that was also the default input. Observed: Qwen3-ASR 0.6B
+and Whisper large-v3 turbo each transcribed into review; an edit followed by
+Copy all put the edited text on the clipboard; silence ended in no-speech with
+the clipboard unchanged for both engines; Escape while listening and while
+transcribing ended in Cancelled with the server idle; no settings file, an
+uninstalled model and a settings file whose validation error exceeds a pipe's
+capacity each showed their state; the
+popover returned after Allow and after Don't Allow on the microphone prompt, and
+stayed closed with Finder frontmost when a recording began after the user had
+clicked away. The interaction probe's ScreenCaptureKit recorder never reported
+ready on that machine, for this tree and for the unchanged parent commit alike,
+so `interaction-probe/run.sh` is evidence only from hosted CI. None of this is
+physical microphone, TCC-across-rebuilds, second-device clipboard, privacy or
+model-quality acceptance.
+
 ## GitHub-hosted Mac evidence, in order
 
 1. Obtain explicit owner permission to commit/push and open a PR. No publishing
@@ -343,7 +420,7 @@ unexecuted; still images are not evidence of those behaviors.
    inspect new artifacts before accepting the broader evidence set.
 4. After the proof render/upload succeeds, the same normal CI job runs
    `swift run --skip-build HagigScreenshots states state-captures` and uploads the
-   bounded 26-image gallery separately. Inspect the Ready proof first, then every
+   bounded 36-image gallery separately. Inspect the Ready proof first, then every
    gallery image before merging. This needs no manual dispatch. The workflow
    collects the gallery automatically; human inspection remains a merge gate.
 5. Optional reruns remain manual in `macos-screenshots.yml`. GitHub requires
@@ -353,8 +430,8 @@ unexecuted; still images are not evidence of those behaviors.
    implementation. Obtain explicit dispatch permission. `scenario=proof` remains
    available for a small rerun; it is not the bootstrap path.
    Manual dispatch is not authorized for this initial PR verification.
-6. Expect 26 gallery PNGs: ready, recording,
-   transcribing, fallback, copied, cancelled, no speech, and six error states,
+6. Expect 36 gallery PNGs: ready, awaiting admission, recording, near limit,
+   transcribing, fallback, copied, cancelled, no speech, and nine issue states,
    each light/dark. Inspect every image. Copy/Dismiss must fit, fallback must show
    only the synthetic fixture, recording must have no transcript, and errors must
    provide a recovery path. Share the final inspected images in the report.
@@ -376,7 +453,7 @@ Both workflows select `macos-15` and the installed `/Applications/Xcode_16.4.app
 explicitly; neither follows `macos-latest`. GitHub's image itself is mutable: record
 the environment, do not claim an immutable OS pin or Apple Silicon acceptance.
 Actions are SHA-pinned, credentials are not persisted, permissions are read-only,
-`macos-build.yml` jobs time out after 20 minutes (90 for the bundle smoke, which
+`macos-build.yml` jobs time out after 20 minutes (110 for the bundle smoke, which
 builds the app twice and compiles, signs and checks the engines, and 60 for
 client semantics, which
 rebuilds per experiment), and artifact retention is three days. Its build-test job
@@ -412,7 +489,7 @@ default. `Presentation(editorMode:)` / `begin(editorMode:)` accept the eventual
 validated server setting; the real client takes it from `GET /v1/status`
 `settings.editor_mode` during reservation, and there is no Swift TOML parsing.
 The demo controls' explicitly synthetic mode picker applies to the next request.
-The existing 26-image gallery retains its count: fallback is Standard; copied is
+In the gallery, fallback is Standard; copied is
 Vim Normal with a synthetic edited multiline Unicode fixture. No new render or
 interaction evidence has been established merely by adding those fixtures.
 

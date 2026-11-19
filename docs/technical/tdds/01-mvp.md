@@ -471,6 +471,17 @@ AC1/AC2 destination work is deferred, not a blocking feasibility spike for Copy.
 Review can take editor focus intentionally. Routine feedback must not activate a
 destination. Respect reduced motion, native accessibility names and model display.
 
+The surface paints no background of its own and uses system colours, materials
+and stock controls, so each macOS draws it in its own design language. While
+recording it shows the capture's own loudness (one value per converted chunk,
+kept in memory for that request only) and the elapsed time; the level is measured,
+never generated. The menu-bar item shows the stage. The macOS microphone prompt
+closes the popover; only for the request that showed the prompt does the app show
+the popover again. No result, error or recording start otherwise opens it or takes
+focus. A settings failure shows the paired helper's own single stderr line (a
+stable code and the settings path, never file content); a missing model shows
+the explicit install command; neither is ever run by the app.
+
 ## 9. CLI contract
 
 Alpha command surface (typer):
