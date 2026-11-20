@@ -103,7 +103,8 @@ The app bundle (#48), which syncs both engine extras, is described in
 - Open engine limit: Whisper's prompt window (about 224 tokens) is smaller than
   these caps allow. #49 owns how the engine handles it; validation here does not.
 
-**Paths** (`ensure_runtime_dir` creates; the others only compute):
+**Paths** (`ensure_runtime_dir` creates; the others, including `runtime_dir`,
+only compute):
 
 - Config `$XDG_CONFIG_HOME/hagig/config.toml`, models
   `$XDG_DATA_HOME/hagig/models`, defaulting under `$HOME`. Relative XDG values
@@ -316,7 +317,7 @@ selected one is imported, and the server never imports either.
   version while an install publishes another; only the next launched worker
   sees it. A worker loading while an install prunes its version fails closed.
 
-**CLI** (`hagig start|status|stop|transcribe`):
+**CLI** (`hagig start|status|stop|transcribe|uninstall`):
 
 - `start` and `transcribe` attach to a compatible server, or spawn
   `python -I -m hagig.server` once (new session, stdio to `/dev/null`) and poll
@@ -336,6 +337,18 @@ selected one is imported, and the server never imports either.
   until the 201 is read (at most its 5 s timeout), because the server is busy
   from its 201 on and only the ID lets the CLI cancel at once. stderr carries
   stable codes only.
+- `uninstall [--yes]`: lists the settings directory (`config_file(env).parent`),
+  the data directory (`models_dir(env).parent`) and the runtime directory
+  (`paths.runtime_dir`, which computes without creating) and asks; declining
+  or EOF is `cancelled` (exit 1) and changes nothing. Then it runs `stop`'s
+  logic, holds `ServerLock` (`server_running` if another server took it) and,
+  when the models directory is a real directory, its install lock
+  (`install_in_progress`), and `shutil.rmtree`s data, config, then runtime;
+  a symlinked top level or any other filesystem error is `uninstall_failed`
+  (an earlier directory may already be gone; rerunning is safe). It never
+  deletes the app bundle it runs from: it prints that bundle's path (from
+  `sys.executable`) and `tccutil reset Microphone com.mattjmcnaughton.hagig`
+  to finish after quitting the app.
 - `tests/integration/test_client_fixtures.py` drives the client with every
   client fixture exchange from a peer that serves the response bytes exactly.
 

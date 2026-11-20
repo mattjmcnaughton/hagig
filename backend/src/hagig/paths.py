@@ -67,6 +67,35 @@ def _darwin_user_temp_dir() -> str | None:
     return os.fsdecode(buffer.value)
 
 
+def runtime_dir(
+    env: Mapping[str, str],
+    *,
+    platform: str = sys.platform,
+    uid: int | None = None,
+    tmp_root: Path = Path("/tmp"),
+    darwin_temp_dir: Callable[[], str | None] = _darwin_user_temp_dir,
+) -> Path:
+    """The private per-user runtime directory's path, without creating it.
+
+    Prefers `$XDG_RUNTIME_DIR/hagig` when that base is owner-only. Otherwise
+    macOS uses `hagig` inside the OS per-user temporary directory (failing
+    closed if the OS provides none), and other platforms use
+    `<tmp_root>/hagig-<uid>`.
+    """
+    uid = os.getuid() if uid is None else uid
+    xdg = env.get("XDG_RUNTIME_DIR", "")
+    if os.path.isabs(xdg) and _is_private_dir(xdg, uid, follow_symlinks=True):
+        return Path(xdg) / "hagig"
+    if platform == "darwin":
+        base = darwin_temp_dir()
+        if not base or not os.path.isabs(base):
+            raise PathError("runtime_dir_unavailable")
+        if not _is_private_dir(base, uid, follow_symlinks=True):
+            raise PathError("runtime_dir_unsafe")
+        return Path(base) / "hagig"
+    return tmp_root / f"hagig-{uid}"
+
+
 def ensure_runtime_dir(
     env: Mapping[str, str],
     *,
@@ -75,25 +104,15 @@ def ensure_runtime_dir(
     tmp_root: Path = Path("/tmp"),
     darwin_temp_dir: Callable[[], str | None] = _darwin_user_temp_dir,
 ) -> Path:
-    """Create or validate the private per-user runtime directory.
-
-    Prefers a valid owner-only `$XDG_RUNTIME_DIR/hagig`. Otherwise macOS uses
-    `hagig` inside the OS per-user temporary directory (failing closed if the
-    OS provides none), and other platforms use `<tmp_root>/hagig-<uid>`.
-    """
+    """Create or validate the private per-user runtime directory (`runtime_dir`)."""
     uid = os.getuid() if uid is None else uid
-    xdg = env.get("XDG_RUNTIME_DIR", "")
-    if os.path.isabs(xdg) and _is_private_dir(xdg, uid, follow_symlinks=True):
-        runtime = Path(xdg) / "hagig"
-    elif platform == "darwin":
-        base = darwin_temp_dir()
-        if not base or not os.path.isabs(base):
-            raise PathError("runtime_dir_unavailable")
-        if not _is_private_dir(base, uid, follow_symlinks=True):
-            raise PathError("runtime_dir_unsafe")
-        runtime = Path(base) / "hagig"
-    else:
-        runtime = tmp_root / f"hagig-{uid}"
+    runtime = runtime_dir(
+        env,
+        platform=platform,
+        uid=uid,
+        tmp_root=tmp_root,
+        darwin_temp_dir=darwin_temp_dir,
+    )
     return _ensure_private_dir(runtime, uid)
 
 
