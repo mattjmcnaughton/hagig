@@ -193,8 +193,32 @@ bash clients/macos/bundle.sh build
 open clients/macos/.build/Hagig.app
 ```
 
-To uninstall, quit Hagig, run `"$HAGIG" stop`, then delete the app bundle,
-`~/.config/hagig` and `~/.local/share/hagig`.
+To uninstall, quit Hagig, then run:
+
+```sh
+"$HAGIG" uninstall
+```
+
+It lists what it will remove and asks before doing anything (`--yes` skips the
+question). It stops the service, then deletes your settings
+(`~/.config/hagig`), your models (`~/.local/share/hagig`, 1.5–4 GB each) and the
+service's runtime files. It leaves the app itself alone and prints the last two
+steps: delete `Hagig.app` and reset its microphone permission with
+`tccutil reset Microphone com.mattjmcnaughton.hagig`.
+
+### Running `hagig` without the full path
+
+The helper finds the app from its own path, so a symlink to it does not work.
+Use an alias or put the app's `Helpers` directory on your `PATH`, for example
+in `~/.zshrc`:
+
+```sh
+alias hagig="$HOME/src/hagig/clients/macos/.build/Hagig.app/Contents/Helpers/hagig"
+# or
+export PATH="$HOME/src/hagig/clients/macos/.build/Hagig.app/Contents/Helpers:$PATH"
+```
+
+Replace `$HOME/src/hagig` with where you cloned the repository.
 
 ## Privacy
 

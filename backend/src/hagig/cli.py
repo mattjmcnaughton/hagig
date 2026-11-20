@@ -2,7 +2,8 @@
 
 `start` starts or attaches to the server; `status` and `stop` never start one.
 `transcribe` reserves a request, decodes the WAV file, uploads canonical audio
-and prints only the text on stdout. stderr carries stable codes only. Exit
+and prints only the text on stdout. `uninstall` stops the server and removes
+settings, models and runtime files. stderr carries stable codes only. Exit
 codes: 0 success (including no speech), 1 failure, 2 usage or configuration
 error, 3 busy, 130 interrupted.
 """
@@ -10,13 +11,16 @@ error, 3 busy, 130 interrupted.
 import contextlib
 import importlib.util
 import os
+import shlex
+import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
 from collections.abc import Generator, Mapping
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Annotated, Any, NoReturn
 
 import httpx
 import typer
@@ -26,12 +30,15 @@ from hagig.config import ConfigError, is_apple_silicon, load_config
 from hagig.contract import EXCHANGE_SECONDS, encode_json
 from hagig.installer import InstallError, install
 from hagig.manifest import ManifestError, load_manifest
+from hagig.models import INSTALL_LOCK_NAME
 from hagig.paths import (
+    LOCK_NAME,
     PathError,
     ServerLock,
     config_file,
     ensure_runtime_dir,
     models_dir,
+    runtime_dir,
     socket_path,
 )
 from hagig.wav import WavError, read_wav
@@ -222,7 +229,10 @@ def status() -> None:
 @app.command()
 def stop() -> None:
     """Stop a running server and wait until it has exited."""
-    runtime, sock = _runtime(os.environ)
+    _stop_server(*_runtime(os.environ))
+
+
+def _stop_server(runtime: Path, sock: Path) -> None:
     with Client(sock) as client:
         try:
             outcome = client.status()
@@ -244,6 +254,103 @@ def stop() -> None:
                 return
         time.sleep(_POLL_SECONDS)
     _fail("stop_timeout")
+
+
+BUNDLE_ID = "com.mattjmcnaughton.hagig"
+
+
+@app.command()
+def uninstall(
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Do not ask for confirmation.")
+    ] = False,
+) -> None:
+    """Stop the server and remove settings, models and runtime files.
+
+    The app bundle is left in place; the command prints how to remove it.
+    Exit 0 removed, 1 failure or declined.
+    """
+    env = os.environ
+    code = None
+    try:
+        config = config_file(env).parent
+        models = models_dir(env)
+        runtime = runtime_dir(env)
+    except PathError as error:
+        code = error.code
+    if code is not None:
+        _fail(code)
+    data = models.parent
+    if not yes:
+        typer.echo("This stops the Hagig server and permanently removes:")
+        for path in (config, data, runtime):
+            typer.echo(f"  {path}")
+        typer.echo("Quit Hagig first, or it starts the server again.")
+        confirmed = False
+        with contextlib.suppress(typer.Abort):
+            confirmed = typer.confirm("Continue?", default=False)
+        if not confirmed:
+            _fail("cancelled")
+    # Only now: `_runtime` creates the runtime directory.
+    runtime, sock = _runtime(env)
+    _stop_server(runtime, sock)
+    _remove(runtime, models, config, data)
+    typer.echo("Removed Hagig's settings, models and runtime files.")
+    # Never delete the bundle this CLI runs from, under a possibly running app.
+    bundle = _app_bundle()
+    typer.echo("To finish, quit Hagig, then delete the app and its microphone access:")
+    typer.echo(
+        f"  rm -rf {shlex.quote(str(bundle))}" if bundle else "  (delete Hagig.app)"
+    )
+    typer.echo(f"  tccutil reset Microphone {BUNDLE_ID}")
+
+
+def _remove(runtime: Path, models: Path, config: Path, data: Path) -> None:
+    """Remove data and config, then runtime, holding the server and install locks.
+
+    `shutil.rmtree` never follows symlinks and refuses a symlinked top level,
+    which is `uninstall_failed` like any other filesystem error.
+    """
+    wanted = [(runtime, LOCK_NAME, "server_running")]
+    if _is_real_dir(models):
+        wanted.append((models, INSTALL_LOCK_NAME, "install_in_progress"))
+    code = None
+    locks: list[ServerLock] = []
+    try:
+        for directory, name, held in wanted:
+            lock = ServerLock.acquire(directory, name=name)
+            if lock is None:
+                code = held
+                break
+            locks.append(lock)
+        else:
+            for path in (data, config, runtime):
+                if os.path.lexists(path):
+                    shutil.rmtree(path)
+    except PathError as error:
+        code = error.code
+    except OSError:
+        code = "uninstall_failed"
+    finally:
+        for lock in locks:
+            lock.release()
+    if code is not None:
+        _fail(code)
+
+
+def _is_real_dir(path: Path) -> bool:
+    try:
+        return stat.S_ISDIR(os.lstat(path).st_mode)
+    except OSError:
+        return False
+
+
+def _app_bundle() -> Path | None:
+    """The `.app` this CLI runs from (`.../Hagig.app/Contents/...`), if any."""
+    for parent in Path(sys.executable).parents:
+        if parent.suffix == ".app":
+            return parent
+    return None
 
 
 # Generous per-read bound for multi-gigabyte downloads over slow links.

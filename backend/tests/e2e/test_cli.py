@@ -259,3 +259,39 @@ def test_real_server_refuses_an_unmatched_installation_then_stops(home):
     assert lock is not None
     lock.release()
     assert hagig(home, "status").stdout == b"stopped\n"
+
+
+def test_uninstall_stops_the_server_and_removes_every_directory(server):
+    process = server.servers[0]
+    data, config = server.models.parent, server.config_path.parent
+    assert data.is_dir() and config.is_dir() and server.runtime.is_dir()
+    result = hagig(server, "uninstall", "--yes")
+    assert (result.returncode, result.stderr) == (0, b"")
+    assert b"tccutil reset Microphone com.mattjmcnaughton.hagig" in result.stdout
+    assert process.wait(timeout=5) == 0
+    # The data directory holds the models; the runtime directory the kept lock.
+    assert not data.exists()
+    assert not config.exists()
+    assert not server.runtime.exists()
+    # Only Hagig's own directories: the XDG bases stay.
+    assert data.parent.is_dir() and config.parent.is_dir()
+    assert hagig(server, "status").stdout == b"stopped\n"
+
+
+def test_declining_uninstall_changes_nothing(server):
+    before = sorted(p for p in server.root.rglob("*") if "control" not in p.parts)
+    result = subprocess.run(
+        [HAGIG, "uninstall"],
+        env=server.env,
+        input=b"n\n",
+        capture_output=True,
+        timeout=60,
+    )
+    assert (result.returncode, result.stderr) == (1, b"cancelled\n")
+    # The prompt names all three directories, including the computed runtime one.
+    for path in (server.config_path.parent, server.models.parent, server.runtime):
+        assert f"  {path}\n".encode() in result.stdout
+    assert (
+        sorted(p for p in server.root.rglob("*") if "control" not in p.parts) == before
+    )
+    assert server.status()["state"] == "idle"
