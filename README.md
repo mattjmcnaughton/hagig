@@ -53,8 +53,10 @@ source code character by character.
 ## Requirements
 
 - A Mac with **Apple Silicon** (M1 or later), running macOS 15.3 or later.
-- **Xcode 16.4.** The build script requires exactly this version; it can sit
-  beside other Xcode versions.
+- **Xcode 16.4 or 27.2.** The build script accepts only these two versions;
+  they can sit beside other Xcode versions. Use 27.2 on macOS 26.2 or later,
+  where Apple does not support 16.4. Built with 27.2, the app uses the Liquid
+  Glass look and needs macOS 26 or later.
 - **[uv](https://docs.astral.sh/uv/)**, to build the bundled Python backend (CI
   uses 0.12.9).
 - About 1.5 GB of disk for the app (it bundles Python, PyTorch and MLX), plus
@@ -66,7 +68,7 @@ Hagig is built from source into a self-contained, ad-hoc-signed `Hagig.app`.
 
 ### 1. Install the tools
 
-Install Xcode 16.4 from [Apple's downloads page](https://developer.apple.com/download/all/?q=xcode%2016.4)
+Install Xcode 16.4 or 27.2 from [Apple's downloads page](https://developer.apple.com/download/all/?q=xcode)
 (or with [`xcodes`](https://github.com/XcodesOrg/xcodes)), and open it once so it
 finishes installing its components. Then install uv:
 
@@ -80,8 +82,9 @@ curl -LsSf https://astral.sh/uv/install.sh | sh   # or: brew install uv
 git clone https://github.com/mattjmcnaughton/hagig.git
 cd hagig
 
-# Point at your Xcode 16.4 if it is not at this path.
-export DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer
+# The build uses /Applications/Xcode_16.4.app if it exists, otherwise the Xcode
+# that `xcode-select -p` shows. To pick one explicitly:
+#   export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 bash clients/macos/bundle.sh build
 ```
 

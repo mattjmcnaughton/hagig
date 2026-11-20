@@ -54,7 +54,7 @@ class BundleContracts(unittest.TestCase):
             "UV_PYTHON_PREFERENCE": "system",
         }
         self.stub("uname", 'if [ "$1" = -m ]; then echo arm64; else echo Darwin; fi')
-        self.stub("xcodebuild", 'echo "Xcode 16.4"')
+        self.stub("xcodebuild", 'printf "Xcode %s\\nBuild version 1\\n" "${XCODE:-16.4}"')
         self.stub("swift", """
 case "$*" in
   *--show-bin-path*) printf '%s\\n' "$PWD/.build/release" ;;
@@ -154,6 +154,20 @@ esac
                 self.assertEqual(self.run_bundle(*args).returncode, 2)
         self.assertEqual(self.run_bundle("--help").returncode, 0)
         self.assertEqual(self.calls(), "")
+
+    def test_only_the_verified_xcode_versions_build(self):
+        for version, code in (("16.4", 0), ("27.2", 0), ("27.3", 1), ("16.4.1", 1), ("26.3", 1)):
+            with self.subTest(version=version):
+                shutil.rmtree(self.mac / ".build", ignore_errors=True)
+                self.log.unlink(missing_ok=True)
+                result = subprocess.run(["/bin/bash", str(self.mac / "bundle.sh"), "build"],
+                                        cwd=self.root, env={**self.env, "XCODE": version},
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, code, result.stderr)
+                if code:
+                    self.assertIn("Select Xcode 16.4 or 27.2", result.stderr)
+                    self.assertNotIn("swift ", self.calls())
+                    self.assertFalse(self.output().exists())
 
     def test_layout_is_the_managed_interpreter_with_the_locked_packages(self):
         result = self.run_bundle()

@@ -7,7 +7,7 @@ set -euo pipefail
 usage() {
     echo 'Usage: bash clients/macos/bundle.sh build|run'
     echo 'Build a new local Hagig.app; run also opens it. Never replaces an existing bundle.'
-    echo 'Needs Xcode 16.4 and uv. Installs no model; model install is a separate explicit step.'
+    echo 'Needs Xcode 16.4 or 27.2 and uv. Installs no model; model install is a separate explicit step.'
 }
 if [ "$#" -eq 1 ] && [ "$1" = --help ]; then usage; exit 0; fi
 if [ "$#" -ne 1 ]; then usage >&2; exit 2; fi
@@ -38,8 +38,16 @@ command -v uv >/dev/null || fail 'Install uv; it is needed to build, not to run,
 if [ -e "$output" ] || [ -L "$output" ]; then
     fail 'Hagig.app already exists. Quit its shell, explicitly stop its shared service, then move the whole bundle aside before rebuilding. See clients/macos/AGENTS.md.'
 fi
-export DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode_16.4.app/Contents/Developer}
-xcodebuild -version | grep -Fx 'Xcode 16.4' >/dev/null || fail 'Select Xcode 16.4 with DEVELOPER_DIR.'
+# The Xcode versions a bundle has been built and run with: 16.4 (CI's pin; the
+# pre-Liquid Glass look) and 27.2 (macOS 27; Liquid Glass). Without
+# DEVELOPER_DIR, prefer an installed 16.4, else the Xcode xcode-select chose.
+if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode_16.4.app ]; then
+    export DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer
+fi
+case "$(xcodebuild -version 2>/dev/null | head -n 1)" in
+    'Xcode 16.4'|'Xcode 27.2') ;;
+    *) fail 'Select Xcode 16.4 or 27.2 with DEVELOPER_DIR (or xcode-select).' ;;
+esac
 mkdir -p "$mac/.build"
 mkdir "$mac/.build/bundle.lock" 2>/dev/null || fail 'Another bundle build or stale bundle.lock exists; no output changed.'
 stage=
@@ -164,7 +172,10 @@ done < <(find "$python" -type f \( -name '*.so' -o -name '*.dylib' -o -perm -u+x
 # /opt/homebrew/Cellar/gcc@13/...). They resolve nothing the bundle needs, and on
 # a Mac with Homebrew they name user-writable directories a library could be
 # planted in. Keep only bundle-relative and sealed system-volume search paths.
-for file in "${machos[@]}"; do
+# Xcode 27's Swift links the shell with search paths into the toolchain (and a
+# cryptex mount) for back-deployed libraries such as libswiftCompatibilitySpan;
+# macOS 26 and later carry them in /usr/lib/swift, which stays.
+for file in "${machos[@]}" "$app/Contents/MacOS/HagigShell"; do
     while read -r rpath; do
         case "$rpath" in
             @loader_path*|@executable_path*|/usr/lib|/usr/lib/*|/System/Library/*) ;;

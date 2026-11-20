@@ -189,8 +189,11 @@ the app. `clients/macos/bundle.sh` assembles both into one ignored, ad-hoc-signe
 final recipe or physical-Mac acceptance.
 
 Prerequisites, from the clone root on an Apple Silicon Mac (native arm64 shell):
-Xcode 16.4 (Apple supports it on macOS 15.3 through 26.1.x; on a newer macOS stop
-rather than edit the version check) and uv (the version `python-backend.yml`
+Xcode 16.4 or 27.2, the only versions `bundle.sh` accepts (Apple supports 16.4 on
+macOS 15.3 through 26.1.x; use 27.2 on newer macOS; do not widen the check
+without a build, test and transcription run with the new version). Without
+`DEVELOPER_DIR` the script uses `/Applications/Xcode_16.4.app` when present,
+otherwise the `xcode-select` choice. Also needed: uv (the version `python-backend.yml`
 pins, 0.12.9). uv downloads the locked wheels and, when absent, the uv-managed
 Python 3.12; that `uv sync` is the build's only network step. The 3.12 patch
 release bundled is the one that uv version selects (the smoke prints it). No Homebrew,
@@ -434,6 +437,24 @@ physical Mac), synthetic demo captured from the running app:
 
 Reduce Transparency, Increase Contrast, the near-limit and copied states and a
 real dictation were not checked on macOS 26.
+
+Xcode 27.2, 2026-11-20, on a hosted macOS 27.2 arm64 virtual machine (Amp Mac
+satellite, not a physical Mac or CI), Swift 6.4.2: `swift build -c release`
+succeeded with warnings only (implicit strong `self` capture in
+`DictationController`), and `swift test` passed (49 run, 3 skipped, 0
+failures). `smoke-bundle.sh` first failed: Xcode 27's Swift
+links `HagigShell` with search paths into `Xcode_27.2.app`'s toolchain and a
+cryptexd mount, for `@rpath/libswiftCompatibilitySpan.dylib`. `bundle.sh` now
+strips the shell's search paths by the same rule as the Python code, keeping
+`/usr/lib/swift`, where macOS 26 and later carry that library; a 27.2 bundle
+therefore needs macOS 26 or later (Xcode 27.2 itself does too). With that,
+`bundle.sh build` published a bundle that, moved to `/tmp/moved app`, passed
+`smoke-bundle.sh`, installed `qwen3-asr-0.6b` through its helper and
+transcribed `backend/tests/fixtures/speech.wav` with `network_isolation:
+required`. Launched with `open`, the menu-bar popover showed Ready in Liquid
+Glass, attached under the item, nothing clipped. uv was Homebrew's 0.13.6, not
+CI's 0.12.9. Not run: `bundle-proof.sh`, `BundledBackendTests`, the other
+states and a microphone dictation. CI still builds with Xcode 16.4 only.
 
 ## GitHub-hosted Mac evidence, in order
 
