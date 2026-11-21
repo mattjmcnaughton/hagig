@@ -47,6 +47,7 @@ public struct HagigView: View {
     private let record: () -> Void
     private let stop: () -> Void
     private let cancel: () -> Void
+    private let preferences: Preferences?
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Environment(\.openURL) private var openURL
     private var reduceMotion: Bool { systemReduceMotion || !animateActivity }
@@ -56,13 +57,14 @@ public struct HagigView: View {
     /// `clock` fixes the time for deterministic renders; nil follows the system
     /// clock. `setup` names the paired helper in setup instructions.
     public init(presentation: Presentation, animateActivity: Bool = true, clock: Date? = nil,
-                setup: SetupGuide = SetupGuide(),
+                setup: SetupGuide = SetupGuide(), preferences: Preferences? = nil,
                 record: @escaping () -> Void = {}, stop: @escaping () -> Void = {},
                 cancel: (() -> Void)? = nil, copy: @escaping (String) -> Bool) {
         self.presentation = presentation
         self.animateActivity = animateActivity
         self.clock = clock
         self.setup = setup
+        self.preferences = preferences
         self.record = record
         self.stop = stop
         self.cancel = cancel ?? { presentation.cancel() }
@@ -70,6 +72,19 @@ public struct HagigView: View {
     }
 
     public var body: some View {
+        if let preferences {
+            Paged(preferences: preferences) { surface(page: $0) }
+        } else {
+            surface(page: nil)
+        }
+    }
+
+    /// Setup pages replace dictation only outside a request.
+    private var idle: Bool {
+        ![.awaitingAdmission, .recording, .transcribing, .fallback].contains(presentation.stage)
+    }
+
+    private func surface(page: Preferences.Page?) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text("Hagig").font(.system(size: 13, weight: .semibold))
@@ -82,22 +97,25 @@ public struct HagigView: View {
                         Text(name).font(.system(size: 11)).foregroundStyle(.tertiary)
                     }
                 }
+                if let preferences, page == nil, idle {
+                    Button { preferences.open(.models) } label: { Image(systemName: "square.and.arrow.down") }
+                        .buttonStyle(.borderless).help("Speech models").accessibilityLabel("Speech models")
+                    Button { preferences.open(.settings) } label: { Image(systemName: "gearshape") }
+                        .buttonStyle(.borderless).help("Settings").accessibilityLabel("Settings")
+                }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
             Divider()
             VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    if case .issue = presentation.stage {
-                        Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 15))
-                            .foregroundStyle(.orange).accessibilityHidden(true)
+                if let preferences, let page, idle {
+                    switch page {
+                    case .models: ModelLibraryView(library: preferences)
+                    case .settings: SettingsView(preferences: preferences)
                     }
-                    // The one serif line per state: the written word this app produces.
-                    Text(title).font(.system(size: 21, weight: .semibold, design: .serif))
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityAddTraits(.isHeader)
+                } else {
+                    dictation
                 }
-                content
             }
             .padding(.horizontal, 20)
             .padding(.top, 18)
@@ -108,7 +126,22 @@ public struct HagigView: View {
         .frame(width: 330)
         .onExitCommand {
             if [.awaitingAdmission, .recording, .transcribing].contains(presentation.stage) { cancel() }
+            else if page != nil { preferences?.close() }
         }
+    }
+
+    @ViewBuilder private var dictation: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            if case .issue = presentation.stage {
+                Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 15))
+                    .foregroundStyle(.orange).accessibilityHidden(true)
+            }
+            // The one serif line per state: the written word this app produces.
+            Text(title).font(.system(size: 21, weight: .semibold, design: .serif))
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+        }
+        content
     }
 
     private var title: String {
@@ -215,9 +248,16 @@ public struct HagigView: View {
             }
             switch issue {
             case .configuration:
-                Snippet(label: "A minimal settings file", text: SetupGuide.exampleSettings, copy: copy)
+                if let preferences {
+                    action("Choose a model…", systemImage: "square.and.arrow.down") { preferences.open(.models) }
+                    action("Open Settings", systemImage: "gearshape") { preferences.open(.settings) }
+                } else {
+                    Snippet(label: "A minimal settings file", text: SetupGuide.exampleSettings, copy: copy)
+                }
             case .modelMissing:
-                if let command = setup.installCommand(modelID: presentation.modelID) {
+                if let preferences {
+                    action("Download a model…", systemImage: "square.and.arrow.down") { preferences.open(.models) }
+                } else if let command = setup.installCommand(modelID: presentation.modelID) {
                     Snippet(label: "Run once in Terminal", text: command, copy: copy)
                 }
             case .microphonePermission:
@@ -271,6 +311,13 @@ public struct HagigView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Self.panel, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
+}
+
+/// Re-renders the surface when the page changes.
+private struct Paged<Content: View>: View {
+    @ObservedObject var preferences: Preferences
+    let content: (Preferences.Page?) -> Content
+    var body: some View { content(preferences.page) }
 }
 
 /// One capsule per capture chunk, newest at the right beside the caret where the

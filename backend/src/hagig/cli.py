@@ -10,7 +10,9 @@ error, 3 busy, 130 interrupted.
 
 import contextlib
 import importlib.util
+import json
 import os
+import secrets
 import shlex
 import shutil
 import signal
@@ -18,19 +20,34 @@ import stat
 import subprocess
 import sys
 import time
+import tomllib
 from collections.abc import Generator, Mapping
 from pathlib import Path
 from typing import Annotated, Any, NoReturn
 
 import httpx
 import typer
+from pydantic import ValidationError
 
 from hagig.client import Client, Outcome, UnreachableError
-from hagig.config import ConfigError, is_apple_silicon, load_config
+from hagig.config import (
+    MAX_CONFIG_BYTES,
+    Config,
+    ConfigError,
+    is_apple_silicon,
+    load_config,
+    validation_issues,
+)
 from hagig.contract import EXCHANGE_SECONDS, encode_json
 from hagig.installer import InstallError, install
-from hagig.manifest import ManifestError, load_manifest
-from hagig.models import INSTALL_LOCK_NAME
+from hagig.manifest import (
+    MODEL_IDS,
+    MODEL_NAMES,
+    Manifest,
+    ManifestError,
+    load_manifest,
+)
+from hagig.models import INSTALL_LOCK_NAME, ModelError, installed_model
 from hagig.paths import (
     LOCK_NAME,
     PathError,
@@ -360,18 +377,32 @@ _INSTALL_EXITS = {
     "model_unsupported_on_platform": EXIT_USAGE,
     "interrupted": EXIT_INTERRUPTED,
 }
+# How often `--json` reports bytes while one file downloads.
+_PROGRESS_SECONDS = 0.25
+_JSON = typer.Option("--json", help="Machine-readable JSON lines on stdout.")
+
+
+def _emit(value: dict[str, Any]) -> None:
+    typer.echo(encode_json(value).decode())
 
 
 @model_app.command("install")
-def model_install(manifest_id: str) -> None:
+def model_install(manifest_id: str, json_lines: Annotated[bool, _JSON] = False) -> None:
     """Explicitly download, verify and publish a model (the only network step).
 
     Prints `installed` or `already_installed`. stderr carries progress as
     `<event> [<manifest file>]` and failures as `<code>[: <manifest file>]`.
+    With `--json`, stdout instead carries one object per line: progress
+    `{"event", "file", "received", "total"}` (bytes over every download) and
+    then `{"event": "done", "result"}`; failures stay on stderr.
     Exit 0 success, 1 failure, 2 unknown or unsupported model, 130 interrupted.
     """
     try:
-        typer.echo(_install(manifest_id, os.environ))
+        result = _install(manifest_id, os.environ, json_lines)
+        if json_lines:
+            _emit({"event": "done", "result": result})
+        else:
+            typer.echo(result)
         return
     except (ManifestError, PathError, InstallError) as error:
         code = str(error)
@@ -384,10 +415,8 @@ def model_install(manifest_id: str) -> None:
     _fail(code, _INSTALL_EXITS.get(code, EXIT_FAILURE))
 
 
-def _install(manifest_id: str, env: Mapping[str, str]) -> str:
-    """The CLI owns the preflight: platform, then the converter's engines."""
-    manifest = load_manifest(manifest_id)
-    models = models_dir(env)
+def _preflight(manifest: Manifest) -> None:
+    """What this machine needs before installing or using a model."""
     if manifest.apple_silicon_only and not is_apple_silicon():
         raise InstallError("model_unsupported_on_platform")
     # The converter runs in this interpreter; refuse before downloading.
@@ -396,10 +425,320 @@ def _install(manifest_id: str, env: Mapping[str, str]) -> str:
     ):
         raise InstallError("engine_not_installed")
 
-    def progress(event: str, name: str | None) -> None:
-        typer.echo(event if name is None else f"{event} {name}", err=True)
 
+def _download_bytes(manifest: Manifest) -> int:
+    converter = manifest.conversion.size if manifest.conversion is not None else 0
+    return sum(entry.size for entry in manifest.files) + converter
+
+
+def _install(manifest_id: str, env: Mapping[str, str], json_lines: bool) -> str:
+    """The CLI owns the preflight: platform, then the converter's engines."""
+    manifest = load_manifest(manifest_id)
+    models = models_dir(env)
+    _preflight(manifest)
+    total = _download_bytes(manifest)
+    finished = 0  # bytes of the downloads already complete
+    current = 0  # bytes of the one in progress
+    reported = 0.0
+    name: str | None = None
+
+    def report() -> None:
+        _emit(
+            {
+                "event": event,
+                "file": name,
+                "received": finished + current,
+                "total": total,
+            }
+        )
+
+    def progress(next_event: str, next_name: str | None) -> None:
+        nonlocal event, name, finished, current, reported
+        if not json_lines:
+            typer.echo(
+                next_event if next_name is None else f"{next_event} {next_name}",
+                err=True,
+            )
+            return
+        event, name = next_event, next_name
+        finished, current, reported = finished + current, 0, time.monotonic()
+        report()
+
+    def received(count: int) -> None:
+        nonlocal current, reported
+        current = count
+        if json_lines and time.monotonic() - reported >= _PROGRESS_SECONDS:
+            reported = time.monotonic()
+            report()
+
+    event = "verify"
     with httpx.Client(
         trust_env=False, follow_redirects=False, timeout=_DOWNLOAD_TIMEOUT
     ) as client:
-        return install(manifest, models, client=client, env=env, progress=progress)
+        return install(
+            manifest,
+            models,
+            client=client,
+            env=env,
+            progress=progress,
+            received=received,
+        )
+
+
+@model_app.command("list")
+def model_list(json_output: Annotated[bool, _JSON] = False) -> None:
+    """List the models Hagig can install, and which are installed and in use.
+
+    Offline and read-only: the tracked manifests, a cheap check of each
+    installation (no hashing) and the settings file's `model.id`. With
+    `--json`, one object: `configured` (an ID or null), `config_issue` (a
+    stable code when a settings file exists but is invalid, else null) and
+    `models`, each with `id`, `name`, `engine`, `publisher`, `repository`,
+    `license`, `download_bytes`, `supported` and `installed` (`installed`,
+    `missing` or `invalid`).
+    """
+    env = os.environ
+    code = None
+    try:
+        models = models_dir(env)
+        path = config_file(env)
+    except PathError as error:
+        code = error.code
+    if code is not None:
+        _fail(code)
+    configured, issue = _configured(path)
+    entries: list[dict[str, Any]] = []
+    for manifest_id in MODEL_IDS:
+        manifest = load_manifest(manifest_id)
+        try:
+            installed_model(models, manifest)
+            state = "installed"
+        except ModelError as error:
+            state = "missing" if error.code == "model_missing" else "invalid"
+        try:
+            _preflight(manifest)
+            supported = True
+        except InstallError:
+            supported = False
+        entries.append(
+            {
+                "id": manifest.id,
+                "name": MODEL_NAMES.get(manifest.id, manifest.id),
+                "engine": manifest.engine,
+                "publisher": manifest.source.publisher,
+                "repository": manifest.source.repository,
+                "license": manifest.source.license,
+                "download_bytes": _download_bytes(manifest),
+                "supported": supported,
+                "installed": state,
+            }
+        )
+    if json_output:
+        _emit({"configured": configured, "config_issue": issue, "models": entries})
+        return
+    for entry in entries:
+        marks = [entry["installed"]]
+        if entry["id"] == configured:
+            marks.append("in use")
+        if not entry["supported"]:
+            marks.append("unsupported")
+        typer.echo(f"{entry['id']}\t{', '.join(marks)}")
+
+
+def _configured(path: Path) -> tuple[str | None, str | None]:
+    """The settings file's model, or the stable code that stops it loading."""
+    try:
+        return load_config(path).model.id, None
+    except ConfigError as error:
+        failure = str(error)
+    return None, (failure if os.path.lexists(path) else None)
+
+
+settings_app = typer.Typer(no_args_is_help=True)
+app.add_typer(settings_app, name="settings", help="Read and change settings.")
+
+# Every setting, as `settings show --json` reports it and `settings set` takes it.
+_SETTING_KEYS = ("model_id", "editor_mode", "network_isolation", "vocabulary")
+
+
+def _settings_of(config: Config) -> dict[str, Any]:
+    return {
+        "model_id": config.model.id,
+        "editor_mode": config.editor.mode,
+        "network_isolation": config.inference.network_isolation,
+        "vocabulary": list(config.vocabulary.terms),
+    }
+
+
+def _settings_path(env: Mapping[str, str]) -> Path:
+    code = None
+    try:
+        return config_file(env)
+    except PathError as error:
+        code = error.code
+    _fail(code)
+
+
+@settings_app.command("show")
+def settings_show() -> None:
+    """Print the settings file as one JSON object (offline, read-only).
+
+    `path`, `exists`, `issue` (a stable code when the file does not load, else
+    null) and `settings` (`model_id`, `editor_mode`, `network_isolation` and
+    `vocabulary`, with defaults filled in; null when the file does not load).
+    """
+    path = _settings_path(os.environ)
+    config = None
+    issue = None
+    try:
+        config = load_config(path)
+    except ConfigError as error:
+        issue = str(error)
+    exists = os.path.lexists(path)
+    _emit(
+        {
+            "path": str(path),
+            "exists": exists,
+            # A missing file is not a problem to report, only an empty choice.
+            "issue": issue if exists else None,
+            "settings": _settings_of(config) if config is not None else None,
+        }
+    )
+
+
+@settings_app.command("set")
+def settings_set(
+    replace: Annotated[
+        bool,
+        typer.Option("--replace", help="Replace a settings file that does not load."),
+    ] = False,
+) -> None:
+    """Change settings from a JSON object on stdin, then rewrite the file.
+
+    The object holds any of `model_id`, `editor_mode`, `network_isolation` and
+    `vocabulary` (a list of strings); missing keys keep their current values.
+    Input travels on stdin so vocabulary never appears in a process list. The
+    merged settings are validated exactly as the server will load them, then
+    written atomically (0600). A file that does not load is refused
+    (`config_unloadable`) unless `--replace`. Comments in the file are not
+    kept. A model must be installed first (`model_missing`); nothing is ever
+    downloaded. A running server keeps the settings it started with, so an
+    idle one is stopped and the next request starts it with these; a busy one
+    refuses (`busy`, exit 3) before anything is written. Prints `updated` or
+    `unchanged`. Failures are stable codes and field names, never values.
+    """
+    env = os.environ
+    path = _settings_path(env)
+    changes = _read_changes()
+    current: dict[str, Any] = {}
+    exists = os.path.lexists(path)
+    if exists:
+        try:
+            current = _settings_of(load_config(path))
+        except ConfigError:
+            if not replace:
+                _fail(f"config_unloadable: fix or replace {path}")
+    merged = {**current, **changes}
+    if "model_id" not in merged:
+        _fail("config_invalid: model.id missing", EXIT_USAGE)
+    document = _toml(merged)
+    code = None
+    try:
+        # Exactly the server's validation, on exactly the bytes to be written.
+        config = Config.model_validate(
+            tomllib.loads(document.decode()),
+            context={"apple_silicon": is_apple_silicon()},
+        )
+        manifest = load_manifest(config.model.id)
+        installed_model(models_dir(env), manifest)
+    except ValidationError as error:
+        code = str(ConfigError("config_invalid", validation_issues(error)))
+    except (ManifestError, ModelError, PathError) as error:
+        code = str(error)
+    if code is not None:
+        _fail(code, EXIT_USAGE if code.startswith("config_invalid") else EXIT_FAILURE)
+    if exists and current == _settings_of(config):
+        typer.echo("unchanged")
+        return
+    runtime, sock = _runtime(env)
+    with Client(sock) as client:
+        try:
+            outcome: Outcome | None = client.status()
+        except UnreachableError:
+            outcome = None
+    if outcome is not None and outcome.kind != "compatible":
+        _report(outcome)
+    if outcome is not None and outcome.data["state"] != "idle":
+        _fail("busy", EXIT_BUSY)
+    _write(path, document)
+    if outcome is not None:
+        _stop_server(runtime, sock)
+    typer.echo("updated")
+
+
+def _read_changes() -> dict[str, Any]:
+    raw = sys.stdin.buffer.read(MAX_CONFIG_BYTES + 1)
+    changes: Any = None
+    with contextlib.suppress(ValueError):
+        changes = json.loads(raw) if len(raw) <= MAX_CONFIG_BYTES else None
+    if isinstance(changes, dict) and set(changes) <= set(_SETTING_KEYS):
+        # Only strings reach the TOML writer; values are validated after.
+        vocabulary = changes.get("vocabulary", [])
+        scalars = [v for k, v in changes.items() if k != "vocabulary"]
+        if isinstance(vocabulary, list) and all(
+            isinstance(text, str) for text in [*scalars, *vocabulary]
+        ):
+            return changes
+    _fail("settings_input_invalid", EXIT_USAGE)
+
+
+def _toml(settings: dict[str, Any]) -> bytes:
+    """TOML for settings whose values are strings or lists of strings.
+
+    `json.dumps` with non-ASCII kept is a TOML basic string: it escapes only
+    quotes, backslashes and control characters, which TOML decodes back, and
+    which validation then rejects in vocabulary.
+    """
+
+    def value(item: Any) -> str:
+        if isinstance(item, list):
+            return "[" + ", ".join(value(term) for term in item) + "]"
+        return json.dumps(item, ensure_ascii=False)
+
+    lines = [f"[model]\nid = {value(settings['model_id'])}"]
+    if "editor_mode" in settings:
+        lines.append(f"[editor]\nmode = {value(settings['editor_mode'])}")
+    if "network_isolation" in settings:
+        lines.append(
+            f"[inference]\nnetwork_isolation = {value(settings['network_isolation'])}"
+        )
+    if "vocabulary" in settings:
+        lines.append(f"[vocabulary]\nterms = {value(settings['vocabulary'])}")
+    return ("\n\n".join(lines) + "\n").encode()
+
+
+def _write(path: Path, document: bytes) -> None:
+    code = None
+    temporary: Path | None = None
+    try:
+        path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        temporary = path.with_name(f".config-{secrets.token_hex(8)}.toml")
+        fd = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+        )
+        with os.fdopen(fd, "wb") as out:
+            out.write(document)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temporary, path)
+        temporary = None
+    except OSError:
+        code = "config_write_failed"
+    finally:
+        if temporary is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(temporary)
+    if code is not None:
+        _fail(code)

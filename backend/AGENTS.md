@@ -317,7 +317,33 @@ selected one is imported, and the server never imports either.
   version while an install publishes another; only the next launched worker
   sees it. A worker loading while an install prunes its version fails closed.
 
-**CLI** (`hagig start|status|stop|transcribe|uninstall`):
+**CLI** (`hagig start|status|stop|transcribe|uninstall`, `model
+install|list`, `settings show|set`):
+
+- `model list [--json]`: offline and read-only. Every tracked manifest with
+  its display name (`manifest.MODEL_NAMES`, outside the manifests because
+  their bytes are their identity), engine, source, licence, download bytes
+  (files plus converter), `supported` (the install preflight) and `installed`
+  (`installed`, `missing` or `invalid` from the cheap `installed_model`
+  check; never hashes), plus the settings file's `configured` model and a
+  content-free `config_issue`.
+- `model install <id> --json`: progress on stdout as one compact object per
+  line, `{event, file, received, total}` with bytes across every download
+  (at most four per second while a file streams, from the installer's
+  `received` callback), then `{"event":"done","result":...}`. Failures stay
+  stable codes on stderr with the same exits.
+- `settings show`: one JSON object, `path`, `exists`, `issue` (when the file
+  exists and does not load) and `settings` (every field, defaults filled).
+- `settings set [--replace]`: a JSON object of any of `model_id`,
+  `editor_mode`, `network_isolation`, `vocabulary` on stdin (strings only, else
+  `settings_input_invalid`, exit 2), merged over the current file, validated by
+  the same `Config` the server loads (`config_invalid: <field> <code>`, exit 2),
+  the model checked as installed (`model_missing`, `model_invalid`; nothing is
+  downloaded), then written atomically 0600 without comments. A file that does
+  not load is `config_unloadable` unless `--replace`. An idle server is stopped
+  after the write so the next request starts with the new settings; a busy one
+  refuses with `busy` (exit 3) before writing. Prints `updated` or
+  `unchanged`.
 
 - `start` and `transcribe` attach to a compatible server, or spawn
   `python -I -m hagig.server` once (new session, stdio to `/dev/null`) and poll

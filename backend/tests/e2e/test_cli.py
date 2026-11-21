@@ -1,12 +1,14 @@
 """The real `hagig` CLI against the test server, and against the real server."""
 
 import importlib.util
+import json
 import os
 import platform
 import shutil
 import signal
 import subprocess
 import sys
+import tomllib
 import wave
 from pathlib import Path
 
@@ -295,3 +297,207 @@ def test_declining_uninstall_changes_nothing(server):
         sorted(p for p in server.root.rglob("*") if "control" not in p.parts) == before
     )
     assert server.status()["state"] == "idle"
+
+
+# The model registry and settings: `model list` and `settings show|set`.
+
+
+def tracked_installation(home, model_id):
+    """A tracked manifest's installation as the cheap check sees it.
+
+    Sparse files at the recorded sizes: `installed_model` never hashes, so this
+    stands in for gigabytes of weights without writing them.
+    """
+    from hagig.manifest import load_manifest
+
+    manifest = load_manifest(model_id)
+    version = "v-" + "1" * 32
+    base = home.models / model_id
+    target = base / version
+    for directory in (home.models, base, target):
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    files = {f.path: (f.size, f.sha256) for f in manifest.files}
+    for name, (size, _digest) in files.items():
+        with open(target / name, "wb") as out:
+            out.truncate(size)
+    record = {
+        "format": 1,
+        "manifest": manifest.id,
+        "manifest_sha256": manifest.digest,
+        "files": [
+            {"path": n, "size": s, "sha256": d} for n, (s, d) in sorted(files.items())
+        ],
+    }
+    (target / "hagig-install.json").write_text(json.dumps(record))
+    os.symlink(version, base / "current")
+
+
+def listed(home):
+    result = hagig(home, "model", "list", "--json")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count(b"\n") == 1
+    return json.loads(result.stdout)
+
+
+def test_model_list_reports_the_whole_registry_offline(home):
+    data = listed(home)
+    assert data["configured"] is None and data["config_issue"] is None
+    ids = [m["id"] for m in data["models"]]
+    assert ids == ["qwen3-asr-0.6b", "qwen3-asr-1.7b", "whisper-large-v3-turbo"]
+    by_id = {m["id"]: m for m in data["models"]}
+    assert {m["installed"] for m in data["models"]} == {"missing"}
+    # Sizes from the manifests themselves, summed independently here.
+    qwen = json.loads(
+        (Path(hagig_pkg_dir()) / "manifests" / "qwen3-asr-0.6b.json").read_text()
+    )
+    assert by_id["qwen3-asr-0.6b"]["download_bytes"] == sum(
+        f["size"] for f in qwen["files"]
+    )
+    assert by_id["whisper-large-v3-turbo"]["engine"] == "mlx-whisper"
+    apple = sys.platform == "darwin" and platform.machine() == "arm64"
+    if not apple:
+        assert by_id["whisper-large-v3-turbo"]["supported"] is False
+    assert by_id["qwen3-asr-1.7b"]["supported"] is True
+    # Listing reads; it creates nothing.
+    assert not (home.root / "data").exists()
+
+
+def hagig_pkg_dir():
+    import hagig
+
+    return Path(hagig.__file__).parent
+
+
+def test_model_list_shows_installed_invalid_and_configured(home):
+    tracked_installation(home, "qwen3-asr-1.7b")
+    (home.models / "qwen3-asr-0.6b").mkdir(mode=0o700)
+    os.symlink("not-a-version", home.models / "qwen3-asr-0.6b" / "current")
+    home.config_path.parent.mkdir(parents=True)
+    home.config_path.write_text('[model]\nid = "qwen3-asr-1.7b"\n')
+    data = listed(home)
+    states = {m["id"]: m["installed"] for m in data["models"]}
+    assert states == {
+        "qwen3-asr-0.6b": "invalid",
+        "qwen3-asr-1.7b": "installed",
+        "whisper-large-v3-turbo": "missing",
+    }
+    assert data["configured"] == "qwen3-asr-1.7b"
+    # A broken settings file is reported by code, never by content.
+    home.config_path.write_text('[model]\nid = "private-secret"\n')
+    data = listed(home)
+    assert data["configured"] is None
+    assert data["config_issue"] == "config_invalid: model.id invalid_value"
+
+
+def settings_set(home, changes, *args):
+    return subprocess.run(
+        [HAGIG, "settings", "set", *args],
+        env=home.env,
+        input=json.dumps(changes).encode(),
+        capture_output=True,
+        timeout=60,
+    )
+
+
+def shown(home):
+    result = hagig(home, "settings", "show")
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+def test_settings_set_writes_a_first_settings_file_the_server_accepts(home):
+    assert shown(home) == {
+        "path": str(home.config_path),
+        "exists": False,
+        "issue": None,
+        "settings": None,
+    }
+    tracked_installation(home, "qwen3-asr-1.7b")
+    terms = ['Quote " and \\ back', "日本語 😀", "Ghostty"]
+    result = settings_set(
+        home,
+        {"model_id": "qwen3-asr-1.7b", "editor_mode": "vim", "vocabulary": terms},
+    )
+    assert (result.returncode, result.stdout, result.stderr) == (0, b"updated\n", b"")
+    assert home.config_path.stat().st_mode & 0o777 == 0o600
+    # Read back independently with the stdlib parser, then by the backend.
+    with open(home.config_path, "rb") as handle:
+        written = tomllib.load(handle)
+    assert written == {
+        "model": {"id": "qwen3-asr-1.7b"},
+        "editor": {"mode": "vim"},
+        "vocabulary": {"terms": terms},
+    }
+    assert shown(home)["settings"] == {
+        "model_id": "qwen3-asr-1.7b",
+        "editor_mode": "vim",
+        "network_isolation": "required",
+        "vocabulary": terms,
+    }
+    # A partial change keeps the rest; the same values again change nothing.
+    isolation = settings_set(home, {"network_isolation": "disabled"})
+    assert isolation.stdout == b"updated\n"
+    assert shown(home)["settings"]["vocabulary"] == terms
+    assert settings_set(home, {"editor_mode": "vim"}).stdout == b"unchanged\n"
+
+
+def test_settings_set_refuses_without_writing(home):
+    tracked_installation(home, "qwen3-asr-1.7b")
+    missing = settings_set(home, {"model_id": "qwen3-asr-0.6b"})
+    assert (missing.returncode, missing.stderr) == (1, b"model_missing\n")
+    no_model = settings_set(home, {"editor_mode": "vim"})
+    assert (no_model.returncode, no_model.stderr) == (
+        2,
+        b"config_invalid: model.id missing\n",
+    )
+    secret = "private\nterm"
+    bad = settings_set(home, {"model_id": "qwen3-asr-1.7b", "vocabulary": [secret]})
+    assert (bad.returncode, bad.stderr) == (
+        2,
+        b"config_invalid: vocabulary.terms[0] invalid_value\n",
+    )
+    for wrong in [{"model_id": 5}, {"other": "x"}, {"vocabulary": "one"}, []]:
+        refused = settings_set(home, wrong)
+        assert (refused.returncode, refused.stderr) == (2, b"settings_input_invalid\n")
+    assert not home.config_path.exists()
+
+
+def test_an_unloadable_settings_file_is_replaced_only_when_asked(home):
+    tracked_installation(home, "qwen3-asr-1.7b")
+    home.config_path.parent.mkdir(parents=True)
+    home.config_path.write_text("[model\nid = 'private-secret'\n")
+    before = home.config_path.read_bytes()
+    assert shown(home)["issue"] == "config_syntax"
+    refused = settings_set(home, {"model_id": "qwen3-asr-1.7b"})
+    assert refused.returncode == 1
+    assert refused.stderr.startswith(b"config_unloadable: fix or replace ")
+    assert b"private-secret" not in refused.stderr
+    assert home.config_path.read_bytes() == before
+    replaced = settings_set(home, {"model_id": "qwen3-asr-1.7b"}, "--replace")
+    assert replaced.stdout == b"updated\n"
+    assert shown(home)["issue"] is None
+
+
+def test_settings_set_stops_an_idle_server_and_refuses_a_busy_one(server):
+    tracked_installation(server, "qwen3-asr-1.7b")
+    server.config_path.write_text('[model]\nid = "qwen3-asr-0.6b"\n')
+    request = server.admit()
+    busy = settings_set(server, {"model_id": "qwen3-asr-1.7b"})
+    assert (busy.returncode, busy.stderr) == (3, b"busy\n")
+    assert server.config_path.read_text() == '[model]\nid = "qwen3-asr-0.6b"\n'
+    with server.client() as client:
+        assert client.delete(f"/v1/requests/{request}").status_code == 204
+    used = settings_set(server, {"model_id": "qwen3-asr-1.7b"})
+    assert (used.returncode, used.stdout, used.stderr) == (0, b"updated\n", b"")
+    # The server held the old settings, so it was stopped for the next start.
+    assert not server.socket.exists()
+    assert hagig(server, "status").stdout == b"stopped\n"
+
+
+def test_model_install_json_refuses_with_codes_on_stderr(home):
+    result = hagig(home, "model", "install", "qwen3-asr-9b", "--json")
+    assert (result.returncode, result.stdout, result.stderr) == (
+        2,
+        b"",
+        b"unknown_model\n",
+    )

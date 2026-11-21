@@ -163,7 +163,7 @@ def load_config(path: Path, *, apple_silicon: bool | None = None) -> Config:
     try:
         return Config.model_validate(data, context={"apple_silicon": apple_silicon})
     except ValidationError as error:
-        issues = _issues(error)
+        issues = validation_issues(error)
     raise ConfigError("config_invalid", issues)
 
 
@@ -190,7 +190,7 @@ def _parse(raw: bytes) -> dict[str, Any]:
     raise ConfigError("config_syntax")
 
 
-def _issues(error: ValidationError) -> tuple[ConfigIssue, ...]:
+def validation_issues(error: ValidationError) -> tuple[ConfigIssue, ...]:
     issues = []
     for detail in error.errors(include_url=False, include_context=False):
         loc = detail["loc"]
