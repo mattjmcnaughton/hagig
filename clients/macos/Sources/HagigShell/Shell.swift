@@ -18,6 +18,10 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
     private let synthetic = CommandLine.arguments.contains("--synthetic-demo")
     private let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/hagig")
     private lazy var dictation = DictationController(presentation: presentation, helper: helper)
+    /// Models and settings through the paired helper; nil-run without one.
+    private lazy var preferences = Preferences(run: synthetic || !FileManager.default.isExecutableFile(atPath: helper.path)
+        ? nil : Preferences.helper(helper))
+    private var pageObserver: AnyCancellable?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -31,6 +35,7 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
                       // Setup instructions name the paired helper only when it exists.
                       setup: SetupGuide(helperPath: FileManager.default.isExecutableFile(atPath: helper.path)
                           ? helper.path : nil),
+                      preferences: preferences,
                       record: { [weak self] in
                           guard let self else { return }
                           if synthetic {
@@ -70,6 +75,13 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
         // "Ready" on screen after a failure. Stages still arrive in order.
         stageObserver = presentation.$stage.receive(on: DispatchQueue.main)
             .sink { [weak self] stage in self?.reflect(stage) }
+        // Leaving setup after a model or settings problem returns to Ready: the
+        // problem was what the user just went to fix, and Record retries it.
+        pageObserver = preferences.$page.receive(on: DispatchQueue.main).sink { [weak self] page in
+            guard let self, page == nil,
+                  [.issue(.configuration), .issue(.modelMissing)].contains(presentation.stage) else { return }
+            presentation.reset()
+        }
         // Explicit test/demo mode is never selected by a backend/capture failure.
         guard synthetic else { return }
         demoWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 300),
@@ -174,6 +186,8 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
         if !synthetic { dictation.cancel() }
+        // An install the user started stops with the app; its earlier model stays.
+        preferences.cancelDownload()
     }
 }
 

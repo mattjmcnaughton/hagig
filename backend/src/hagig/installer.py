@@ -65,6 +65,8 @@ _HTTP_ERRORS = (httpx.HTTPError, httpx.InvalidURL, httpx.StreamError, ValueError
 Result = Literal["installed", "already_installed"]
 # (event, manifest file name): "verify", "download", "convert".
 Progress = Callable[[str, str | None], None]
+# Bytes of the current download written so far, called as they arrive.
+Received = Callable[[int], None]
 
 
 class InstallError(Exception):
@@ -90,6 +92,10 @@ def _quiet(event: str, name: str | None) -> None:
     pass
 
 
+def _uncounted(count: int) -> None:
+    pass
+
+
 def install(
     manifest: Manifest,
     models_root: Path,
@@ -98,6 +104,7 @@ def install(
     env: Mapping[str, str],
     allow: Callable[[httpx.URL], bool] = official_origin,
     progress: Progress = _quiet,
+    received: Received = _uncounted,
 ) -> Result:
     """Install `manifest` under `models_root`, or keep a valid installation.
 
@@ -115,7 +122,9 @@ def install(
         lock = ServerLock.acquire(models_root, name=INSTALL_LOCK_NAME)
         if lock is None:
             raise InstallError("install_in_progress")
-        outcome = _Install(manifest, models_root, client, env, allow, progress).run()
+        outcome = _Install(
+            manifest, models_root, client, env, allow, progress, received
+        ).run()
     except PathError as error:
         failure = error.code
     except OSError:
@@ -139,6 +148,7 @@ class _Install:
         env: Mapping[str, str],
         allow: Callable[[httpx.URL], bool],
         progress: Progress,
+        received: Received,
     ) -> None:
         self.manifest = manifest
         self.models_root = models_root
@@ -147,6 +157,7 @@ class _Install:
         self.env = env
         self.allow = allow
         self.progress = progress
+        self.received = received
 
     def run(self) -> Result:
         # The lock is held, so any staging directory is an interrupted install.
@@ -298,6 +309,7 @@ class _Install:
                         raise InstallError("download_size_mismatch", name)
                     hasher.update(chunk)
                     out.write(chunk)
+                    self.received(total)
                 if total != size:
                     raise InstallError("download_size_mismatch", name)
         except _HTTP_ERRORS:

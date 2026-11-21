@@ -62,9 +62,10 @@ an explicit test-only HTTP/1.1 peer on a real Unix socket that serves
 checkout, never copied into Swift): every client exchange, disconnects, the 5 s
 exchange bound, a six-second result, runtime-path rules and both cancel orderings
 at the delivery boundary. They use no personal audio/text.
-Ready proof remains two shared-view PNGs; the representative gallery is 36 images
-(18 states × light/dark): ready, awaiting admission, recording, near limit,
-transcribing, fallback, copied, cancelled, no speech and the nine issues.
+Ready proof remains two shared-view PNGs; the representative gallery is 46 images
+(23 states × light/dark): ready, awaiting admission, recording, near limit,
+transcribing, fallback, copied, cancelled, no speech, the nine issues, and the
+setup pages (models, model consent, downloading, failed download, settings).
 Inspect Ready before every representative image, then execute AX/keyboard/pointer
 checks and inspect a complete moving-pointer clip. Hosted checks never establish
 physical microphone/TCC/grant-denial-rebuild, real inference or second-device
@@ -102,8 +103,10 @@ buttons in their inactive-window style.
   one short line without control characters (a stable code and the settings
   path, never file content; see `backend/src/hagig/config.py`) and a minimal
   settings file to copy. The helper's stderr is drained while it runs, keeping
-  at most 1 KiB, so a long error cannot block its exit. A missing model shows `'<helper>' model install <id>`,
-  only when the paired helper exists and the ID is a plain alias. Denied
+  at most 1 KiB, so a long error cannot block its exit. With the paired helper,
+  a settings error offers Choose a model and Open Settings, and a missing model
+  offers Download a model; without it (the render harness's no-preferences
+  path) they show the settings snippet and `'<helper>' model install <id>`. Denied
   microphone access shows Open Microphone Settings. Snippets are copied through
   the same current-host-only writer as the transcript and are never executed.
   `isolation_unavailable` has its own state and is never shown as a settings
@@ -123,6 +126,19 @@ buttons in their inactive-window style.
   editing the SVG, then inspect the result. `bundle.sh` copies the committed file
   and never renders.
 
+- **Models and settings (`Preferences`).** The header's download and gear
+  buttons, shown only outside a request, replace dictation with Speech models
+  or Settings. Both run only the paired helper: `model list --json` and
+  `settings show` read; `model install <id> --json` streams progress lines;
+  `settings set` takes a JSON object on stdin (vocabulary never in a process
+  list). A download starts only from Download on the consent page (model,
+  size, source, licence) or Retry on that model's failure. Cancel sends SIGINT,
+  which the CLI reports as `interrupted` and leaves earlier installs alone.
+  The first download with no model chosen makes it the one in use, so a fresh
+  install needs no hand-written file. The backend validates every save and
+  restarts an idle server; Swift parses no TOML and keeps no model list. Quit
+  interrupts a download in progress.
+
 ## Boundaries
 
 - `HagigPresentation/Presentation.swift`: in-memory presentation/actions, request
@@ -132,7 +148,8 @@ buttons in their inactive-window style.
   capture executable must use this same view; never duplicate screenshot UI.
 - `HagigShell`: AppKit status item/popover, real Record/Stop/Cancel and explicit
   current-host-only Copy/Cut. Intentional capture requests Microphone permission
-  after backend admission. No automatic paste, key injection or model downloads.
+  after backend admission. No automatic paste or key injection; a model downloads
+  only after the user confirms it on the consent page.
   Demo controls require `--synthetic-demo`.
 - `HagigScreenshots`: renders shared views through AppKit `NSHostingView` bitmap
   caching at 2×, including AppKit-backed controls that `ImageRenderer` omits, in
@@ -456,6 +473,25 @@ Glass, attached under the item, nothing clipped. uv was Homebrew's 0.13.6, not
 CI's 0.12.9. Not run: `bundle-proof.sh`, `BundledBackendTests`, the other
 states and a microphone dictation. CI still builds with Xcode 16.4 only.
 
+Models and settings from the UI, 2026-11-21, on a hosted macOS 27.2 arm64
+virtual machine (Amp Mac satellite, not a physical Mac or CI) with Xcode 27.2,
+uv 0.12.9: `swift test` passed (55 run, 3 skipped). A `bundle.sh build` bundle,
+moved to `/tmp/demo`, started with no settings file and no model data and was
+driven only through its popover (System Events clicks; speech from `say` into
+BlackHole as the default input), recorded on screen: Record showed Settings
+need attention; Choose a model listed all three manifests; Download on Qwen3-ASR
+0.6B showed the consent page and nothing existed on disk until Download; the
+install finished and wrote a 0600 settings file choosing it; a dictation
+transcribed; Settings saved Vim and two vocabulary terms and the next dictation
+opened in Vim with no terminal step (the idle server had been stopped);
+Whisper large-v3 turbo downloaded, converted, became in use through Use and
+transcribed. Downloads ran at several hundred MB/s, so a live Cancel and a
+failed download were not captured; Cancel, failure and Retry are covered by
+`PreferencesTests` and the rendered states only. Synthesized keystrokes did
+not reach the popover's vocabulary editor on that VM; the text was set through
+its accessibility value. Not run: `bundle-proof.sh`, Xcode 16.4, a physical
+microphone.
+
 ## GitHub-hosted Mac evidence, in order
 
 1. Obtain explicit owner permission to commit/push and open a PR. No publishing
@@ -474,7 +510,7 @@ states and a microphone dictation. CI still builds with Xcode 16.4 only.
    inspect new artifacts before accepting the broader evidence set.
 4. After the proof render/upload succeeds, the same normal CI job runs
    `swift run --skip-build HagigScreenshots states state-captures` and uploads the
-   bounded 36-image gallery separately. Inspect the Ready proof first, then every
+   bounded 46-image gallery separately. Inspect the Ready proof first, then every
    gallery image before merging. This needs no manual dispatch. The workflow
    collects the gallery automatically; human inspection remains a merge gate.
 5. Optional reruns remain manual in `macos-screenshots.yml`. GitHub requires
@@ -484,9 +520,9 @@ states and a microphone dictation. CI still builds with Xcode 16.4 only.
    implementation. Obtain explicit dispatch permission. `scenario=proof` remains
    available for a small rerun; it is not the bootstrap path.
    Manual dispatch is not authorized for this initial PR verification.
-6. Expect 36 gallery PNGs: ready, awaiting admission, recording, near limit,
-   transcribing, fallback, copied, cancelled, no speech, and nine issue states,
-   each light/dark. Inspect every image. Copy/Dismiss must fit, fallback must show
+6. Expect 46 gallery PNGs: ready, awaiting admission, recording, near limit,
+   transcribing, fallback, copied, cancelled, no speech, nine issue states and
+   five setup pages, each light/dark. Inspect every image. Copy/Dismiss must fit, fallback must show
    only the synthetic fixture, recording must have no transcript, and errors must
    provide a recovery path. Share the final inspected images in the report.
 

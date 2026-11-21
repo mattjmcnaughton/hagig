@@ -22,7 +22,7 @@ public enum DemoIssue: String, CaseIterable {
     public var recovery: String {
         switch self {
         case .modelMissing:
-            return "Hagig never downloads a model on its own. Install or repair the configured model yourself, then record again."
+            return "Hagig never downloads a model on its own. Download the chosen model from Speech models, then record again."
         case .microphonePermission:
             return "In System Settings, open Privacy & Security, then Microphone, and allow Hagig. Then record again."
         case .serverUnavailable:
@@ -32,7 +32,7 @@ public enum DemoIssue: String, CaseIterable {
         case .deadlineExceeded: return "Nothing was delivered. Record again to retry."
         case .microphoneUnavailable: return "The recording was discarded. Check the input device, then record again."
         case .configuration:
-            return "The service did not start because its settings file is missing or invalid. Fix the file, then record again. Hagig never substitutes settings."
+            return "The service did not start because no model is chosen yet or the settings are invalid. Choose a model, or fix the settings, then record again. Hagig never substitutes settings."
         case .isolationUnavailable:
             return "The inference worker could not start inside its network sandbox, so it was not started. Hagig never falls back to an unsandboxed worker by itself."
         }

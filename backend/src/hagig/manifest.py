@@ -148,10 +148,20 @@ def parse_manifest(data: bytes) -> Manifest:
     return manifest
 
 
+# Display names for the registry (`hagig model list`). Kept here, not in the
+# manifests, because a manifest's bytes are its identity in every install.
+MODEL_NAMES: dict[str, str] = {
+    "qwen3-asr-0.6b": "Qwen3-ASR 0.6B",
+    "qwen3-asr-1.7b": "Qwen3-ASR 1.7B",
+    "whisper-large-v3-turbo": "Whisper large-v3 turbo",
+}
+MODEL_IDS: tuple[str, ...] = get_args(ModelId)
+
+
 @cache
 def load_manifest(model_id: str) -> Manifest:
     """The tracked manifest for a configured model alias."""
-    if model_id not in get_args(ModelId):
+    if model_id not in MODEL_IDS:
         raise ManifestError("unknown_model")
     data = None
     with contextlib.suppress(OSError):

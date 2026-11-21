@@ -91,35 +91,7 @@ bash clients/macos/bundle.sh build
 This writes `clients/macos/.build/Hagig.app`. The build downloads the locked
 Python packages; that is its only network step.
 
-### 3. Choose and install a model
-
-Create the settings file with the model you want:
-
-```sh
-mkdir -p ~/.config/hagig
-printf '[model]\nid = "qwen3-asr-0.6b"\n' > ~/.config/hagig/config.toml
-```
-
-| Model ID | Engine | Download | Notes |
-| --- | --- | --- | --- |
-| `qwen3-asr-0.6b` | Qwen3-ASR (PyTorch) | ~1.6 GB | Good starting point |
-| `qwen3-asr-1.7b` | Qwen3-ASR (PyTorch) | ~4.1 GB | Larger Qwen model |
-| `whisper-large-v3-turbo` | Whisper (MLX) | ~1.6 GB | Runs on the GPU through MLX; converted on install |
-
-Then install it with the app's own command-line helper. This is the one explicit
-model download; Hagig never downloads a model on its own.
-
-```sh
-HAGIG="$PWD/clients/macos/.build/Hagig.app/Contents/Helpers/hagig"
-"$HAGIG" model install qwen3-asr-0.6b
-```
-
-The later commands use this `$HAGIG` variable too.
-
-Models are pinned to exact revisions, checked against recorded SHA-256 hashes and
-stored in `~/.local/share/hagig/models/`.
-
-### 4. Launch
+### 3. Launch
 
 ```sh
 open clients/macos/.build/Hagig.app
@@ -128,6 +100,28 @@ open clients/macos/.build/Hagig.app
 A microphone appears in the menu bar. macOS asks for microphone access the first
 time you record. Because the app is signed ad hoc, macOS asks again after each
 rebuild.
+
+### 4. Download a model from the app
+
+Click the menu-bar microphone, then the download button (or **Record**, which
+offers **Choose a model…** when none is set up). **Speech models** lists every
+model Hagig supports:
+
+| Model | Engine | Download | Notes |
+| --- | --- | --- | --- |
+| Qwen3-ASR 0.6B | Qwen3-ASR (PyTorch) | ~1.6 GB | Good starting point |
+| Qwen3-ASR 1.7B | Qwen3-ASR (PyTorch) | ~4.1 GB | Larger Qwen model |
+| Whisper large-v3 turbo | Whisper (MLX) | ~1.6 GB | Runs on the GPU through MLX; converted on install |
+
+Choose **Download…** on one. Hagig shows what it will fetch, from where and how
+much, and downloads only after you choose **Download**. That is the one network
+step; Hagig never downloads a model on its own. The row shows progress, and
+**Cancel** stops it without changing anything already installed. A failed
+download says why and offers **Retry**.
+
+The first model you download becomes the one in use, so no settings file has to
+be written by hand. Models are pinned to exact revisions, checked against
+recorded SHA-256 hashes and stored in `~/.local/share/hagig/models/`.
 
 ## Usage
 
@@ -143,8 +137,15 @@ recording or transcribing. Right-click it to quit.
 
 ## Configuration
 
-Settings live in `~/.config/hagig/config.toml` (or `$XDG_CONFIG_HOME/hagig/config.toml`).
-Only `[model] id` is required:
+Open **Settings** (the gear in the popover) to choose the model in use, the
+review editor (Standard or Vim), vocabulary terms that bias transcription toward
+names and jargon, and whether the transcription worker's network is blocked by
+macOS (on by default). **Save** validates them, writes them, and applies them to
+the next recording. Switching models is the **Use** button in **Speech models**.
+
+They live in `~/.config/hagig/config.toml` (or `$XDG_CONFIG_HOME/hagig/config.toml`),
+which you can also edit by hand. Saving from the app rewrites the file without its
+comments. Only `[model] id` is required:
 
 ```toml
 [model]
@@ -161,14 +162,16 @@ network_isolation = "required"   # default; "disabled" explicitly opts out
 ```
 
 Hagig runs a small per-user transcription service that stays warm after the app
-quits. Settings are read when it starts, so after editing them (or installing a
-different model) restart it:
+quits. It reads settings when it starts. Saving in the app restarts it when it is
+idle; after editing the file by hand, restart it yourself:
 
 ```sh
+HAGIG="$PWD/clients/macos/.build/Hagig.app/Contents/Helpers/hagig"
 "$HAGIG" stop
 ```
 
-The app starts it again on the next recording.
+The app starts it again on the next recording. The same helper offers
+`model list`, `model install <id>` and `settings show|set` for scripting.
 
 ### Transcribing audio files
 
@@ -226,7 +229,7 @@ Replace `$HOME/src/hagig` with where you cloned the repository.
 ## Privacy
 
 Normal dictation works offline, with no telemetry, uploads or automatic
-downloads. Building the app and `hagig model install` are the only steps that use
+downloads. Building the app and a model download you confirm are the only steps that use
 the network. Hagig does not save recordings or transcripts, and keeps your
 vocabulary out of logs and error messages. Inference runs in a separate process
 that the macOS sandbox blocks from the network unless you explicitly disable

@@ -585,3 +585,26 @@ def test_conversion_failures_keep_the_existing_install(
 )
 def test_only_official_https_origins_are_allowed(url, allowed):
     assert official_origin(httpx.URL(url)) is allowed
+
+
+def test_received_reports_each_download_up_to_its_size(server, run, models):
+    manifest = serve(server)
+    events: list[tuple[str, str | None]] = []
+    counts: dict[str, list[int]] = {}
+
+    def progress(event, name):
+        events.append((event, name))
+        if event == "download":
+            counts[name] = []
+
+    def received(count):
+        name = events[-1][1]
+        assert name is not None
+        counts[name].append(count)
+
+    assert run(manifest, progress=progress, received=received) == "installed"
+    assert set(counts) == set(FILES)
+    for name, seen in counts.items():
+        # Cumulative within one file, ending exactly at the manifest size.
+        assert seen == sorted(seen) and seen[0] > 0
+        assert seen[-1] == len(FILES[name])

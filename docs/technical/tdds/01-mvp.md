@@ -489,7 +489,10 @@ Alpha command surface (typer):
 ```text
 hagig start
 hagig transcribe <audio.wav>
-hagig model install <manifest-id>
+hagig model install <manifest-id> [--json]
+hagig model list [--json]
+hagig settings show
+hagig settings set [--replace]   # JSON object on stdin
 hagig status
 hagig stop
 ```
