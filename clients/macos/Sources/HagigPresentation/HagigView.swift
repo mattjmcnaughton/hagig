@@ -57,6 +57,10 @@ public struct HagigView: View {
     private let cancel: () -> Void
     private let preferences: Preferences?
     private let loginItem: LoginItem?
+    private let revealLogs: ((String) -> Void)?
+    private let log: AppLog
+    /// Review's Copy all and Dismiss chords; the shell sets the configured ones.
+    private var reviewShortcuts = ReviewShortcuts.defaults
     /// Set while the surface is in the shortcut panel, which is not key, so
     /// Return and Escape reach the user's app; the hint names these instead.
     private var panelShortcuts: PanelShortcuts?
@@ -68,9 +72,11 @@ public struct HagigView: View {
 
     /// `clock` fixes the time for deterministic renders; nil follows the system
     /// clock. `setup` names the paired helper in setup instructions. `loginItem`
-    /// shows Open at login in Settings; nil hides it.
+    /// shows Open at login in Settings; nil hides it. `revealLogs` shows the
+    /// logs folder in Finder (nil hides the button); `log` records review events.
     public init(presentation: Presentation, animateActivity: Bool = true, clock: Date? = nil,
                 setup: SetupGuide = SetupGuide(), preferences: Preferences? = nil, loginItem: LoginItem? = nil,
+                revealLogs: ((String) -> Void)? = nil, log: AppLog = .inert,
                 record: @escaping () -> Void = {}, stop: @escaping () -> Void = {},
                 cancel: (() -> Void)? = nil, copy: @escaping (String) -> Bool) {
         self.presentation = presentation
@@ -79,6 +85,8 @@ public struct HagigView: View {
         self.setup = setup
         self.preferences = preferences
         self.loginItem = loginItem
+        self.revealLogs = revealLogs
+        self.log = log
         self.record = record
         self.stop = stop
         self.cancel = cancel ?? { presentation.cancel() }
@@ -90,6 +98,13 @@ public struct HagigView: View {
     public func inPanel(_ shortcuts: PanelShortcuts?) -> HagigView {
         var view = self
         view.panelShortcuts = shortcuts
+        return view
+    }
+
+    /// The same view, with review's Copy all and Dismiss on these chords.
+    public func reviewing(_ shortcuts: ReviewShortcuts) -> HagigView {
+        var view = self
+        view.reviewShortcuts = shortcuts
         return view
     }
 
@@ -133,7 +148,7 @@ public struct HagigView: View {
                 if let preferences, let page, idle {
                     switch page {
                     case .models: ModelLibraryView(library: preferences)
-                    case .settings: SettingsView(preferences: preferences, loginItem: loginItem)
+                    case .settings: SettingsView(preferences: preferences, loginItem: loginItem, revealLogs: revealLogs)
                     }
                 } else {
                     dictation
@@ -248,16 +263,22 @@ public struct HagigView: View {
                     .accessibilityIdentifier("review-editor-mode")
             }
             HStack(spacing: 8) {
-                action("Dismiss", width: 92) { presentation.reset() }
-                    .keyboardShortcut("d", modifiers: [.command, .shift])
-                    .help("Discard this transcript (Command-Shift-D)")
+                action("Dismiss", width: 92) {
+                    log.record(.reviewDismissed)
+                    presentation.reset()
+                }
+                .keyboardShortcut(reviewShortcuts.dismiss.keyEquivalent, modifiers: reviewShortcuts.dismiss.eventModifiers)
+                .help("Discard this transcript (\(reviewShortcuts.dismiss.display))")
                 action(presentation.copied ? "Copied" : "Copy all",
                        systemImage: presentation.copied ? "checkmark" : "doc.on.doc", prominent: true) {
                     presentation.copy(using: copy)
+                    // Success is logged by the shell for every full copy (button,
+                    // chord, or Select All then Copy); only failure is local to here.
+                    if !presentation.copied { log.record(.reviewCopyFailed) }
                 }
-                .keyboardShortcut("c", modifiers: [.command, .shift])
+                .keyboardShortcut(reviewShortcuts.copy.keyEquivalent, modifiers: reviewShortcuts.copy.eventModifiers)
                 .disabled(presentation.transcript?.isEmpty != false)
-                .help("Copy entire edited transcript (Command-Shift-C)")
+                .help("Copy entire edited transcript (\(reviewShortcuts.copy.display))")
             }
         case .cancelled:
             description("That recording was discarded. Nothing will be delivered from it.")

@@ -49,7 +49,21 @@ open:
 stop:
     "{{app}}/Contents/Helpers/hagig" stop
 
-# Remove Hagig: turn off its login item, then delete the app, settings, models, runtime files and microphone access
+# Open the folder holding app.log and server.log (content-free) in Finder
+logs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    state="${XDG_STATE_HOME:-}"
+    # Relative XDG values are ignored, as the backend does.
+    case "$state" in /*) ;; *) state="$HOME/.local/state" ;; esac
+    folder="$state/hagig/logs"
+    if [ ! -d "$folder" ]; then
+        echo "No logs yet at $folder; they appear once Hagig has run." >&2
+        exit 1
+    fi
+    open "$folder"
+
+# Remove Hagig: turn off its login item, then delete the app, settings, models, logs, runtime files and microphone access
 uninstall:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -69,7 +83,7 @@ uninstall:
         if [ -e "$candidate" ]; then echo "  $candidate"; fi
     done
     echo "  its login item and microphone access"
-    echo "  settings, models and runtime files:"
+    echo "  settings, models, logs and runtime files:"
     "$helper" uninstall < /dev/null 2>/dev/null | sed -n 's/^  /    /p' || true
     read -r -p "Continue? [y/N] " answer
     if [ "$answer" != "y" ] && [ "$answer" != "Y" ]; then
@@ -85,7 +99,7 @@ uninstall:
     done
     pkill -x HagigShell || true
     while pgrep -x HagigShell > /dev/null; do sleep 0.2; done
-    # Stops the service, then removes settings, models and runtime files.
+    # Stops the service, then removes settings, models, logs and runtime files.
     "$helper" uninstall --yes > /dev/null
     # Before deleting the app: tccutil resolves the bundle ID through it.
     if ! tccutil reset Microphone {{bundle_id}} > /dev/null 2>&1; then

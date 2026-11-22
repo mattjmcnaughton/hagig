@@ -67,7 +67,8 @@ The app bundle (#48), which syncs both engine extras, is described in
   `model.id missing`. Every other field defaults: `editor.mode = "standard"`,
   `inference.network_isolation = "required"`, `vocabulary.terms = []`,
   `shortcuts.record = "ctrl+option+space"`, `shortcuts.cancel =
-  "ctrl+option+escape"`.
+  "ctrl+option+escape"`, `shortcuts.copy = "cmd+shift+c"`,
+  `shortcuts.dismiss = "cmd+shift+d"`.
 - #45's CLI must turn `model.id missing` into an actionable stderr line that
   says to set `[model] id` in the config file. It may name the config path but
   never prints file content.
@@ -89,6 +90,8 @@ The app bundle (#48), which syncs both engine extras, is described in
   [shortcuts]
   record = "ctrl+option+space"   # optional; the macOS app's global shortcuts
   cancel = "ctrl+option+escape"  # optional
+  copy = "cmd+shift+c"           # optional; review's Copy all, in review only
+  dismiss = "cmd+shift+d"        # optional; review's Dismiss, in review only
   ```
 - Model aliases: `qwen3-asr-0.6b`, `qwen3-asr-1.7b`, `whisper-large-v3-turbo`
   (the #47 manifest IDs). Whisper is rejected unless the platform is Darwin on
@@ -111,10 +114,13 @@ The app bundle (#48), which syncs both engine extras, is described in
   `shift`) in any order and exactly one key from `SHORTCUT_KEYS` (`a`–`z`,
   `0`–`9`, `f1`–`f12`, `space`, `return`, `tab`, `escape`, `minus`, `equal`,
   `comma`, `period`, `slash`, `semicolon`), named by US-layout physical position
-  (macOS virtual key codes). Anything else is `invalid_value` on
-  `shortcuts.record` or `shortcuts.cancel`; `cancel` equal to `record` (same
-  modifier set and key, including a changed `record` against the default
-  `cancel`) is `invalid_value` on `shortcuts.cancel`. The server ignores them;
+  (macOS virtual key codes). Anything else is `invalid_value` on that field.
+  All four must be pairwise distinct (same modifier set and key): a duplicate
+  is `invalid_value` on the later field in the order record, cancel, copy,
+  dismiss, including an earlier field equal to a later default. The model
+  attribute for `copy` is `copy_all` (alias `copy`, since `copy` shadows
+  `BaseModel.copy`); `config._field` maps it back so issues always say
+  `shortcuts.copy`. The server ignores them;
   the Swift `Shortcut` type mirrors this grammar, so change both together.
 - Open engine limit: Whisper's prompt window (about 224 tokens) is smaller than
   these caps allow. #49 owns how the engine handles it; validation here does not.
@@ -123,7 +129,8 @@ The app bundle (#48), which syncs both engine extras, is described in
 only compute):
 
 - Config `$XDG_CONFIG_HOME/hagig/config.toml`, models
-  `$XDG_DATA_HOME/hagig/models`, defaulting under `$HOME`. Relative XDG values
+  `$XDG_DATA_HOME/hagig/models`, logs `$XDG_STATE_HOME/hagig/logs` (owner
+  decision 2026-11-22), defaulting under `$HOME`. Relative XDG values
   are ignored, per the XDG spec; a missing or relative `HOME` is `home_unavailable`.
 - Runtime: `$XDG_RUNTIME_DIR/hagig` when that base is an owner-only (0700)
   directory; otherwise macOS uses `hagig` inside `confstr(_CS_DARWIN_USER_TEMP_DIR)`
@@ -141,6 +148,11 @@ only compute):
   a missing directory, are `lock_unavailable`.
   `release()` closes the descriptor; the file is never unlinked, so every
   contender locks the same inode. Stale-socket handling belongs to #45.
+- `ensure_logs_dir(env)` creates the XDG state base, then `hagig/` and `logs/`
+  0700. An existing `hagig/` or `logs/` that is a symlink, not a directory or
+  not ours, a `hagig/` group/other-writable or a `logs/` with any group/other
+  bit is `logs_dir_unsafe`, left untouched; other failures are
+  `logs_dir_unavailable`.
 
 **WAV** (`read_wav(path)` / `decode_wav(data)`):
 
@@ -160,11 +172,41 @@ only compute):
   not finite or exceed full scale). The file is opened read-only and at most
   `MAX_FILE_BYTES + 1` bytes are read.
 
-**Logging**: `configure_logging()` writes JSON to stderr and keeps only
-allowlisted field names (`logging.CONTENT_FREE_FIELDS`) with scalar values;
-other keys, exceptions and structured values are dropped. It does not inspect
-scalar values, so event names and codes must be fixed strings. Call it once at
-the process entry point; it only covers structlog, not stdlib loggers.
+**Logging**: `configure_logging(log_file=None)` writes JSON to stderr, and to
+`log_file` when given, and keeps only allowlisted field names
+(`logging.CONTENT_FREE_FIELDS`: event, level, timestamp, code, stage, field,
+mode, version, count, duration_ms, exit_status) with scalar values; other keys,
+exceptions and structured values are dropped. That filter is the single gate
+for both sinks. It does not inspect scalar values, so event names and codes
+must be fixed strings. Call it once at the process entry point; it only covers
+structlog, not stdlib loggers.
+
+- `LogFile.open(path)` opens `O_APPEND | O_NOFOLLOW | O_NONBLOCK` and requires a
+  regular 0600 file we own (else None, untouched). Before a write that would
+  pass `MAX_LOG_BYTES` (1 MiB) it renames the file to `<name>.1` (only if the
+  path is still its inode) and reopens. Any write or reopen failure closes it
+  silently; stderr keeps logging.
+- The server opens `<logs_dir>/server.log` (`paths.ensure_logs_dir`) before
+  anything else. On `logs_dir_unsafe`, `logs_dir_unavailable` or a refused file
+  (`log_file_refused`) it logs `log_file_unavailable` with that code to stderr
+  only and runs on.
+- Server events: `server_started` (mode), `server_already_running`,
+  `server_start_failed` (code), `server_stopped`, `log_file_unavailable`
+  (code). Requests (`services/requests.py`): `request_admitted`;
+  `request_rejected` (code `busy`, `server_stopping` or `request_not_found`;
+  stage `admission` or `upload`); `request_completed` (stage `speech` or
+  `no_speech`, duration_ms); `request_cancelled` (code `cancelled`,
+  `server_stopping`, `disconnected` or `interrupted`) and `request_failed`
+  (any other REST code), each with stage `reserved`, `upload_start`, `upload`
+  or `compute` and duration_ms. Durations run from admission. Workers
+  (`services/supervisor.py`): `worker_launched` (mode, version = generation),
+  `worker_ready` (version, duration_ms of launch plus `load`, the model load
+  time), `worker_retired` (stage = reason code, version), `worker_exited`
+  (version, exit_status; negative is the signal).
+- `_reap` skips aborting an already-closed stdin pipe: CPython's closed pipe
+  transport raises there, which ended the reap early (found while adding
+  `worker_exited`: a crashed worker was still reaped, by asyncio's child
+  watcher, but nothing after the abort ran).
 
 **Server** (`hagig.server.run(env, *, launcher, deadlines, grace_seconds,
 before_exit)`):
@@ -351,11 +393,12 @@ install|list`, `settings show|set`):
 - `settings show`: one JSON object, `path`, `exists`, `issue` (when the file
   exists and does not load) and `settings` (every field, defaults filled:
   `model_id`, `editor_mode`, `network_isolation`, `vocabulary`,
-  `record_shortcut`, `cancel_shortcut`). `set` writes the shortcuts as a
-  `[shortcuts]` table.
+  `record_shortcut`, `cancel_shortcut`, `copy_shortcut`, `dismiss_shortcut`)
+  and `logs_dir` (computed, not created; the app logs there). `set` writes the
+  shortcuts as a `[shortcuts]` table.
 - `settings set [--replace]`: a JSON object of any of `model_id`,
   `editor_mode`, `network_isolation`, `vocabulary`, `record_shortcut`,
-  `cancel_shortcut` on stdin (strings only, else
+  `cancel_shortcut`, `copy_shortcut`, `dismiss_shortcut` on stdin (strings only, else
   `settings_input_invalid`, exit 2), merged over the current file, validated by
   the same `Config` the server loads (`config_invalid: <field> <code>`, exit 2),
   the model checked as installed (`model_missing`, `model_invalid`; nothing is
@@ -384,12 +427,13 @@ install|list`, `settings show|set`):
   from its 201 on and only the ID lets the CLI cancel at once. stderr carries
   stable codes only.
 - `uninstall [--yes]`: lists the settings directory (`config_file(env).parent`),
+  the state directory holding the logs (`logs_dir(env).parent`),
   the data directory (`models_dir(env).parent`) and the runtime directory
   (`paths.runtime_dir`, which computes without creating) and asks; declining
   or EOF is `cancelled` (exit 1) and changes nothing. Then it runs `stop`'s
   logic, holds `ServerLock` (`server_running` if another server took it) and,
   when the models directory is a real directory, its install lock
-  (`install_in_progress`), and `shutil.rmtree`s data, config, then runtime;
+  (`install_in_progress`), and `shutil.rmtree`s data, config, state, then runtime;
   a symlinked top level or any other filesystem error is `uninstall_failed`
   (an earlier directory may already be gone; rerunning is safe). It never
   deletes the app bundle it runs from: it prints that bundle's path (from

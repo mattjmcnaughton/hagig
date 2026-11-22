@@ -91,6 +91,8 @@ SHORTCUT_KEYS = frozenset(
 )
 DEFAULT_RECORD_SHORTCUT = "ctrl+option+space"
 DEFAULT_CANCEL_SHORTCUT = "ctrl+option+escape"
+DEFAULT_COPY_SHORTCUT = "cmd+shift+c"
+DEFAULT_DISMISS_SHORTCUT = "cmd+shift+d"
 
 
 def parse_shortcut(value: str) -> tuple[frozenset[str], str] | None:
@@ -153,18 +155,28 @@ Shortcut = Annotated[str, AfterValidator(_shortcut)]
 
 
 class ShortcutsConfig(BaseModel):
+    """`record` and `cancel` are global; `copy` (Copy all) and `dismiss` act
+    only while a transcript is in review. All four must differ."""
+
     model_config = _TABLE
     record: Shortcut = DEFAULT_RECORD_SHORTCUT
-    # Validated even as the default, so a `record` equal to it is refused.
+    # Later fields are validated even as defaults, so an earlier one equal to a
+    # default is refused there.
     cancel: Shortcut = Field(DEFAULT_CANCEL_SHORTCUT, validate_default=True)
+    # `copy` would shadow `BaseModel.copy`; the TOML key is still `copy`.
+    copy_all: Shortcut = Field(
+        DEFAULT_COPY_SHORTCUT, alias="copy", validate_default=True
+    )
+    dismiss: Shortcut = Field(DEFAULT_DISMISS_SHORTCUT, validate_default=True)
 
-    @field_validator("cancel")
+    @field_validator("cancel", "copy_all", "dismiss")
     @classmethod
     def _distinct(cls, value: str, info: ValidationInfo) -> str:
-        # The same chord cannot both start and cancel. An invalid `record` is
-        # absent here and already reported.
-        record = info.data.get("record")
-        if record is not None and parse_shortcut(record) == parse_shortcut(value):
+        # The same chord cannot do two things: compared with every earlier
+        # field (same modifier set and key). An invalid earlier one is absent
+        # from `info.data` and already reported.
+        chord = parse_shortcut(value)
+        if any(parse_shortcut(other) == chord for other in info.data.values()):
             raise _fail("invalid_value")
         return value
 
@@ -271,6 +283,13 @@ def validation_issues(error: ValidationError) -> tuple[ConfigIssue, ...]:
     return tuple(issues)
 
 
+# Pydantic names a failing default by its attribute, not its alias.
+_TOML_NAMES = {"copy_all": "copy"}
+
+
 def _field(loc: tuple[int | str, ...]) -> str:
-    parts = (f"[{part}]" if isinstance(part, int) else f".{part}" for part in loc)
+    parts = (
+        f"[{part}]" if isinstance(part, int) else f".{_TOML_NAMES.get(part, part)}"
+        for part in loc
+    )
     return "".join(parts).lstrip(".") or "<root>"

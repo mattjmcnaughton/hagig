@@ -145,8 +145,11 @@ final class PreferencesTests: XCTestCase {
         await settle { preferences.saved }
         let object = try? JSONSerialization.jsonObject(with: Data(helper.inputs[0].utf8)) as? [String: Any]
         XCTAssertEqual(object.map { Set($0.keys) }, ["model_id", "editor_mode", "network_isolation", "vocabulary",
-                                                     "record_shortcut", "cancel_shortcut"])
+                                                     "record_shortcut", "cancel_shortcut",
+                                                     "copy_shortcut", "dismiss_shortcut"])
         XCTAssertEqual(object?["record_shortcut"] as? String, "ctrl+option+space")
+        XCTAssertEqual(object?["copy_shortcut"] as? String, "cmd+shift+c")
+        XCTAssertEqual(object?["dismiss_shortcut"] as? String, "cmd+shift+d")
         XCTAssertEqual(object?["editor_mode"] as? String, "vim")
         XCTAssertEqual(object?["vocabulary"] as? [String], ["Hagig", "日本語"])
         XCTAssertFalse(helper.calls.contains { $0.contains("Hagig") }, "vocabulary never in arguments")
@@ -174,6 +177,38 @@ final class PreferencesTests: XCTestCase {
         await settle { preferences.settingsRevision > revision }
         XCTAssertEqual(preferences.settings?.recordShortcut, Shortcut.defaultRecord)
         XCTAssertEqual(preferences.settings?.cancelShortcut, Shortcut.defaultCancel)
+        XCTAssertEqual(preferences.settings?.copyShortcut, Shortcut.defaultCopy)
+        XCTAssertEqual(preferences.settings?.dismissShortcut, Shortcut.defaultDismiss)
+    }
+
+    func testSettingsShowDecodesReviewShortcutsAndTheLogsFolder() async {
+        let helper = ScriptedHelper()
+        XCTAssertNil(Preferences(run: helper.run).logsDir)
+        helper.shown = #"{"path":"/x/config.toml","exists":true,"issue":null,"settings":{"model_id":"qwen3-asr-0.6b","editor_mode":"standard","network_isolation":"required","vocabulary":[],"record_shortcut":"ctrl+option+space","cancel_shortcut":"ctrl+option+escape","copy_shortcut":"option+return","dismiss_shortcut":"ctrl+f5"},"logs_dir":"/x/state/hagig/logs"}"#
+        let preferences = Preferences(run: helper.run)
+        preferences.loadSettings()
+        await settle { preferences.settings != nil }
+        XCTAssertEqual(preferences.settings?.copyShortcut, "option+return")
+        XCTAssertEqual(preferences.settings?.dismissShortcut, "ctrl+f5")
+        XCTAssertEqual(preferences.logsDir, "/x/state/hagig/logs")
+        // A settings file that does not load still reports where logs go.
+        helper.shown = #"{"path":"/x/config.toml","exists":true,"issue":"config_syntax","settings":null,"logs_dir":"/y/logs"}"#
+        let revision = preferences.settingsRevision
+        preferences.loadSettings()
+        await settle { preferences.settingsRevision > revision }
+        XCTAssertNil(preferences.settings)
+        XCTAssertEqual(preferences.logsDir, "/y/logs")
+    }
+
+    func testSettingsWriteAllFourShortcutsAsFlatKeys() async throws {
+        let helper = ScriptedHelper()
+        let preferences = Preferences(run: helper.run)
+        preferences.save(StoredSettings(modelId: "qwen3-asr-0.6b", copyShortcut: "option+return", dismissShortcut: "ctrl+f5"))
+        await settle { !helper.inputs.isEmpty }
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(helper.inputs[0].utf8)) as? [String: Any])
+        XCTAssertEqual(sent["copy_shortcut"] as? String, "option+return")
+        XCTAssertEqual(sent["dismiss_shortcut"] as? String, "ctrl+f5")
+        XCTAssertEqual(sent["record_shortcut"] as? String, Shortcut.defaultRecord)
     }
 
     func testWithoutAHelperNothingRuns() {

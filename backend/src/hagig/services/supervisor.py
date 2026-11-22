@@ -6,7 +6,11 @@ a reply is accepted only when its type, generation and request ID are exactly th
 ones expected. Anything else, including a stray byte while idle, retires the
 worker: close its stdin, wait 1 s, SIGTERM its process group, wait 1 s, SIGKILL,
 and always reap. A successor is never launched before its predecessor is reaped.
-Rejected worker bytes are never logged, returned or echoed.
+Rejected worker bytes are never logged, returned or echoed, and the worker's
+stderr is discarded. The supervisor logs its lifecycle instead: worker_launched
+(mode, version = generation), worker_ready (version, duration_ms of launch and
+load), worker_retired (stage = the reason code) and worker_exited (version,
+exit_status).
 """
 
 import asyncio
@@ -187,8 +191,12 @@ class Supervisor:
         worker = _Worker(process, process.stdin, process.stdout, self._generation)
         self._worker = worker
         log.info("worker_launched", mode=settings.mode, version=worker.generation)
+        launched = asyncio.get_running_loop().time()
         with self._retire_on_failure(worker):
             await self._handshake(worker, model_dir)
+        # Launch, ready line and `load`: the model's whole load time.
+        loaded_ms = round((asyncio.get_running_loop().time() - launched) * 1000)
+        log.info("worker_ready", version=worker.generation, duration_ms=loaded_ms)
         return worker
 
     def _launch_failure(self) -> str:
@@ -308,7 +316,10 @@ class Supervisor:
     async def _reap(self, worker: _Worker) -> None:
         process = worker.process
         # Exit request: close stdin, dropping any audio still buffered for it.
-        worker.stdin.transport.abort()
+        # A pipe already closed (the worker exited) must not be aborted again:
+        # CPython's closed pipe transport raises, which would end the reap here.
+        if not worker.stdin.transport.is_closing():
+            worker.stdin.transport.abort()
         grace = self._settings.grace_seconds
         for sig in (signal.SIGTERM, signal.SIGKILL):
             if await _exited(process, grace):
@@ -322,6 +333,9 @@ class Supervisor:
         # The process is gone, so its stdout ends after at most a pipe's worth.
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(_discard(worker.stdout), grace)
+        log.info(
+            "worker_exited", version=worker.generation, exit_status=process.returncode
+        )
 
 
 def _output_pending(stdout: asyncio.StreamReader) -> bool:

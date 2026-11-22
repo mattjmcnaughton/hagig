@@ -18,10 +18,12 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
     private var microphonePromptExpected = false
     private let synthetic = CommandLine.arguments.contains("--synthetic-demo")
     private let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/hagig")
-    private lazy var dictation = DictationController(presentation: presentation, helper: helper)
+    /// Content-free `app.log`, in the folder the helper reports; inert in the demo.
+    private lazy var appLog: AppLog = synthetic ? .inert : AppLog()
+    private lazy var dictation = DictationController(presentation: presentation, helper: helper, log: appLog)
     /// Models and settings through the paired helper; nil-run without one.
     private lazy var preferences = Preferences(run: synthetic || !FileManager.default.isExecutableFile(atPath: helper.path)
-        ? nil : Preferences.helper(helper))
+        ? nil : Preferences.helper(helper), log: appLog)
     private var pageObserver: AnyCancellable?
     /// The one hosted surface. It lives in the popover, or in the shortcut
     /// panel while a shortcut-started request is shown there; never both.
@@ -41,6 +43,11 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
     private var settingsObserver: AnyCancellable?
     private var copyObserver: AnyCancellable?
     private var sizeObserver: AnyCancellable?
+    private var logsObserver: AnyCancellable?
+    /// `app_launched` is written once the logs folder is known.
+    private var launchLogged = false
+    /// The last registration logged, so rereading unchanged settings logs nothing.
+    private var loggedRegistration: [String]?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -49,13 +56,18 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePopover)
         popover.behavior = .transient
+        var revealLogs: ((String) -> Void)?
+        if !synthetic { revealLogs = { path in Self.revealInFinder(path) } }
+        let login: LoginItem = synthetic ? LoginItem.inert : loginItem
         let surface = NSHostingController(rootView:
             HagigView(presentation: presentation,
                       // Setup instructions name the paired helper only when it exists.
                       setup: SetupGuide(helperPath: FileManager.default.isExecutableFile(atPath: helper.path)
                           ? helper.path : nil),
                       preferences: preferences,
-                      loginItem: synthetic ? LoginItem.inert : Self.loginItem,
+                      loginItem: login,
+                      revealLogs: revealLogs,
+                      log: appLog,
                       record: { [weak self] in
                           guard let self else { return }
                           if synthetic {
@@ -208,19 +220,29 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
         LocalClipboard().write(text)
     }
 
+    /// The logs folder, selected in Finder. A folder not created yet shows nothing.
+    private static func revealInFinder(_ path: String) {
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path, isDirectory: true)])
+    }
+
     /// Open at login through ServiceManagement, applied at once from Settings.
-    private static var loginItem: LoginItem {
-        LoginItem(status: {
+    private var loginItem: LoginItem {
+        let log = appLog
+        return LoginItem(status: {
             switch SMAppService.mainApp.status {
             case .enabled: return .enabled
             case .requiresApproval: return .requiresApproval
             default: return .disabled
             }
         }, set: { on in
+            let mode = on ? "enabled" : "disabled"
             do {
                 if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+                log.record(.loginItemChanged, AppLogFields(mode: mode))
                 return true
             } catch {
+                // The mode that could not be set; never the error's text.
+                log.record(.loginItemFailed, AppLogFields(mode: mode))
                 return false
             }
         }, openSettings: { SMAppService.openSystemSettingsLoginItems() })
@@ -249,6 +271,17 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
         backdrop.layer?.masksToBounds = true
         panel.contentView = backdrop
 
+        // The helper reports the logs folder with the settings; nothing is
+        // written before it does.
+        logsObserver = preferences.$logsDir.compactMap { $0 }.receive(on: DispatchQueue.main)
+            .sink { [weak self] path in
+                guard let self else { return }
+                appLog.use(directory: URL(fileURLWithPath: path, isDirectory: true))
+                if !launchLogged {
+                    launchLogged = true
+                    appLog.record(.appLaunched)
+                }
+            }
         shortcuts = GlobalShortcuts { [weak self] name, pressed in self?.shortcut(name, pressed: pressed) }
         // Defaults until the settings file is read; they stay if it cannot be.
         applyShortcuts(nil)
@@ -258,7 +291,10 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
                 applyShortcuts(preferences.settings)
             }
         copyObserver = presentation.$copied.receive(on: DispatchQueue.main).sink { [weak self] copied in
-            if copied { self?.copiedInPanel() }
+            guard let self, copied else { return }
+            // Every full-transcript copy: Copy all, its chord, or Select All then Copy.
+            appLog.record(.reviewCopied)
+            copiedInPanel()
         }
         sizeObserver = surface.publisher(for: \.preferredContentSize).receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.fitPanel(placing: false) }
@@ -276,9 +312,25 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
         let failed = shortcuts.register(record: record, cancel: cancel)
         registered = PanelShortcuts(record: record.display, cancel: cancel.display)
         if panelShown { surface.rootView = surface.rootView.inPanel(registered) }
+        // Review's Copy all and Dismiss: the same view in the popover and panel.
+        surface.rootView = surface.rootView.reviewing(ReviewShortcuts(settings))
+        logRegistration(record: record, cancel: cancel, failed: failed)
         preferences.report(shortcutIssue: failed.isEmpty ? nil
             : failed.map(\.display).joined(separator: " and ")
                 + (failed.count == 1 ? " is" : " are") + " in use by another app")
+    }
+
+    /// Which shortcut failed, never its chord or the OS status.
+    private func logRegistration(record: Shortcut, cancel: Shortcut, failed: [Shortcut]) {
+        // The launch-time default registration runs before the logs folder is
+        // known; the one after the settings read (which follows it) is logged.
+        guard launchLogged else { return }
+        let which = failed.map { $0 == record ? "record" : "cancel" }
+        let key = [record.display, cancel.display] + which
+        guard key != loggedRegistration else { return }
+        loggedRegistration = key
+        for stage in which { appLog.record(.shortcutRegistrationFailed, AppLogFields(stage: stage)) }
+        appLog.record(.shortcutsRegistered, AppLogFields(count: 2 - which.count))
     }
 
     private func shortcut(_ name: ShortcutName, pressed: Bool) {
@@ -312,7 +364,7 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
         microphonePromptExpected = false
         preferences.close()
         showPanel()
-        dictation.record()
+        dictation.record(source: .shortcut)
     }
 
     private func showPanel() {
@@ -330,6 +382,7 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
             panelShown = true
             surface.rootView = surface.rootView.inPanel(registered)
             fitPanel(placing: true)
+            appLog.record(.panelShown)
         }
         panel.orderFrontRegardless()
     }
@@ -369,6 +422,7 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
         guard panelShown else { return }
         let wasKey = panel.isKeyWindow
         panelShown = false
+        appLog.record(.panelHidden)
         hideGeneration += 1
         panel.orderOut(nil)
         surface.view.removeFromSuperview()
@@ -418,6 +472,8 @@ final class ShellDelegate: NSObject, NSApplicationDelegate {
         if !synthetic { dictation.cancel() }
         // An install the user started stops with the app; its earlier model stays.
         preferences.cancelDownload()
+        appLog.record(.appTerminated)
+        appLog.flush()
     }
 }
 

@@ -63,12 +63,14 @@ class Home:
             "HOME": str(root / "home"),
             "XDG_CONFIG_HOME": str(root / "config"),
             "XDG_DATA_HOME": str(root / "data"),
+            "XDG_STATE_HOME": str(root / "state"),
             "XDG_RUNTIME_DIR": str(runtime_base),
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         }
         (root / "home").mkdir()
         self.config_path = root / "config" / "hagig" / "config.toml"
         self.models = root / "data" / "hagig" / "models"
+        self.logs = root / "state" / "hagig" / "logs"
         self.control = root / "control"
         self.control.mkdir()
         # The server reads these synthetic manifests instead of the tracked ones.
@@ -138,6 +140,11 @@ class Home:
 
     def server_logs(self):
         return b"".join(p.read_bytes() for p in sorted(self.root.glob("server-*.log")))
+
+    def log_file(self):
+        """The server's persistent log (`server.log`) as records."""
+        text = (self.logs / "server.log").read_text()
+        return [json.loads(line) for line in text.splitlines()]
 
     def ready(self):
         try:

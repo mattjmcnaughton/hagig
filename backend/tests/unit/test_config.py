@@ -59,6 +59,8 @@ def test_other_fields_default_when_only_model_id_is_set(tmp_path):
     assert config.vocabulary.terms == []
     assert config.shortcuts.record == "ctrl+option+space"
     assert config.shortcuts.cancel == "ctrl+option+escape"
+    assert config.shortcuts.copy_all == "cmd+shift+c"
+    assert config.shortcuts.dismiss == "cmd+shift+d"
     empty_tables = "[editor]\n[inference]\n[vocabulary]\n[shortcuts]\n"
     assert load(tmp_path, empty_tables + MODEL) == config
 
@@ -184,8 +186,21 @@ def test_several_issues_are_reported_together(tmp_path):
     ],
 )
 def test_valid_shortcuts(tmp_path, shortcut):
-    text = f'[shortcuts]\nrecord = "{shortcut}"\ncancel = "ctrl+option+tab"\n'
+    others = (
+        'cancel = "ctrl+option+tab"\ncopy = "ctrl+option+c"\ndismiss = "ctrl+option+d"'
+    )
+    text = f'[shortcuts]\nrecord = "{shortcut}"\n{others}\n'
     assert load(tmp_path, text).shortcuts.record == shortcut
+
+
+def test_copy_and_dismiss_shortcuts_load_from_their_toml_keys(tmp_path):
+    text = '[shortcuts]\ncopy = "option+return"\ndismiss = "ctrl+f5"\n'
+    shortcuts = load(tmp_path, text).shortcuts
+    assert (shortcuts.copy_all, shortcuts.dismiss) == ("option+return", "ctrl+f5")
+    # The Python attribute name is not a key.
+    assert issues(tmp_path, '[shortcuts]\ncopy_all = "ctrl+c"\n') == [
+        ("shortcuts", "unknown_key")
+    ]
 
 
 @pytest.mark.parametrize(
@@ -216,8 +231,9 @@ def test_valid_shortcuts(tmp_path, shortcut):
 def test_invalid_shortcuts_name_the_field(tmp_path, shortcut):
     text = f'[shortcuts]\nrecord = "{shortcut}"\n'
     assert issues(tmp_path, text) == [("shortcuts.record", "invalid_value")]
-    text = f'[shortcuts]\ncancel = "{shortcut}"\n'
-    assert issues(tmp_path, text) == [("shortcuts.cancel", "invalid_value")]
+    for name in ("cancel", "copy", "dismiss"):
+        text = f'[shortcuts]\n{name} = "{shortcut}"\n'
+        assert issues(tmp_path, text) == [(f"shortcuts.{name}", "invalid_value")]
 
 
 def test_record_and_cancel_must_differ_in_any_order(tmp_path):
@@ -226,6 +242,36 @@ def test_record_and_cancel_must_differ_in_any_order(tmp_path):
     # Changing only record to the default cancel collides too.
     text = '[shortcuts]\nrecord = "ctrl+option+escape"\n'
     assert issues(tmp_path, text) == [("shortcuts.cancel", "invalid_value")]
+
+
+FIELDS = ("record", "cancel", "copy", "dismiss")
+
+
+@pytest.mark.parametrize(
+    ("earlier", "later"),
+    [(a, b) for i, a in enumerate(FIELDS) for b in FIELDS[i + 1 :]],
+)
+def test_all_four_shortcuts_must_differ_naming_the_later_field(
+    tmp_path, earlier, later
+):
+    # Every field set to its own distinct chord, then two made equal.
+    chords = dict(zip(FIELDS, ["ctrl+1", "ctrl+2", "ctrl+3", "ctrl+4"], strict=True))
+    chords[earlier] = "shift+cmd+k"
+    chords[later] = "cmd+shift+k"
+    text = "[shortcuts]\n" + "".join(f'{k} = "{v}"\n' for k, v in chords.items())
+    assert issues(tmp_path, text) == [(f"shortcuts.{later}", "invalid_value")]
+
+
+@pytest.mark.parametrize(
+    ("name", "default_of"),
+    [("record", "copy"), ("cancel", "dismiss"), ("copy", "dismiss")],
+)
+def test_a_shortcut_equal_to_a_later_default_names_that_default(
+    tmp_path, name, default_of
+):
+    default = {"copy": "cmd+shift+c", "dismiss": "cmd+shift+d"}[default_of]
+    text = f'[shortcuts]\n{name} = "{default}"\n'
+    assert issues(tmp_path, text) == [(f"shortcuts.{default_of}", "invalid_value")]
 
 
 def test_shortcut_types_and_unknown_keys(tmp_path):

@@ -1,7 +1,7 @@
 import Carbon.HIToolbox
 import Foundation
 
-/// A global shortcut from the settings file (`[shortcuts]`), as Carbon's
+/// A shortcut from the settings file (`[shortcuts]`), as Carbon's
 /// `RegisterEventHotKey` takes it. The grammar mirrors `backend/src/hagig/config.py`
 /// exactly: lowercase tokens joined by `+`, one or more distinct modifiers from
 /// `cmd`, `ctrl`, `option` and `shift` in any order, and exactly one key. Keys
@@ -9,6 +9,10 @@ import Foundation
 public struct Shortcut: Equatable, Hashable, Sendable {
     public static let defaultRecord = "ctrl+option+space"
     public static let defaultCancel = "ctrl+option+escape"
+    /// Review only (`[shortcuts] copy` and `dismiss`): SwiftUI key equivalents
+    /// on the Copy all and Dismiss buttons, not global hot keys.
+    public static let defaultCopy = "cmd+shift+c"
+    public static let defaultDismiss = "cmd+shift+d"
 
     /// The macOS virtual key code.
     public let keyCode: UInt32
@@ -16,6 +20,8 @@ public struct Shortcut: Equatable, Hashable, Sendable {
     public let modifiers: UInt32
     /// For example `⌃⌥Space`.
     public let display: String
+    /// The key's token in the config syntax, for example `space` or `f5`.
+    public let key: String
 
     /// Nil when `text` is not a valid shortcut.
     public init?(_ text: String) {
@@ -24,6 +30,7 @@ public struct Shortcut: Equatable, Hashable, Sendable {
         let keys = tokens.filter { Self.modifierMasks[$0] == nil }
         guard !named.isEmpty, Set(named).count == named.count, keys.count == 1,
               let key = Self.keys[keys[0]] else { return nil }
+        self.key = keys[0]
         keyCode = UInt32(key.code)
         modifiers = named.reduce(0) { $0 | (Self.modifierMasks[$1] ?? 0) }
         // Apple's order: Control, Option, Shift, Command.

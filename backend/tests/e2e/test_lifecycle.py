@@ -5,15 +5,18 @@ generations, crashes while active, stalls to the deadline, upload disconnects,
 stop, recovery on the next request and verified reaping.
 """
 
+import json
 import os
 import shutil
 import signal
+import stat
 import struct
 import sys
 import time
 
 import pytest
 
+from hagig.logging import CONTENT_FREE_FIELDS
 from tests.support.harness import (
     LAST_CHUNK,
     VOCABULARY,
@@ -311,6 +314,104 @@ def test_diagnostics_are_content_free(server):
     assert b"worker_launched" in logs
     for secret in [b"secret transcript", *(t.encode() for t in VOCABULARY), b"/tmp"]:
         assert secret not in logs
+
+
+def test_the_server_log_records_the_lifecycle_and_no_content(server):
+    transcript = "Zebra-distinctive transcript words"
+    server.engine(text=transcript)
+    assert code(server.transcribe(AUDIO)) == (200, {"text": transcript})
+    server.engine(behavior="crash")
+    assert code(server.transcribe(AUDIO))[1] == {"code": "worker_failed"}
+    request_id = server.admit()
+    with server.client() as client:
+        assert client.post("/v1/requests").status_code == 409
+        assert client.delete(f"/v1/requests/{request_id}").status_code == 204
+        client.post("/v1/stop")
+    assert server.servers[-1].wait(timeout=10) == 0
+
+    assert stat.S_IMODE(os.lstat(server.logs).st_mode) == 0o700
+    assert stat.S_IMODE(os.lstat(server.logs / "server.log").st_mode) == 0o600
+    raw = (server.logs / "server.log").read_text()
+    for secret in [transcript, "Zebra", *VOCABULARY, str(server.root), "/tmp"]:
+        assert secret not in raw
+    records = server.log_file()
+    assert all(set(record) <= CONTENT_FREE_FIELDS for record in records)
+    events = [
+        {k: v for k, v in r.items() if k not in ("timestamp", "duration_ms")}
+        for r in records
+    ]
+    assert events == [
+        {"event": "server_started", "level": "info", "mode": "disabled"},
+        {"event": "request_admitted", "level": "info"},
+        {"event": "worker_launched", "level": "info", "mode": "disabled", "version": 1},
+        {"event": "worker_ready", "level": "info", "version": 1},
+        {"event": "request_completed", "level": "info", "stage": "speech"},
+        {"event": "request_admitted", "level": "info"},
+        {
+            "event": "worker_retired",
+            "level": "info",
+            "stage": "worker_failed",
+            "version": 1,
+        },
+        {"event": "worker_exited", "level": "info", "version": 1, "exit_status": 3},
+        {
+            "event": "request_failed",
+            "level": "info",
+            "code": "worker_failed",
+            "stage": "compute",
+        },
+        {"event": "request_admitted", "level": "info"},
+        {
+            "event": "request_rejected",
+            "level": "info",
+            "code": "busy",
+            "stage": "admission",
+        },
+        {
+            "event": "request_cancelled",
+            "level": "info",
+            "code": "cancelled",
+            "stage": "reserved",
+        },
+        {"event": "server_stopped", "level": "info"},
+    ]
+    timed = [r for r in records if "duration_ms" in r]
+    assert [r["event"] for r in timed] == [
+        "worker_ready",
+        "request_completed",
+        "request_failed",
+        "request_cancelled",
+    ]
+    assert all(
+        isinstance(r["duration_ms"], int) and r["duration_ms"] >= 0 for r in timed
+    )
+
+
+@pytest.mark.parametrize("damage", ["symlink", "file", "unwritable"])
+def test_an_unusable_logs_dir_never_stops_the_server(home, damage):
+    elsewhere = home.root / "elsewhere"
+    elsewhere.mkdir()
+    home.logs.parent.mkdir(parents=True)
+    if damage == "symlink":
+        home.logs.symlink_to(elsewhere)
+    elif damage == "file":
+        home.logs.write_text("keep")
+    else:
+        home.logs.mkdir(mode=0o500)
+    home.write_config()
+    home.install_model()
+    home.start_server()
+    assert code(home.transcribe(AUDIO)) == (200, {"text": "Fixture."})
+    assert list(elsewhere.iterdir()) == []
+    if damage == "file":
+        assert home.logs.read_text() == "keep"
+    else:
+        assert not (home.logs / "server.log").exists()
+    expected = "log_file_refused" if damage == "unwritable" else "logs_dir_unsafe"
+    first = json.loads(home.server_logs().splitlines()[0])
+    assert (first["event"], first["code"]) == ("log_file_unavailable", expected)
+    if damage == "unwritable":
+        home.logs.chmod(0o700)
 
 
 def test_required_mode_on_linux_refuses_without_launching(home):

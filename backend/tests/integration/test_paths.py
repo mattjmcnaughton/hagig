@@ -12,7 +12,9 @@ from hagig.paths import (
     PathError,
     ServerLock,
     config_file,
+    ensure_logs_dir,
     ensure_runtime_dir,
+    logs_dir,
     models_dir,
     socket_path,
 )
@@ -79,6 +81,81 @@ def test_missing_home_fails_closed(env):
     with pytest.raises(PathError) as error:
         config_file(env)
     assert error.value.code == "home_unavailable"
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({"HOME": "/home/u"}, "/home/u/.local/state/hagig/logs"),
+        (
+            {"HOME": "/home/u", "XDG_STATE_HOME": "rel"},
+            "/home/u/.local/state/hagig/logs",
+        ),
+        ({"HOME": "/home/u", "XDG_STATE_HOME": "/x/state"}, "/x/state/hagig/logs"),
+    ],
+)
+def test_logs_dir_follows_xdg(env, expected):
+    assert logs_dir(env) == Path(expected)
+
+
+@pytest.mark.parametrize("env", [{}, {"HOME": "relative"}, {"XDG_STATE_HOME": "rel"}])
+def test_logs_dir_without_home_fails_closed(env):
+    with pytest.raises(PathError) as error:
+        logs_dir(env)
+    assert error.value.code == "home_unavailable"
+
+
+# The logs directory
+
+
+def test_logs_dir_is_created_private_under_a_missing_xdg_base(tmp_path):
+    env = {"HOME": str(tmp_path), "XDG_STATE_HOME": str(tmp_path / "a" / "state")}
+    logs = ensure_logs_dir(env)
+    assert logs == tmp_path / "a" / "state" / "hagig" / "logs"
+    assert mode(logs) == 0o700 and mode(logs.parent) == 0o700
+    # Idempotent: an existing private directory is reused.
+    assert ensure_logs_dir(env) == logs
+
+
+@pytest.mark.parametrize("which", ["hagig", "logs"])
+def test_symlinked_logs_dir_is_refused_untouched(tmp_path, which):
+    state = tmp_path / "state"
+    target = private_dir(tmp_path / "elsewhere")
+    if which == "logs":
+        private_dir(private_dir(state) / "hagig")
+    else:
+        private_dir(state)
+    link = state / "hagig" / "logs" if which == "logs" else state / "hagig"
+    link.symlink_to(target)
+    with pytest.raises(PathError) as error:
+        ensure_logs_dir({"HOME": str(tmp_path), "XDG_STATE_HOME": str(state)})
+    assert error.value.code == "logs_dir_unsafe"
+    assert link.is_symlink()
+    assert list(target.iterdir()) == []
+
+
+def test_logs_dir_open_to_others_or_not_ours_is_refused_untouched(tmp_path):
+    env = {"HOME": str(tmp_path), "XDG_STATE_HOME": str(tmp_path / "state")}
+    logs = ensure_logs_dir(env)
+    with pytest.raises(PathError) as error:
+        ensure_logs_dir(env, uid=UID + 1)
+    assert error.value.code == "logs_dir_unsafe"
+    logs.chmod(0o750)
+    with pytest.raises(PathError) as error:
+        ensure_logs_dir(env)
+    assert error.value.code == "logs_dir_unsafe"
+    assert mode(logs) == 0o750
+
+
+def test_uncreatable_logs_dir_is_unavailable_without_chaining(tmp_path):
+    blocker = tmp_path / "SENTINEL-file"
+    blocker.write_text("x")
+    with pytest.raises(PathError) as error:
+        ensure_logs_dir({"HOME": str(tmp_path), "XDG_STATE_HOME": str(blocker)})
+    assert error.value.code == "logs_dir_unavailable"
+    assert "SENTINEL" not in repr(error.value)
+    assert error.value.__context__ is None
+    assert blocker.read_text() == "x"
 
 
 # Runtime directory selection
