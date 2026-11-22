@@ -281,9 +281,11 @@ release bundled is the one that uv version selects (the smoke prints it). No Hom
 
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer
-just build   # bash clients/macos/bundle.sh build; `bundle.sh run` also opens it
-just open    # launch an already built bundle
-just stop    # stop that bundle's shared service
+just build      # bash clients/macos/bundle.sh build; `bundle.sh run` also opens it
+just install    # quit, stop the service, move the build to ~/Applications/Hagig.app, open
+just open       # open the installed app
+just stop       # stop the installed app's shared service
+just uninstall  # login item off; app and builds, settings, models, runtime, microphone grant
 ```
 
 Layout (paths relative to the bundle):
@@ -389,6 +391,25 @@ refused (including symlinks). A preexisting `bundle.lock` is refused; after an
 interruption, confirm no builder remains, then `rmdir` it. Failed staging is
 cleaned. If a client reports `incompatible_api`, stop that server with the build
 that started it.
+
+`just install` follows those rules for the installed copy: it quits every
+`HagigShell`, stops the service through the installed (or else the built)
+helper and requires success, then moves the whole previous install to
+`Hagig.previous.app` and the new build into place. `HAGIG_INSTALL_DIR`
+(default `~/Applications`) selects the install folder for every recipe. The
+login item follows the installed path, so it survives updates. `just uninstall`
+asks once, runs the app's `HagigShell --unregister-login-item` (only the app
+can unregister its own `SMAppService` login item; macOS keeps the record as
+disabled), quits it, runs the helper's `uninstall --yes`, resets the
+microphone grant (before deleting the app: `tccutil` resolves the bundle ID
+through it) and deletes the installed app and the builds in `.build`. It
+leaves the clone and uv's cache. Verified 2026-11-22 on a hosted macOS 27.2
+VM with Xcode 27.2: after `just install` over an install with Open at login
+on, the login item still named `~/Applications/Hagig.app` and stayed enabled,
+and the new build's Settings showed it on; declining uninstall removed
+nothing; confirming left no app, builds, settings, models, runtime directory
+or Hagig process, and the login item disabled. The microphone reset could not
+be observed there (the image has no per-user TCC database).
 
 Checks:
 

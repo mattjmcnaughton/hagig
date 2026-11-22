@@ -59,8 +59,8 @@ source code character by character.
   Glass look and needs macOS 26 or later.
 - **[uv](https://docs.astral.sh/uv/)**, to build the bundled Python backend (CI
   uses 0.12.9).
-- **[just](https://just.systems)**, which runs the build and launch recipes in
-  the repository's `justfile`.
+- **[just](https://just.systems)**, which runs the build, install and uninstall
+  recipes in the repository's `justfile`.
 - About 1.5 GB of disk for the app (it bundles Python, PyTorch and MLX), plus
   1.5–4 GB for a model.
 
@@ -80,30 +80,34 @@ curl -LsSf https://astral.sh/uv/install.sh | sh   # or: brew install uv
 brew install just
 ```
 
-### 2. Build the app
+### 2. Build and install the app
 
 ```sh
 git clone https://github.com/mattjmcnaughton/hagig.git
 cd hagig
-
-# The build uses /Applications/Xcode_16.4.app if it exists, otherwise the Xcode
-# that `xcode-select -p` shows. To pick one explicitly:
-#   export DEVELOPER_DIR=/Applications/Xcode_27.2.app/Contents/Developer
 just build
+just install
 ```
 
-This writes `clients/macos/.build/Hagig.app`. The build downloads the locked
-Python packages; that is its only network step.
+`just build` writes `clients/macos/.build/Hagig.app`. It downloads the locked
+Python packages, which is its only network step, and takes several minutes the
+first time. It uses `/Applications/Xcode_16.4.app` if that exists, otherwise the
+Xcode that `xcode-select -p` shows. To pick one, prefix the command, for example
+`DEVELOPER_DIR=/Applications/Xcode_27.2.app/Contents/Developer just build`.
+
+`just install` moves the build to `~/Applications/Hagig.app` and opens it. Run
+Hagig from there, not from the clone, so it stays at one path across updates.
+To install into `/Applications` instead, use
+`HAGIG_INSTALL_DIR=/Applications just install`, and set the same variable for the
+other recipes.
 
 ### 3. Launch
 
-```sh
-just open
-```
+`just install` opens Hagig, and so does `just open` later. A microphone appears in
+the menu bar. macOS asks for microphone access the first time you record.
+Because the app is signed ad hoc, macOS asks again after each update.
 
-A microphone appears in the menu bar. macOS asks for microphone access the first
-time you record. Because the app is signed ad hoc, macOS asks again after each
-rebuild.
+To start Hagig when you log in, turn on **Open at login** in Settings.
 
 ### 4. Download a model from the app
 
@@ -208,7 +212,7 @@ The app starts it again on the next recording. The bundle's `hagig` helper offer
 The same helper is a command-line client of the service:
 
 ```sh
-HAGIG="$PWD/clients/macos/.build/Hagig.app/Contents/Helpers/hagig"
+HAGIG="$HOME/Applications/Hagig.app/Contents/Helpers/hagig"
 "$HAGIG" transcribe recording.wav   # prints the transcript
 "$HAGIG" status                     # service status, or "stopped"
 "$HAGIG" stop                       # stop the service and its worker
@@ -219,43 +223,50 @@ or 48 kHz, up to five minutes long.
 
 ## Updating and uninstalling
 
-To update, quit Hagig, stop its service, move the old bundle aside (the build
-refuses to overwrite one), pull and rebuild:
+To update, pull and rebuild, then install over the running copy:
 
 ```sh
-just stop
-mv clients/macos/.build/Hagig.app clients/macos/.build/Hagig.previous.app
 git pull
 just build
-just open
+just install
 ```
 
-To uninstall, quit Hagig, then run:
+`just install` quits Hagig and stops its service before replacing the app, then
+opens the new one. Your settings, models and **Open at login** carry over. The
+replaced app is kept as `clients/macos/.build/Hagig.previous.app` until the next
+install. To roll back, quit Hagig, run `just stop`, then replace
+`~/Applications/Hagig.app` with that copy.
+
+To uninstall, run:
 
 ```sh
-"$HAGIG" uninstall
+just uninstall
 ```
 
-It lists what it will remove and asks before doing anything (`--yes` skips the
-question). It stops the service, then deletes your settings
-(`~/.config/hagig`), your models (`~/.local/share/hagig`, 1.5–4 GB each) and the
-service's runtime files. It leaves the app itself alone and prints the last two
-steps: delete `Hagig.app` and reset its microphone permission with
-`tccutil reset Microphone com.mattjmcnaughton.hagig`.
+It lists everything it will remove and asks once. Then it turns off **Open at
+login**, quits Hagig, stops the service, resets its microphone access and
+deletes:
+
+| What | Where |
+| --- | --- |
+| The app | `~/Applications/Hagig.app`, plus any builds in `clients/macos/.build/` |
+| Settings | `~/.config/hagig` |
+| Models (1.5–4 GB each) | `~/.local/share/hagig` |
+| Service runtime files | `hagig` in your per-user temporary folder |
+
+It leaves the clone and uv's download cache alone; delete the clone yourself.
 
 ### Running `hagig` without the full path
 
 The helper finds the app from its own path, so a symlink to it does not work.
-Use an alias or put the app's `Helpers` directory on your `PATH`, for example
+Use an alias, or put the app's `Helpers` directory on your `PATH`, for example
 in `~/.zshrc`:
 
 ```sh
-alias hagig="$HOME/src/hagig/clients/macos/.build/Hagig.app/Contents/Helpers/hagig"
+alias hagig="$HOME/Applications/Hagig.app/Contents/Helpers/hagig"
 # or
-export PATH="$HOME/src/hagig/clients/macos/.build/Hagig.app/Contents/Helpers:$PATH"
+export PATH="$HOME/Applications/Hagig.app/Contents/Helpers:$PATH"
 ```
-
-Replace `$HOME/src/hagig` with where you cloned the repository.
 
 ## Privacy
 
