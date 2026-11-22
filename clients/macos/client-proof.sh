@@ -81,7 +81,7 @@ elif case == 'late-result':
     replace('Presentation.swift',
             '        guard self.requestID == requestID, stage == .transcribing else { return }\n', '')
 elif case == 'auto-stop':
-    replace('DictationController.swift', 'case .limit: stop()', 'case .limit: break')
+    replace('DictationController.swift', 'case .limit: stop(capped: true)', 'case .limit: break')
 elif case == 'cap':
     replace('MicrophoneCapture.swift', 'maximumBytes = 19_200_000', 'maximumBytes = 19_264_000')
 elif case == 'warning':
