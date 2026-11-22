@@ -266,6 +266,10 @@ def test_real_server_refuses_an_unmatched_installation_then_stops(home):
 def test_uninstall_stops_the_server_and_removes_every_directory(server):
     process = server.servers[0]
     data, config = server.models.parent, server.config_path.parent
+    state = server.logs.parent
+    # The server's log, and the app's beside it.
+    (server.logs / "app.log").write_text("{}\n")
+    assert (server.logs / "server.log").is_file()
     assert data.is_dir() and config.is_dir() and server.runtime.is_dir()
     result = hagig(server, "uninstall", "--yes")
     assert (result.returncode, result.stderr) == (0, b"")
@@ -274,10 +278,23 @@ def test_uninstall_stops_the_server_and_removes_every_directory(server):
     # The data directory holds the models; the runtime directory the kept lock.
     assert not data.exists()
     assert not config.exists()
+    assert not state.exists()
     assert not server.runtime.exists()
     # Only Hagig's own directories: the XDG bases stay.
-    assert data.parent.is_dir() and config.parent.is_dir()
+    assert data.parent.is_dir() and config.parent.is_dir() and state.parent.is_dir()
     assert hagig(server, "status").stdout == b"stopped\n"
+
+
+def test_uninstall_refuses_a_symlinked_logs_directory_and_its_target_stays(home):
+    target = home.root / "elsewhere"
+    target.mkdir()
+    (target / "keep").write_text("keep")
+    home.logs.parent.parent.mkdir(parents=True)
+    home.logs.parent.symlink_to(target)
+    result = hagig(home, "uninstall", "--yes")
+    assert (result.returncode, result.stderr) == (1, b"uninstall_failed\n")
+    assert home.logs.parent.is_symlink()
+    assert (target / "keep").read_text() == "keep"
 
 
 def test_declining_uninstall_changes_nothing(server):
@@ -290,8 +307,14 @@ def test_declining_uninstall_changes_nothing(server):
         timeout=60,
     )
     assert (result.returncode, result.stderr) == (1, b"cancelled\n")
-    # The prompt names all three directories, including the computed runtime one.
-    for path in (server.config_path.parent, server.models.parent, server.runtime):
+    # The prompt names every directory, including the computed runtime one.
+    directories = (
+        server.config_path.parent,
+        server.models.parent,
+        server.logs.parent,
+        server.runtime,
+    )
+    for path in directories:
         assert f"  {path}\n".encode() in result.stdout
     assert (
         sorted(p for p in server.root.rglob("*") if "control" not in p.parts) == before
@@ -411,7 +434,10 @@ def test_settings_set_writes_a_first_settings_file_the_server_accepts(home):
         "exists": False,
         "issue": None,
         "settings": None,
+        "logs_dir": str(home.logs),
     }
+    # Computed, never created, by a read-only command.
+    assert not home.logs.parent.exists()
     tracked_installation(home, "qwen3-asr-1.7b")
     terms = ['Quote " and \\ back', "日本語 😀", "Ghostty"]
     result = settings_set(
@@ -435,6 +461,8 @@ def test_settings_set_writes_a_first_settings_file_the_server_accepts(home):
         "vocabulary": terms,
         "record_shortcut": "ctrl+option+space",
         "cancel_shortcut": "ctrl+option+escape",
+        "copy_shortcut": "cmd+shift+c",
+        "dismiss_shortcut": "cmd+shift+d",
     }
     # A partial change keeps the rest; the same values again change nothing.
     isolation = settings_set(home, {"network_isolation": "disabled"})
@@ -472,6 +500,8 @@ def test_settings_set_round_trips_shortcuts_and_refuses_bad_ones(home):
             "model_id": "qwen3-asr-1.7b",
             "record_shortcut": "cmd+shift+space",
             "cancel_shortcut": "cmd+shift+escape",
+            "copy_shortcut": "option+return",
+            "dismiss_shortcut": "ctrl+f5",
         },
     )
     assert (result.returncode, result.stdout, result.stderr) == (0, b"updated\n", b"")
@@ -479,13 +509,22 @@ def test_settings_set_round_trips_shortcuts_and_refuses_bad_ones(home):
         written = tomllib.load(handle)
     assert written == {
         "model": {"id": "qwen3-asr-1.7b"},
-        "shortcuts": {"record": "cmd+shift+space", "cancel": "cmd+shift+escape"},
+        "shortcuts": {
+            "record": "cmd+shift+space",
+            "cancel": "cmd+shift+escape",
+            "copy": "option+return",
+            "dismiss": "ctrl+f5",
+        },
     }
     settings = shown(home)["settings"]
-    assert (settings["record_shortcut"], settings["cancel_shortcut"]) == (
+    assert [
+        settings[f"{n}_shortcut"] for n in ("record", "cancel", "copy", "dismiss")
+    ] == [
         "cmd+shift+space",
         "cmd+shift+escape",
-    )
+        "option+return",
+        "ctrl+f5",
+    ]
     # A change to one shortcut keeps the other and every other setting.
     assert settings_set(home, {"cancel_shortcut": "f12+ctrl"}).stdout == b"updated\n"
     settings = shown(home)["settings"]
@@ -504,6 +543,24 @@ def test_settings_set_round_trips_shortcuts_and_refuses_bad_ones(home):
         b"config_invalid: shortcuts.cancel invalid_value\n",
     )
     assert settings_set(home, {"record_shortcut": 5}).returncode == 2
+    for name in ("copy", "dismiss"):
+        bad = settings_set(home, {f"{name}_shortcut": secret})
+        assert (bad.returncode, bad.stderr) == (
+            2,
+            f"config_invalid: shortcuts.{name} invalid_value\n".encode(),
+        )
+        assert b"private-secret" not in bad.stdout + bad.stderr
+    # Copy against record, and dismiss against copy: the later field is named.
+    for changes, field in [
+        ({"copy_shortcut": "cmd+shift+space"}, "copy"),
+        ({"dismiss_shortcut": "option+return"}, "dismiss"),
+        ({"dismiss_shortcut": "ctrl+f12"}, "dismiss"),
+    ]:
+        clash = settings_set(home, changes)
+        assert (clash.returncode, clash.stderr) == (
+            2,
+            f"config_invalid: shortcuts.{field} invalid_value\n".encode(),
+        )
     assert home.config_path.read_bytes() == before
 
 

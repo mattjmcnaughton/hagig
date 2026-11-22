@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 import HagigPresentation
 
@@ -91,5 +92,43 @@ final class ShortcutTests: XCTestCase {
         XCTAssertEqual(gesture.release(at: 5.1, phase: .recording), .nothing)
         XCTAssertEqual(gesture.press(at: 9, phase: .idle), .start)
         XCTAssertEqual(gesture.release(at: 9.1, phase: .recording), .nothing)
+    }
+}
+
+/// The review chords as SwiftUI key equivalents; expected characters are
+/// written out (AppKit's NSF1FunctionKey is U+F704), not read from the table.
+final class ReviewShortcutTests: XCTestCase {
+    func testKeyEquivalentsAndModifiers() throws {
+        let cases: [(String, Character, SwiftUI.EventModifiers)] = [
+            (Shortcut.defaultCopy, "c", [.command, .shift]),
+            (Shortcut.defaultDismiss, "d", [.command, .shift]),
+            ("ctrl+option+7", "7", [.control, .option]),
+            ("cmd+space", " ", [.command]),
+            ("option+return", "\r", [.option]),
+            ("ctrl+tab", "\t", [.control]),
+            ("cmd+escape", "\u{1B}", [.command]),
+            ("shift+f1", "\u{F704}", [.shift]),
+            ("cmd+f12", "\u{F70F}", [.command]),
+            ("cmd+minus", "-", [.command]), ("cmd+equal", "=", [.command]),
+            ("cmd+comma", ",", [.command]), ("cmd+period", ".", [.command]),
+            ("cmd+slash", "/", [.command]), ("cmd+semicolon", ";", [.command]),
+        ]
+        for (text, character, modifiers) in cases {
+            let shortcut = try XCTUnwrap(Shortcut(text), text)
+            XCTAssertEqual(shortcut.keyEquivalent.character, character, text)
+            XCTAssertEqual(shortcut.eventModifiers, modifiers, text)
+        }
+    }
+
+    func testReviewShortcutsFallBackToTheDefaults() throws {
+        let copy = try XCTUnwrap(Shortcut("cmd+shift+c")), dismiss = try XCTUnwrap(Shortcut("cmd+shift+d"))
+        XCTAssertEqual(ReviewShortcuts(nil).copy, copy)
+        XCTAssertEqual(ReviewShortcuts(nil).dismiss, dismiss)
+        let invalid = ReviewShortcuts(copy: "not+a+chord", dismiss: "ctrl")
+        XCTAssertEqual(invalid, .defaults)
+        let configured = ReviewShortcuts(StoredSettings(modelId: "m", copyShortcut: "option+return",
+                                                        dismissShortcut: "ctrl+f5"))
+        XCTAssertEqual(configured.copy.display, "⌥Return")
+        XCTAssertEqual(configured.dismiss.display, "⌃F5")
     }
 }

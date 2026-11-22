@@ -24,12 +24,13 @@ import uvicorn
 from hagig.app import create_app
 from hagig.config import Config, ConfigError, load_config
 from hagig.launcher import Launcher, worker_env
-from hagig.logging import configure_logging
+from hagig.logging import LogFile, configure_logging
 from hagig.manifest import Manifest, ManifestError, load_manifest
 from hagig.paths import (
     PathError,
     ServerLock,
     config_file,
+    ensure_logs_dir,
     ensure_runtime_dir,
     models_dir,
     socket_path,
@@ -41,6 +42,7 @@ log = structlog.get_logger()
 
 EXIT_FAILURE = 1
 EXIT_CONFIG = 2
+SERVER_LOG = "server.log"
 # uvicorn's bound for connections still open at exit; stop drains first.
 _SHUTDOWN_SECONDS = 3
 
@@ -70,8 +72,12 @@ def run(
     `before_exit` runs after a stop has drained, before the socket is removed;
     tests use it to hold the stopping state.
     """
-    configure_logging()
+    log_file, log_code = _open_log_file(env)
+    configure_logging(log_file)
     _silence_stdlib_loggers()
+    if log_code is not None:
+        # Only stderr hears this; the server runs on without a log file.
+        log.warning("log_file_unavailable", code=log_code)
     code = None
     try:
         config = load_config(config_file(env))
@@ -110,6 +116,8 @@ def run(
                 lambda: _unlink_ours(path, inode),
             )
         )
+        # Before the lock goes: `hagig stop` returns once it is free.
+        log.info("server_stopped")
     except PathError as error:
         log.error("server_start_failed", code=error.code)
         return EXIT_FAILURE
@@ -117,7 +125,6 @@ def run(
         if inode is not None:
             _unlink_ours(path, inode)
         lock.release()
-    log.info("server_stopped")
     return 0
 
 
@@ -162,6 +169,19 @@ async def _serve(
     finally:
         stopped.cancel()
         await supervisor.shutdown()
+
+
+def _open_log_file(env: Mapping[str, str]) -> tuple[LogFile | None, str | None]:
+    """`<logs>/server.log`, or None and a stable code. Never fails startup."""
+    code = None
+    try:
+        logs = ensure_logs_dir(env)
+    except PathError as error:
+        code = error.code
+    if code is not None:
+        return None, code
+    log_file = LogFile.open(logs / SERVER_LOG)
+    return log_file, None if log_file is not None else "log_file_refused"
 
 
 def _bind(path: Path) -> tuple[socket.socket, int]:

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+import structlog
 
 from hagig.config import Config
 from hagig.contract import (
@@ -30,6 +31,8 @@ from hagig.contract import (
 )
 from hagig.services.supervisor import Supervisor, WorkerError
 
+log = structlog.get_logger()
+
 AUDIO_TYPE = "application/octet-stream"
 
 # Audio whose peak |sample| is below this is a muted or dead input, answered as
@@ -44,6 +47,15 @@ SILENCE_PEAK = 10 ** (-60 / 20)
 _PROMPT_WORD = "vocabulary"
 
 Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
+
+# Lifecycle events (fixed names; fields are stable codes and timings only):
+# request_admitted; request_rejected (code, stage admission|upload);
+# request_completed (stage speech|no_speech, duration_ms);
+# request_cancelled and request_failed (code, stage, duration_ms). Durations
+# run from admission. `disconnected` and `interrupted` are log-only codes.
+_CANCEL_CODES = frozenset(
+    {"cancelled", "server_stopping", "disconnected", "interrupted"}
+)
 
 
 class RequestError(Exception):
@@ -74,6 +86,8 @@ class _Active:
     cancelled: "asyncio.Future[RequestError]"
     upload_start_timer: asyncio.TimerHandle
     reservation_timer: asyncio.TimerHandle
+    # The event loop's clock at admission, for durations.
+    admitted: float
     claimed: bool = False
 
 
@@ -131,10 +145,12 @@ class RequestService:
         }
 
     def admit(self) -> dict[str, str]:
-        if self._stopping:
-            raise RequestError("server_stopping")
-        if self._busy:
-            raise RequestError("busy")
+        refused = (
+            "server_stopping" if self._stopping else "busy" if self._busy else None
+        )
+        if refused is not None:
+            log.info("request_rejected", code=refused, stage="admission")
+            raise RequestError(refused)
         loop = asyncio.get_running_loop()
         request_id = new_token()
         deadlines = self._deadlines
@@ -144,15 +160,20 @@ class RequestService:
             # Claiming the upload cancels this timer, so it only ever releases
             # an unclaimed reservation.
             upload_start_timer=loop.call_later(
-                deadlines.upload_start, lambda: self._release(active)
+                deadlines.upload_start,
+                lambda: self._end_unclaimed(
+                    active, "deadline_exceeded", "upload_start"
+                ),
             ),
             reservation_timer=loop.call_later(
                 deadlines.reservation,
                 lambda: self._invalidate(active, RequestError("deadline_exceeded")),
             ),
+            admitted=loop.time(),
         )
         self._active = active
         self._idle.clear()
+        log.info("request_admitted")
         return {
             "request_id": active.request_id,
             "config_generation": self._config_generation,
@@ -178,9 +199,14 @@ class RequestService:
     def _invalidate(self, active: _Active, failure: RequestError) -> None:
         if not active.claimed:
             # Nobody is uploading: the reservation simply ends.
-            self._release(active)
+            self._end_unclaimed(active, failure.code, "reserved")
         elif not active.cancelled.done():
             active.cancelled.set_result(failure)
+
+    def _end_unclaimed(self, active: _Active, code: str, stage: str) -> None:
+        if self._active is active:
+            _log_end(active, code, stage)
+        self._release(active)
 
     def _release(self, active: _Active) -> None:
         if self._active is not active:
@@ -201,13 +227,20 @@ class RequestService:
 
         Raises RequestError for a response, or DisconnectedError for none.
         """
-        if self._stopping:
-            raise RequestError("server_stopping")
         active = self._active
-        if active is None or active.request_id != request_id or active.claimed:
-            raise RequestError("request_not_found")
+        if (
+            self._stopping
+            or active is None
+            or active.request_id != request_id
+            or active.claimed
+        ):
+            refused = "server_stopping" if self._stopping else "request_not_found"
+            log.info("request_rejected", code=refused, stage="upload")
+            raise RequestError(refused)
         active.claimed = True
         active.upload_start_timer.cancel()
+        # What the log reports if this ends without a RequestError.
+        code, stage = "interrupted", "upload"
         try:
             if content_type != AUDIO_TYPE:
                 raise RequestError("invalid_request")
@@ -216,10 +249,20 @@ class RequestService:
             audio, peak = await self._receive_audio(active, receive)
             # The reservation ends with the body; computation starts.
             active.reservation_timer.cancel()
-            return await self._compute(active, audio, peak, receive)
+            stage = "compute"
+            body = await self._compute(active, audio, peak, receive)
+            code, stage = None, "no_speech" if body == _NO_SPEECH else "speech"
+            return body
+        except RequestError as error:
+            code = error.code
+            raise
+        except DisconnectedError:
+            code = "disconnected"
+            raise
         finally:
             await self._supervisor.wait_reaped()
             self._release(active)
+            _log_end(active, code, stage)
 
     async def _receive_audio(
         self, active: _Active, receive: Receive
@@ -277,6 +320,15 @@ class RequestService:
             await asyncio.wait({work, disconnect})
 
 
+def _log_end(active: _Active, code: str | None, stage: str) -> None:
+    duration_ms = round((asyncio.get_running_loop().time() - active.admitted) * 1000)
+    if code is None:
+        log.info("request_completed", stage=stage, duration_ms=duration_ms)
+        return
+    event = "request_cancelled" if code in _CANCEL_CODES else "request_failed"
+    log.info(event, code=code, stage=stage, duration_ms=duration_ms)
+
+
 async def _first(
     cancelled: "asyncio.Future[RequestError]", task: asyncio.Future
 ) -> Any:
@@ -319,6 +371,9 @@ def result_body(text: str) -> bytes:
     if len(body) > MAX_JSON_BYTES:
         raise RequestError("result_too_large")
     return body
+
+
+_NO_SPEECH = result_body("")
 
 
 class AudioValidator:

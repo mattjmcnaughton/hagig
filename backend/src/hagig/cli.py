@@ -3,7 +3,7 @@
 `start` starts or attaches to the server; `status` and `stop` never start one.
 `transcribe` reserves a request, decodes the WAV file, uploads canonical audio
 and prints only the text on stdout. `uninstall` stops the server and removes
-settings, models and runtime files. stderr carries stable codes only. Exit
+settings, models, logs and runtime files. stderr carries stable codes only. Exit
 codes: 0 success (including no speech), 1 failure, 2 usage or configuration
 error, 3 busy, 130 interrupted.
 """
@@ -54,6 +54,7 @@ from hagig.paths import (
     ServerLock,
     config_file,
     ensure_runtime_dir,
+    logs_dir,
     models_dir,
     runtime_dir,
     socket_path,
@@ -282,7 +283,7 @@ def uninstall(
         bool, typer.Option("--yes", "-y", help="Do not ask for confirmation.")
     ] = False,
 ) -> None:
-    """Stop the server and remove settings, models and runtime files.
+    """Stop the server and remove settings, models, logs and runtime files.
 
     The app bundle is left in place; the command prints how to remove it.
     Exit 0 removed, 1 failure or declined.
@@ -292,6 +293,7 @@ def uninstall(
     try:
         config = config_file(env).parent
         models = models_dir(env)
+        state = logs_dir(env).parent
         runtime = runtime_dir(env)
     except PathError as error:
         code = error.code
@@ -300,7 +302,7 @@ def uninstall(
     data = models.parent
     if not yes:
         typer.echo("This stops the Hagig server and permanently removes:")
-        for path in (config, data, runtime):
+        for path in (config, data, state, runtime):
             typer.echo(f"  {path}")
         typer.echo("Quit Hagig first, or it starts the server again.")
         confirmed = False
@@ -311,8 +313,8 @@ def uninstall(
     # Only now: `_runtime` creates the runtime directory.
     runtime, sock = _runtime(env)
     _stop_server(runtime, sock)
-    _remove(runtime, models, config, data)
-    typer.echo("Removed Hagig's settings, models and runtime files.")
+    _remove(runtime, models, (data, config, state))
+    typer.echo("Removed Hagig's settings, models, logs and runtime files.")
     # Never delete the bundle this CLI runs from, under a possibly running app.
     bundle = _app_bundle()
     typer.echo("To finish, quit Hagig, then delete the app and its microphone access:")
@@ -322,8 +324,8 @@ def uninstall(
     typer.echo(f"  tccutil reset Microphone {BUNDLE_ID}")
 
 
-def _remove(runtime: Path, models: Path, config: Path, data: Path) -> None:
-    """Remove data and config, then runtime, holding the server and install locks.
+def _remove(runtime: Path, models: Path, directories: tuple[Path, ...]) -> None:
+    """Remove `directories`, then runtime, holding the server and install locks.
 
     `shutil.rmtree` never follows symlinks and refuses a symlinked top level,
     which is `uninstall_failed` like any other filesystem error.
@@ -341,7 +343,7 @@ def _remove(runtime: Path, models: Path, config: Path, data: Path) -> None:
                 break
             locks.append(lock)
         else:
-            for path in (data, config, runtime):
+            for path in (*directories, runtime):
                 if os.path.lexists(path):
                     shutil.rmtree(path)
     except PathError as error:
@@ -565,6 +567,8 @@ _SETTING_KEYS = (
     "vocabulary",
     "record_shortcut",
     "cancel_shortcut",
+    "copy_shortcut",
+    "dismiss_shortcut",
 )
 
 
@@ -576,6 +580,8 @@ def _settings_of(config: Config) -> dict[str, Any]:
         "vocabulary": list(config.vocabulary.terms),
         "record_shortcut": config.shortcuts.record,
         "cancel_shortcut": config.shortcuts.cancel,
+        "copy_shortcut": config.shortcuts.copy_all,
+        "dismiss_shortcut": config.shortcuts.dismiss,
     }
 
 
@@ -593,11 +599,15 @@ def settings_show() -> None:
     """Print the settings file as one JSON object (offline, read-only).
 
     `path`, `exists`, `issue` (a stable code when the file does not load, else
-    null) and `settings` (`model_id`, `editor_mode`, `network_isolation`,
-    `vocabulary`, `record_shortcut` and `cancel_shortcut`, with defaults filled
-    in; null when the file does not load).
+    null), `settings` (`model_id`, `editor_mode`, `network_isolation`,
+    `vocabulary` and the `record`, `cancel`, `copy` and `dismiss` `_shortcut`s,
+    with defaults filled in; null when the file does not load) and `logs_dir`,
+    the logs directory (computed, not created), so the app needs no path rules
+    of its own.
     """
     path = _settings_path(os.environ)
+    # Same base rules as the settings path, which has just been computed.
+    logs = logs_dir(os.environ)
     config = None
     issue = None
     try:
@@ -612,6 +622,7 @@ def settings_show() -> None:
             # A missing file is not a problem to report, only an empty choice.
             "issue": issue if exists else None,
             "settings": _settings_of(config) if config is not None else None,
+            "logs_dir": str(logs),
         }
     )
 
@@ -626,7 +637,8 @@ def settings_set(
     """Change settings from a JSON object on stdin, then rewrite the file.
 
     The object holds any of `model_id`, `editor_mode`, `network_isolation`,
-    `vocabulary` (a list of strings), `record_shortcut` and `cancel_shortcut`;
+    `vocabulary` (a list of strings), `record_shortcut`, `cancel_shortcut`,
+    `copy_shortcut` and `dismiss_shortcut`;
     missing keys keep their current values.
     Input travels on stdin so vocabulary never appears in a process list. The
     merged settings are validated exactly as the server will load them, then
@@ -727,7 +739,7 @@ def _toml(settings: dict[str, Any]) -> bytes:
         lines.append(f"[vocabulary]\nterms = {value(settings['vocabulary'])}")
     shortcuts = [
         f"{name} = {value(settings[f'{name}_shortcut'])}"
-        for name in ("record", "cancel")
+        for name in ("record", "cancel", "copy", "dismiss")
         if f"{name}_shortcut" in settings
     ]
     if shortcuts:

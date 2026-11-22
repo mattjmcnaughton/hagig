@@ -1,6 +1,6 @@
 """Filesystem locations and the server lifetime lock (TDD sections 3 and 5).
 
-Configuration and models follow XDG. The runtime directory holding the socket
+Configuration, models and logs follow XDG. The runtime directory holding the socket
 and lock is private (0700) and owner-validated; an unsafe preexisting object
 fails closed and is never repaired or deleted. The server lock is a persistent
 0600 `server.lock` held with `fcntl.flock` and never unlinked, so every
@@ -9,6 +9,7 @@ contender locks the same inode.
 Errors carry a stable code and never a path or OS error text.
 """
 
+import contextlib
 import ctypes
 import errno
 import fcntl
@@ -40,6 +41,46 @@ def config_file(env: Mapping[str, str]) -> Path:
 def models_dir(env: Mapping[str, str]) -> Path:
     """`$XDG_DATA_HOME/hagig/models`, default `~/.local/share/...`."""
     return _xdg(env, "XDG_DATA_HOME", ".local/share") / "hagig" / "models"
+
+
+def logs_dir(env: Mapping[str, str]) -> Path:
+    """`$XDG_STATE_HOME/hagig/logs`, default `~/.local/state/...`."""
+    return _xdg(env, "XDG_STATE_HOME", ".local/state") / "hagig" / "logs"
+
+
+def ensure_logs_dir(env: Mapping[str, str], *, uid: int | None = None) -> Path:
+    """Create or validate the logs directory (`logs_dir`).
+
+    `hagig/` and `logs/` are created 0700. An existing one that is a symlink,
+    not a directory or not ours, or a `logs/` open to group or others, or a
+    `hagig/` they can write, is `logs_dir_unsafe` and left untouched; any
+    other failure is `logs_dir_unavailable`.
+    """
+    uid = os.getuid() if uid is None else uid
+    logs = logs_dir(env)
+    state = logs.parent
+    failure = None
+    try:
+        # The XDG base itself (`~/.local/state`) may not exist yet.
+        state.parent.mkdir(parents=True, exist_ok=True)
+        for path in (state, logs):
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(path, 0o700)
+            info = os.lstat(path)
+            # `hagig/` may hold other state later; `logs/` is ours alone.
+            exposed = 0o022 if path == state else 0o077
+            if (
+                not stat.S_ISDIR(info.st_mode)
+                or info.st_uid != uid
+                or stat.S_IMODE(info.st_mode) & exposed
+            ):
+                failure = "logs_dir_unsafe"
+                break
+    except OSError:
+        failure = "logs_dir_unavailable"
+    if failure is not None:
+        raise PathError(failure)
+    return logs
 
 
 def _xdg(env: Mapping[str, str], name: str, default: str) -> Path:

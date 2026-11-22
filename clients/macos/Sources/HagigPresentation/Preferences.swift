@@ -44,17 +44,23 @@ public struct StoredSettings: Equatable, Sendable, Codable {
     /// Global shortcuts in the config syntax (see `Shortcut`).
     public var recordShortcut: String
     public var cancelShortcut: String
+    /// Review's Copy all and Dismiss (`ReviewShortcuts`).
+    public var copyShortcut: String
+    public var dismissShortcut: String
 
     public init(modelId: String, editorMode: String = "standard", networkIsolation: String = "required",
                 vocabulary: [String] = [], recordShortcut: String = Shortcut.defaultRecord,
-                cancelShortcut: String = Shortcut.defaultCancel) {
+                cancelShortcut: String = Shortcut.defaultCancel, copyShortcut: String = Shortcut.defaultCopy,
+                dismissShortcut: String = Shortcut.defaultDismiss) {
         self.modelId = modelId; self.editorMode = editorMode
         self.networkIsolation = networkIsolation; self.vocabulary = vocabulary
         self.recordShortcut = recordShortcut; self.cancelShortcut = cancelShortcut
+        self.copyShortcut = copyShortcut; self.dismissShortcut = dismissShortcut
     }
 
     enum CodingKeys: String, CodingKey {
         case modelId, editorMode, networkIsolation, vocabulary, recordShortcut, cancelShortcut
+        case copyShortcut, dismissShortcut
     }
 
     /// Shortcuts default when absent, as from a helper built before them.
@@ -66,6 +72,8 @@ public struct StoredSettings: Equatable, Sendable, Codable {
         vocabulary = try values.decode([String].self, forKey: .vocabulary)
         recordShortcut = try values.decodeIfPresent(String.self, forKey: .recordShortcut) ?? Shortcut.defaultRecord
         cancelShortcut = try values.decodeIfPresent(String.self, forKey: .cancelShortcut) ?? Shortcut.defaultCancel
+        copyShortcut = try values.decodeIfPresent(String.self, forKey: .copyShortcut) ?? Shortcut.defaultCopy
+        dismissShortcut = try values.decodeIfPresent(String.self, forKey: .dismissShortcut) ?? Shortcut.defaultDismiss
     }
 }
 
@@ -127,11 +135,16 @@ public final class Preferences: ObservableObject {
     @Published public private(set) var saved = false
     /// Set by the shell when a global shortcut could not be registered.
     @Published public private(set) var shortcutIssue: String?
+    /// The logs folder as the backend computes it (`settings show`'s
+    /// `logs_dir`); nil until read, or from a helper built before logs.
+    @Published public private(set) var logsDir: String?
     private let run: HelperRun?
+    private let log: AppLog
     private var installTask: Task<Void, Never>?
 
     /// `run` is nil when there is no paired helper; the library then says so.
-    public init(run: HelperRun?) { self.run = run }
+    /// `log` records saves and downloads; the shell passes the app's log.
+    public init(run: HelperRun?, log: AppLog = .inert) { self.run = run; self.log = log }
 
     public var hasHelper: Bool { run != nil }
 
@@ -177,6 +190,7 @@ public final class Preferences: ObservableObject {
             let path: String
             let exists: Bool
             let settings: StoredSettings?
+            let logsDir: String?
         }
         let output = Collected()
         let exit = await run(["settings", "show"], nil) { output.append($0) }
@@ -186,6 +200,8 @@ public final class Preferences: ObservableObject {
               let shown = try? decoder.decode(Shown.self, from: data) else { return }
         settingsPath = shown.path
         settingsExist = shown.exists
+        // Published before the revision, so observers learn where to log first.
+        if let logsDir = shown.logsDir, logsDir != self.logsDir { self.logsDir = logsDir }
         settings = shown.settings
         settingsRevision += 1
     }
@@ -204,7 +220,13 @@ public final class Preferences: ObservableObject {
         Task {
             let exit = await run(["settings", "set"] + (replace ? ["--replace"] : []), input) { _ in }
             saving = false
-            if exit.status == 0 { saved = true } else { saveFailure = exit.error ?? "config_write_failed" }
+            if exit.status == 0 {
+                saved = true
+                log.record(.settingsSaved)
+            } else {
+                saveFailure = exit.error ?? "config_write_failed"
+                log.record(.settingsSaveFailed, AppLogFields(code: saveFailure))
+            }
             let output = Collected()
             let listed = await run(["model", "list", "--json"], nil) { output.append($0) }
             apply(listing: output.text, exit: listed)
@@ -261,6 +283,7 @@ public final class Preferences: ObservableObject {
               let entry = models.first(where: { $0.id == id }) else { return }
         failure = nil
         download = Download(id: id, step: "verify", received: 0, total: entry.downloadBytes)
+        log.record(.modelDownloadStarted, AppLogFields(model: id))
         installTask = Task {
             var continuation: AsyncStream<String>.Continuation!
             let stream = AsyncStream<String> { continuation = $0 }
@@ -278,7 +301,11 @@ public final class Preferences: ObservableObject {
             } else if ended.status != 0 || !done {
                 failure = Failure(id: id, code: ended.error ?? "install_failed")
             } else {
+                log.record(.modelDownloadFinished, AppLogFields(model: id))
                 await finished(id)
+            }
+            if let failure = self.failure {
+                log.record(.modelDownloadFailed, AppLogFields(code: failure.code, model: id))
             }
         }
     }
@@ -338,8 +365,9 @@ public final class Preferences: ObservableObject {
     /// Fixed states for the render harness; never used by the shell.
     public func preview(page: Page, models: [ModelEntry], configured: String?, pending: String? = nil,
                         download: Download? = nil, failure: Failure? = nil,
-                        settings: StoredSettings? = nil, settingsPath: String? = nil) {
+                        settings: StoredSettings? = nil, settingsPath: String? = nil, logsDir: String? = nil) {
         self.page = page
+        self.logsDir = logsDir
         listing = .idle
         self.settings = settings
         self.settingsPath = settingsPath

@@ -33,6 +33,36 @@ and nothing is kept after you dismiss it.
 harness (`swift run HagigScreenshots states`) and sample text. In the app the
 surface appears in a menu-bar popover and follows the system appearance.*
 
+## Quick start
+
+1. **Install:** `just build`, then `just install` (needs Xcode, uv and just; see
+   [Installation](#installation)). The first time, choose a model from the
+   menu-bar microphone's download button.
+2. **Dictate from the keyboard:**
+   1. In your terminal or browser, hold **⌃⌥Space** and speak; release to
+      transcribe. Or tap to start and tap again to stop. **⌃⌥Esc** cancels.
+   2. The transcript opens in a small panel; your app stays in front.
+   3. Edit it if needed.
+   4. **⌘⇧C** copies it and closes the panel. ⌘A then ⌘C (the whole
+      transcript) also closes it; copying part of it leaves the panel open.
+      **⌘⇧D** discards it.
+   5. Press ⌘V where you were and submit yourself. Hagig never pastes or
+      presses Return.
+
+| Key | Does | |
+| --- | --- | --- |
+| ⌃⌥Space | Hold to talk, or tap to start/stop | default, configurable |
+| ⌃⌥Esc | Cancel recording or transcription | default, configurable |
+| ⌘⇧C | Copy all and close (in review) | default, configurable |
+| ⌘⇧D | Dismiss (in review) | default, configurable |
+
+- **Shortcuts:** change them in Settings, or `[shortcuts]` in
+  [`config.toml`](#configuration).
+- **Start at login:** turn on **Open at login** in Settings.
+- **Logs:** `~/.local/state/hagig/logs` (`just logs`); see [Logs](#logs).
+- **Update:** `git pull && just build && just install`.
+- **Remove everything:** `just uninstall` ([details](#updating-and-uninstalling)).
+
 ## Features
 
 - **Local transcription.** Speech is recognized on your Mac with
@@ -136,19 +166,14 @@ recorded SHA-256 hashes and stored in `~/.local/share/hagig/models/`.
 1. Click the menu-bar microphone and choose **Record** (or press Return).
 2. Speak. Choose **Stop** (Return) to transcribe, or **Cancel** (Escape) to
    discard. Recording stops at five minutes, with a warning at 4:45.
-3. Edit the transcript if needed, then **Copy all** (⌘⇧C) or **Dismiss** (⌘⇧D).
+3. Edit the transcript if needed, then **Copy all** (⌘⇧C) or **Dismiss** (⌘⇧D);
+   both chords are configurable.
 4. Switch to your terminal or browser, paste and submit yourself.
 
 ### From the keyboard, in any app
 
-1. In your terminal or browser, hold **⌃⌥Space** and speak; release to
-   transcribe. Or tap it to start and tap it again to stop. **⌃⌥Esc** cancels.
-   A small panel near the top of the screen shows progress; your app stays in
-   front and keeps your typing while you record.
-2. The transcript opens in that panel, ready to edit. **⌘⇧C** copies it and
-   closes the panel; **⌘⇧D** discards it.
-3. Paste (⌘V) where you were and submit yourself.
-
+The steps are in [Quick start](#quick-start). The panel appears near the top of
+the screen; your app stays in front and keeps your typing while you record.
 Hagig never pastes, presses Return or looks at the app you are in, and the
 shortcuts need no Accessibility or Input Monitoring permission. Clicking the
 menu-bar icon while the panel shows moves it into the popover.
@@ -162,7 +187,8 @@ recording or transcribing. Right-click it to quit.
 Open **Settings** (the gear in the popover) to choose the model in use, the
 review editor (Standard or Vim), vocabulary terms that bias transcription toward
 names and jargon, and whether the transcription worker's network is blocked by
-macOS (on by default), and the record and cancel shortcuts. **Save** validates
+macOS (on by default), and the shortcuts: record and cancel (global), and
+Copy all and Dismiss (only while a transcript is in review). **Save** validates
 them, writes them, and applies them to the next recording; shortcuts change at
 once. If another app already uses a shortcut, Settings says so. Switching models
 is the **Use** button in **Speech models**. **Open at login** (also in Settings)
@@ -186,15 +212,18 @@ terms = ["Hagig", "Ghostty", "Qwen", "Amp"]   # names and jargon to bias toward
 network_isolation = "required"   # default; "disabled" explicitly opts out
 
 [shortcuts]
-record = "ctrl+option+space"     # default
-cancel = "ctrl+option+escape"    # default
+record = "ctrl+option+space"     # default; global
+cancel = "ctrl+option+escape"    # default; global
+copy = "cmd+shift+c"             # default; Copy all and close, in review only
+dismiss = "cmd+shift+d"          # default; Dismiss, in review only
 ```
 
 A shortcut is one or more of `cmd`, `ctrl`, `option` and `shift` plus one key:
 `a`–`z`, `0`–`9`, `f1`–`f12`, `space`, `return`, `tab`, `escape`, `minus`,
 `equal`, `comma`, `period`, `slash` or `semicolon`, joined by `+` in lowercase.
-Keys are positions on a US keyboard, whatever your layout. Record and cancel
-must differ.
+Keys are positions on a US keyboard, whatever your layout. All four must differ.
+Give `copy` and `dismiss` a `cmd` chord: without one the review editor (for
+example its Vim keys) may take the key first.
 
 Hagig runs a small per-user transcription service that stays warm after the app
 quits. It reads settings when it starts. Saving in the app restarts it when it is
@@ -206,6 +235,16 @@ just stop
 
 The app starts it again on the next recording. The bundle's `hagig` helper offers
 `model list`, `model install <id>` and `settings show|set` for scripting.
+
+### Logs
+
+The app and the service each keep a log in `~/.local/state/hagig/logs/` (or
+`$XDG_STATE_HOME/hagig/logs/`): `app.log` and `server.log`. Settings shows the
+folder with **Show in Finder**, and `just logs` opens it. Each line is a fixed
+event (recording started, request completed, worker exited, a failure's stable
+code, a duration) and never contains transcripts, audio, vocabulary, settings
+or file paths. Each file is kept under about 1 MiB, with one older copy
+(`.1`). The transcription worker's own output is discarded.
 
 ### Transcribing audio files
 
@@ -252,6 +291,7 @@ deletes:
 | The app | `~/Applications/Hagig.app`, plus any builds in `clients/macos/.build/` |
 | Settings | `~/.config/hagig` |
 | Models (1.5–4 GB each) | `~/.local/share/hagig` |
+| Logs | `~/.local/state/hagig` |
 | Service runtime files | `hagig` in your per-user temporary folder |
 
 It leaves the clone and uv's download cache alone; delete the clone yourself.

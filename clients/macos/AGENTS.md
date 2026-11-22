@@ -99,7 +99,8 @@ buttons in their inactive-window style.
 - **Keys.** Return is the default action where one exists (Record, Stop, Back to
   ready); Escape cancels while preparing, recording or transcribing. In review
   neither dismisses or copies: Return and Escape belong to the editor, Copy all is
-  Cmd-Shift-C and Dismiss is Cmd-Shift-D. The review editor is first responder
+  `[shortcuts] copy` and Dismiss is `[shortcuts] dismiss` (defaults Cmd-Shift-C
+  and Cmd-Shift-D; see the review shortcuts below). The review editor is first responder
   when it appears. Standard opens with the insertion point after the text; Vim
   Normal starts on the first character. The mode label is shown only in Vim.
 - **Setup help.** A settings error shows the helper's own stderr line when it is
@@ -176,11 +177,67 @@ recorded at the end of this section; physical-Mac acceptance is still open.
   returned to Ghostty without it. The microphone-prompt reopen never applies to
   a shortcut-started request. In the panel the Listening line names the
   registered shortcuts instead of Return/Escape, which go to the user's app.
+- **Review shortcuts (2026-11-22, no native evidence yet).** `[shortcuts] copy`
+  and `dismiss` (`StoredSettings.copyShortcut`/`dismissShortcut`, defaulted
+  when absent) are not hot keys: `ReviewShortcuts.swift` turns them into SwiftUI
+  `keyboardShortcut`s on Copy all and Dismiss (`Shortcut.keyEquivalent`, a pure
+  mapping: letters/digits as themselves, US punctuation characters, `.space`,
+  `.return`, `.tab`, `.escape`, F1–F12 as U+F704…U+F70F; and
+  `eventModifiers`), with an invalid or unknown value falling back to its
+  default. The shell passes them with `HagigView.reviewing(_:)` on each settings
+  read, so popover and panel (one view) agree; the harness uses the defaults.
+  Tooltips name the chord. Settings edits all four with the parsed glyph beside
+  each and disables Save unless they parse and differ pairwise. A chord without
+  Cmd may be consumed by the review editor first (Vim keys); unverified natively.
 - **Open at login.** `LoginItem` (in `SettingsView.swift`) is an explicit input to
   `HagigView`/`SettingsView`: status, set and open-Login-Items closures. The
   shell supplies `SMAppService.mainApp`; the harness and demo supply
   `LoginItem.inert`. The toggle applies immediately, outside the Save draft, and
   re-reads the real status each time the page shows.
+
+## App log (`app.log`; owner decision 2026-11-22, no native evidence yet)
+
+- **Owner.** `HagigPresentation/AppLog.swift`: `AppLog` (a class, `.inert` for
+  the harness, synthetic demo and tests), `AppEvent` (the fixed event names) and
+  `AppLogFields`, the closed field set: `code`, `stage`, `source`, `mode`,
+  `model` (strings) and `duration_ms`, `count`, `bytes` (integers). Strings must
+  be tokens `[A-Za-z0-9_.-]`, at most 64 bytes, else written `unrecognized`;
+  `code` keeps only what precedes a `:`, so a helper line's detail (a path, a
+  field) never follows it. Each line also has an ISO timestamp, a level
+  (`warning` for failures, else `info`) and `event`. Lines are built from these
+  values only, so nothing needs escaping.
+- **Path.** No Swift path rules: `Preferences.logsDir` comes from
+  `settings show`'s `logs_dir`; the shell calls `use(directory:)` when it is
+  published. Until then events are dropped, not buffered, so `app_launched` is
+  written when the folder is first known. The folder is created like
+  `paths.ensure_logs_dir` (0700 `hagig/` and `logs/`; a symlinked, foreign or
+  exposed one refused), the file `O_APPEND | O_NOFOLLOW` 0600 and owner-checked.
+  Past 1 MiB it is renamed `app.log.1` (replacing it) and reopened. All writes
+  run on a private serial queue; every failure is silent. `flush()` waits for
+  the queue (at terminate and in tests).
+- **Injection.** The shell owns one `AppLog` and passes it to
+  `DictationController(presentation:helper:log:)`, `Preferences(run:log:)`,
+  `HagigView(log:)` and its `LoginItem` closures; every default is `.inert`.
+  Settings shows a Logs row (the folder path, monospaced, and **Show in Finder**
+  through the injected `revealLogs` closure, `NSWorkspace.activateFileViewerSelecting`
+  in the shell; the harness passes an inert closure so the row renders).
+- **Events.** Shell: `app_launched`, `app_terminated`, `shortcuts_registered`
+  (count), `shortcut_registration_failed` (stage `record`|`cancel`; never the
+  chord), `panel_shown`, `panel_hidden`, `review_copied` (every full copy,
+  observed through `Presentation.copied`), `login_item_changed` /
+  `login_item_failed` (mode `enabled`|`disabled`). DictationController:
+  `recording_started` (source `button`|`shortcut`), `recording_stopped` and
+  `recording_auto_stopped` (the 5-minute cap; duration_ms of capture, bytes of
+  PCM sent), `recording_cancelled` (stage `admission`|`recording`|
+  `transcribing`), `transcription_completed` / `transcription_no_speech`
+  (duration_ms from Stop), `dictation_failed` (code: the server or client code,
+  `microphone_permission`, `microphone_failed`, `capture_invalid` or
+  `unreachable`; stage: the `DemoIssue` shown). HagigView: `review_dismissed`,
+  `review_copy_failed`. Preferences: `settings_saved`, `settings_save_failed`
+  (code), `model_download_started` / `_finished` / `_failed` (model alias;
+  failure code).
+- **Tests.** `AppLogTests` (fields, token sanitising, modes 0600/0700, rotation,
+  unwritable or symlinked folder, inert). Not yet compiled or run on macOS.
 
 Hosted run, 2026-11-22, on a macOS 27.2 arm64 VM (Amp Mac satellite, not a
 physical Mac or CI) with Xcode 27.2: `swift build` and `swift test` (63 run, 3
@@ -677,8 +734,8 @@ The agreed bounded table (TDD §8) implemented for native verification:
 | Changes | x, dd, dw, cw (enters Insert) |
 | Register | yy, p; deletes/yanks/paste use only the ephemeral register |
 | History | u, Ctrl-R; native Cmd-Z / Cmd-Shift-Z also available |
-| Native | Cmd-A; Cmd-C selection; Cmd-X selection Cut; Copy all / Cmd-Shift-C entire current edited text; native paste / Cmd-V |
-| Enter / exit | Enter only inserts in Standard/Insert, never submits; Escape in review never dismisses; explicit Dismiss / Cmd-Shift-D |
+| Native | Cmd-A; Cmd-C selection; Cmd-X selection Cut; Copy all / its chord (default Cmd-Shift-C) entire current edited text; native paste / Cmd-V |
+| Enter / exit | Enter only inserts in Standard/Insert, never submits; Escape in review never dismisses; explicit Dismiss / its chord (default Cmd-Shift-D) |
 
 This is NOT full Vim: no ex, plugins, macros, dot-repeat or external editor.
 Vertical motions follow logical lines, not wrapped display rows. Words group

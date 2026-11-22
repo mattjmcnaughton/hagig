@@ -181,6 +181,8 @@ terms = ["Hagig", "Ghostty", "Qwen", "Amp"]
 [shortcuts]
 record = "ctrl+option+space"  # Default. Global shortcut; see §8.
 cancel = "ctrl+option+escape" # Default.
+copy = "cmd+shift+c"          # Default. Review's Copy all, in review only.
+dismiss = "cmd+shift+d"       # Default. Review's Dismiss, in review only.
 ```
 
 The Python server parses configuration with stdlib `tomllib` and validates it
@@ -208,8 +210,12 @@ joined by `+`: one or more distinct modifiers from `cmd`, `ctrl`, `option`,
 `shift`, in any order, and exactly one key from `a`–`z`, `0`–`9`, `f1`–`f12`,
 `space`, `return`, `tab`, `escape`, `minus`, `equal`, `comma`, `period`, `slash`,
 `semicolon`. Keys are physical positions on a US layout (macOS virtual key codes).
-Anything else, or `record` equal to `cancel` as a modifier set and key, is
-`invalid_value` naming the field.
+Anything else is `invalid_value` naming the field. All four must be pairwise
+distinct as a modifier set and key (`copy` and `dismiss` added 2026-11-22); a
+duplicate is `invalid_value` naming the later field in the order `record`,
+`cancel`, `copy`, `dismiss`, including a field equal to a later one's default.
+`settings show|set` use the flat keys `record_shortcut`, `cancel_shortcut`,
+`copy_shortcut` and `dismiss_shortcut`.
 
 | Purpose | Proposed location/policy |
 | --- | --- |
@@ -217,7 +223,7 @@ Anything else, or `record` equal to `cancel` as a modifier set and key, is
 | Models | `$XDG_DATA_HOME/hagig/models/<manifest-id>/`, default `~/.local/share/hagig/models/<manifest-id>/` |
 | Runtime socket/lock | Private per-user runtime directory; see below |
 | Recordings/transcripts | In memory only; no history directory or temporary audio files |
-| Logs | Content-free stderr by default; no persistent app log file by default |
+| Logs | `$XDG_STATE_HOME/hagig/logs/`, default `~/.local/state/hagig/logs/`: content-free `app.log` (Swift app) and `server.log` (server), each 0600 in a 0700 directory, rotated at about 1 MiB to `<name>.1`; see §10 |
 
 Prefer a valid, owner-only `$XDG_RUNTIME_DIR/hagig/`. On macOS without it, use the
 OS-provided per-user temporary directory and a `hagig/` child. On Linux without it,
@@ -457,13 +463,21 @@ of the screen with the pointer, on a system material, hosting the same single
 surface as the popover (moved between them, never two at once). While preparing,
 recording and transcribing it is ordered front without becoming key, so the
 frontmost application keeps typing. Review and issues make it key without
-activating Hagig; the editor is first responder and Return, Escape, Cmd-Shift-C
-and Cmd-Shift-D keep their meanings. A successful Copy all closes the panel and
+activating Hagig; the editor is first responder and Return, Escape and the
+review's Copy all and Dismiss chords keep their meanings. A successful Copy all closes the panel and
 discards the review; Dismiss closes it; a failed Copy keeps it. Cancelled and
 No speech show for about 1.5 s. Clicking the menu-bar item moves the surface to
 the popover. After a panel that took the keyboard closes, if the application the
 shortcut was pressed in lost the keys (it is not frontmost, or Hagig became
 active), the app activates that application and no other. No native evidence yet.
+
+Review's Copy all and Dismiss (owner-approved 2026-11-22) take `[shortcuts]`
+`copy` and `dismiss` (defaults Cmd-Shift-C and Cmd-Shift-D) as SwiftUI key
+equivalents on those buttons, in the popover and panel alike, falling back to
+the default for a missing or invalid value; their tooltips name the chord. They
+are not global hot keys and act only while review shows. A chord without Cmd
+may be consumed by the editor first (for example a Vim key). No native evidence
+yet.
 
 Every live nonempty result enters editable review. Standard native editing is the
 default. Optional Vim mode is selected by the TOML schema in §3. This table is the
@@ -476,7 +490,7 @@ bounded agreed command set, not a promise of full Vim compatibility:
 | Changes | `x`, `dd`, `dw`, `cw`; `cw` enters Insert |
 | Register | `yy`, `p`; Vim deletes/yanks/paste use an in-memory register, never the macOS clipboard |
 | History | `u`, `Ctrl-R`; in-memory undo/redo, cleared with the transcript |
-| Native editing | Cmd-A selects all; Cmd-C copies selected text; Copy all / Cmd-Shift-C copies the entire edited buffer. Native paste and undo remain available; every system clipboard cut/copy route uses the currentHostOnly writer |
+| Native editing | Cmd-A selects all; Cmd-C copies selected text; Copy all / its chord (default Cmd-Shift-C) copies the entire edited buffer. Native paste and undo remain available; every system clipboard cut/copy route uses the currentHostOnly writer |
 | Enter | Inserts a newline only in Standard editing or Vim Insert mode; never submits |
 | Excluded | Ex commands, plugins, macros, dot-repeat, external editor integration and broader Vim emulation |
 
@@ -564,6 +578,23 @@ bounded numeric counters. Do not echo a filename or native error string that may
 contain sensitive input without deliberate sanitization. Worker stdout is
 protocol-only and stderr is discarded; set transformers logging to errors only
 and confirm no library prints prompts, tokens or vocabulary before adoption.
+
+Persistent logs (owner decision, 2026-11-22). The app and the server each keep
+a content-free log in `$XDG_STATE_HOME/hagig/logs/` (default
+`~/.local/state/hagig/logs/`, relative XDG values ignored) on macOS and Linux
+alike: `app.log` and `server.log`, one JSON object per line with an ISO
+timestamp, a level, a fixed event name and allowlisted scalar fields (stable
+codes, stages, modes, versions, counts, byte counts, durations, a model alias).
+Never transcripts, audio, vocabulary, settings content, raw OS or library error
+text, or file paths. Each file is 0600 in 0700 `hagig/` and `logs/`; an
+existing symlinked, foreign or group/other-accessible directory or file is
+refused untouched. At about 1 MiB a file is renamed to `<name>.1`, replacing
+the previous one. A log that cannot be opened or written is skipped: logging
+never stops the server or the app. The worker's stderr stays discarded (it runs
+third-party libraries); the server logs worker lifecycle on its behalf. The
+backend computes the directory and reports it as `settings show`'s `logs_dir`,
+so the app has no path rules of its own. `hagig uninstall` removes the state
+directory `hagig/`.
 
 Ordinary errors must be actionable without leaking content: permission needed,
 model missing/invalid, busy, no speech, worker failed, or deadline exceeded. A result

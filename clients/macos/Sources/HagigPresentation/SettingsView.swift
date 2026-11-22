@@ -28,6 +28,8 @@ struct SettingsView: View {
     @ObservedObject var preferences: Preferences
     /// Nil hides Open at login.
     let loginItem: LoginItem?
+    /// Shows the logs folder in Finder; nil hides the button.
+    let revealLogs: ((String) -> Void)?
     @State private var draft: Draft
     @State private var loginStatus = LoginItem.Status.disabled
     @State private var loginFailed = false
@@ -40,6 +42,8 @@ struct SettingsView: View {
         var vocabulary: String
         var recordShortcut: String
         var cancelShortcut: String
+        var copyShortcut: String
+        var dismissShortcut: String
 
         init(_ stored: StoredSettings?, fallbackModel: String?) {
             modelID = stored?.modelId ?? fallbackModel ?? ""
@@ -48,6 +52,8 @@ struct SettingsView: View {
             vocabulary = (stored?.vocabulary ?? []).joined(separator: "\n")
             recordShortcut = stored?.recordShortcut ?? Shortcut.defaultRecord
             cancelShortcut = stored?.cancelShortcut ?? Shortcut.defaultCancel
+            copyShortcut = stored?.copyShortcut ?? Shortcut.defaultCopy
+            dismissShortcut = stored?.dismissShortcut ?? Shortcut.defaultDismiss
         }
 
         var stored: StoredSettings {
@@ -55,19 +61,27 @@ struct SettingsView: View {
                 .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
             return StoredSettings(modelId: modelID, editorMode: editorMode,
                                   networkIsolation: isolated ? "required" : "disabled", vocabulary: terms,
-                                  recordShortcut: recordShortcut, cancelShortcut: cancelShortcut)
+                                  recordShortcut: recordShortcut, cancelShortcut: cancelShortcut,
+                                  copyShortcut: copyShortcut, dismissShortcut: dismissShortcut)
         }
 
-        /// Both parse and differ, as the backend requires.
+        /// All four parse and differ pairwise, as the backend requires.
         var shortcutsValid: Bool {
-            guard let record = Shortcut(recordShortcut), let cancel = Shortcut(cancelShortcut) else { return false }
-            return record != cancel
+            let parsed = [recordShortcut, cancelShortcut, copyShortcut, dismissShortcut].compactMap(Shortcut.init)
+            return parsed.count == 4 && Set(parsed).count == 4
+        }
+
+        /// Every value parses, but two are the same chord.
+        var shortcutsConflict: Bool {
+            let parsed = [recordShortcut, cancelShortcut, copyShortcut, dismissShortcut].compactMap(Shortcut.init)
+            return parsed.count == 4 && Set(parsed).count < 4
         }
     }
 
-    init(preferences: Preferences, loginItem: LoginItem? = nil) {
+    init(preferences: Preferences, loginItem: LoginItem? = nil, revealLogs: ((String) -> Void)? = nil) {
         self.preferences = preferences
         self.loginItem = loginItem
+        self.revealLogs = revealLogs
         _draft = State(initialValue: Draft(preferences.settings, fallbackModel: Self.firstInstalled(preferences)))
     }
 
@@ -122,6 +136,7 @@ struct SettingsView: View {
                     .lineLimit(2).truncationMode(.middle)
                     .accessibilityLabel("Settings file: \(path)")
             }
+            if let logs = preferences.logsDir { logsRow(logs) }
             HStack(spacing: 8) {
                 Button { preferences.close() } label: { Text("Done").frame(width: 92) }
                     .controlSize(.large).buttonStyle(.bordered).keyboardShortcut(.cancelAction)
@@ -167,17 +182,21 @@ struct SettingsView: View {
         }
     }
 
-    /// Typed in the config syntax, with the parsed chord beside each.
+    /// Typed in the config syntax, with the parsed chord beside each. Record and
+    /// Cancel work from any app; Copy and Dismiss only in review.
     private var shortcuts: some View {
-        field("Shortcuts, from any app") {
+        field("Shortcuts") {
             VStack(alignment: .leading, spacing: 6) {
-                shortcutRow("Record", text: $draft.recordShortcut)
-                shortcutRow("Cancel", text: $draft.cancelShortcut)
-                if Shortcut(draft.recordShortcut) != nil, Shortcut(draft.recordShortcut) == Shortcut(draft.cancelShortcut) {
-                    Text("Record and Cancel need different shortcuts.")
+                shortcutRow("Record", placeholder: Shortcut.defaultRecord, text: $draft.recordShortcut)
+                shortcutRow("Cancel", placeholder: Shortcut.defaultCancel, text: $draft.cancelShortcut)
+                shortcutRow("Copy", placeholder: Shortcut.defaultCopy, text: $draft.copyShortcut,
+                            accessibility: "Copy and close")
+                shortcutRow("Dismiss", placeholder: Shortcut.defaultDismiss, text: $draft.dismissShortcut)
+                if draft.shortcutsConflict {
+                    Text("Each shortcut needs a different chord.")
                         .font(.system(size: 11)).foregroundStyle(.orange)
                 }
-                Text("Hold Record to talk, or tap it to start and again to stop. Modifiers cmd, ctrl, option, shift; keys a–z, 0–9, f1–f12, space, return, tab, escape, by US key position.")
+                Text("Hold Record to talk, or tap it to start and again to stop. Copy and Dismiss work only while a transcript is in review; without cmd, the editor (Vim keys) may take them. Modifiers cmd, ctrl, option, shift; keys a–z, 0–9, f1–f12, space, return, tab, escape, by US key position.")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let issue = preferences.shortcutIssue {
@@ -188,20 +207,36 @@ struct SettingsView: View {
         }
     }
 
-    private func shortcutRow(_ label: String, text: Binding<String>) -> some View {
+    private func shortcutRow(_ label: String, placeholder: String, text: Binding<String>,
+                             accessibility: String? = nil) -> some View {
         let parsed = Shortcut(text.wrappedValue)
+        let name = accessibility ?? label
         return HStack(spacing: 8) {
-            Text(label).frame(width: 46, alignment: .leading)
-            TextField(label == "Record" ? Shortcut.defaultRecord : Shortcut.defaultCancel, text: text)
+            Text(label).frame(width: 52, alignment: .leading)
+            TextField(placeholder, text: text)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 12, design: .monospaced))
                 .autocorrectionDisabled()
-                .accessibilityLabel("\(label) shortcut")
+                .accessibilityLabel("\(name) shortcut")
             Text(parsed?.display ?? "Not valid")
                 .font(.system(size: 12, weight: parsed == nil ? .regular : .medium))
                 .foregroundStyle(parsed == nil ? Color.orange : Color.secondary)
                 .frame(width: 64, alignment: .leading)
-                .accessibilityLabel(parsed.map { "\(label) shortcut is \($0.display)" } ?? "\(label) shortcut is not valid")
+                .accessibilityLabel(parsed.map { "\(name) shortcut is \($0.display)" } ?? "\(name) shortcut is not valid")
+        }
+    }
+
+    /// Where `app.log` and `server.log` are; content-free (TDD §10).
+    private func logsRow(_ path: String) -> some View {
+        HStack(spacing: 8) {
+            Text("Logs").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+            Text(path).font(.system(size: 10, design: .monospaced)).foregroundStyle(.tertiary)
+                .lineLimit(1).truncationMode(.middle)
+                .accessibilityLabel("Logs folder: \(path)")
+            Spacer(minLength: 0)
+            if let revealLogs {
+                Button("Show in Finder") { revealLogs(path) }.controlSize(.small)
+            }
         }
     }
 

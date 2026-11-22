@@ -19,8 +19,8 @@ struct Screenshots {
         let pages = ["models", "modelConsent", "modelDownloading", "modelFailed", "settings"]
         let names = arguments[1] == "proof" ? ["ready"] :
             ["ready", "awaitingAdmission", "recording", "nearLimit", "transcribing", "fallback", "copied", "cancelled", "noSpeech"] + DemoIssue.allCases.map(\.rawValue) + pages
-        // Fixed synthetic inputs: a clock, a model alias, a helper path and a
-        // loudness curve. None is a measurement, a recording or a real path.
+        // Fixed synthetic inputs: a clock, a model alias, helper, settings and
+        // logs paths and a loudness curve. None is a measurement, a recording or a real path.
         let clock = Date(timeIntervalSinceReferenceDate: 800_000_000)
         let setup = SetupGuide(helperPath: "/Applications/Hagig.app/Contents/Helpers/hagig")
         // The tracked registry's names and sizes, as `hagig model list` reports
@@ -54,7 +54,8 @@ struct Screenshots {
                                                              vocabulary: ["Hagig", "Ghostty", "Qwen"],
                                                              recordShortcut: "ctrl+option+space",
                                                              cancelShortcut: "ctrl+option+escape"),
-                                    settingsPath: "/Users/you/.config/hagig/config.toml")
+                                    settingsPath: "/Users/you/.config/hagig/config.toml",
+                                    logsDir: "/Users/you/.local/state/hagig/logs")
             default: break
             }
             // Bounded synthetic gallery: review exercises Standard and Vim,
@@ -98,6 +99,7 @@ struct Screenshots {
                 // it is not what a popover looks like on any macOS.
                 let view = HagigView(presentation: presentation, animateActivity: false, clock: clock,
                                      setup: setup, preferences: preferences, loginItem: .inert,
+                                     revealLogs: { _ in }, // inert: shows the button, opens nothing
                                      copy: { _ in false })
                     .background(Color(nsColor: .windowBackgroundColor))
                     .environment(\.colorScheme, dark ? .dark : .light)
