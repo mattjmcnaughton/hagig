@@ -154,6 +154,7 @@ class Stack:
             "TMPDIR": str(self.tmp),
             "XDG_CONFIG_HOME": str(root / "config"),
             "XDG_DATA_HOME": str(data),
+            "XDG_STATE_HOME": str(root / "state"),
             "XDG_RUNTIME_DIR": str(runtime_base),
             "PATH": "/usr/bin:/bin",
         }
