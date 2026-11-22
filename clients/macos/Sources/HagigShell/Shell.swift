@@ -478,6 +478,12 @@ private struct DemoControls: View {
 @main
 struct Shell {
     @MainActor static func main() {
+        // `just uninstall` runs the app's executable with this flag: only the app
+        // itself can remove its login item. Exits without showing anything.
+        if CommandLine.arguments.contains("--unregister-login-item") {
+            try? SMAppService.mainApp.unregister()
+            exit([.enabled, .requiresApproval].contains(SMAppService.mainApp.status) ? 1 : 0)
+        }
         let app = NSApplication.shared
         let delegate = ShellDelegate()
         app.delegate = delegate
