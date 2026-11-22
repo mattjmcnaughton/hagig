@@ -59,6 +59,8 @@ source code character by character.
   Glass look and needs macOS 26 or later.
 - **[uv](https://docs.astral.sh/uv/)**, to build the bundled Python backend (CI
   uses 0.12.9).
+- **[just](https://just.systems)**, which runs the build and launch recipes in
+  the repository's `justfile`.
 - About 1.5 GB of disk for the app (it bundles Python, PyTorch and MLX), plus
   1.5–4 GB for a model.
 
@@ -70,10 +72,12 @@ Hagig is built from source into a self-contained, ad-hoc-signed `Hagig.app`.
 
 Install Xcode 16.4 or 27.2 from [Apple's downloads page](https://developer.apple.com/download/all/?q=xcode)
 (or with [`xcodes`](https://github.com/XcodesOrg/xcodes)), and open it once so it
-finishes installing its components. Then install uv:
+finishes installing its components. Then install uv and
+[just](https://just.systems):
 
 ```sh
 curl -LsSf https://astral.sh/uv/install.sh | sh   # or: brew install uv
+brew install just
 ```
 
 ### 2. Build the app
@@ -84,8 +88,8 @@ cd hagig
 
 # The build uses /Applications/Xcode_16.4.app if it exists, otherwise the Xcode
 # that `xcode-select -p` shows. To pick one explicitly:
-#   export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-bash clients/macos/bundle.sh build
+#   export DEVELOPER_DIR=/Applications/Xcode_27.2.app/Contents/Developer
+just build
 ```
 
 This writes `clients/macos/.build/Hagig.app`. The build downloads the locked
@@ -94,7 +98,7 @@ Python packages; that is its only network step.
 ### 3. Launch
 
 ```sh
-open clients/macos/.build/Hagig.app
+just open
 ```
 
 A microphone appears in the menu bar. macOS asks for microphone access the first
@@ -193,11 +197,10 @@ quits. It reads settings when it starts. Saving in the app restarts it when it i
 idle; after editing the file by hand, restart it yourself:
 
 ```sh
-HAGIG="$PWD/clients/macos/.build/Hagig.app/Contents/Helpers/hagig"
-"$HAGIG" stop
+just stop
 ```
 
-The app starts it again on the next recording. The same helper offers
+The app starts it again on the next recording. The bundle's `hagig` helper offers
 `model list`, `model install <id>` and `settings show|set` for scripting.
 
 ### Transcribing audio files
@@ -205,6 +208,7 @@ The app starts it again on the next recording. The same helper offers
 The same helper is a command-line client of the service:
 
 ```sh
+HAGIG="$PWD/clients/macos/.build/Hagig.app/Contents/Helpers/hagig"
 "$HAGIG" transcribe recording.wav   # prints the transcript
 "$HAGIG" status                     # service status, or "stopped"
 "$HAGIG" stop                       # stop the service and its worker
@@ -215,15 +219,15 @@ or 48 kHz, up to five minutes long.
 
 ## Updating and uninstalling
 
-To update, quit Hagig, run `"$HAGIG" stop`, move the old bundle aside (the build
+To update, quit Hagig, stop its service, move the old bundle aside (the build
 refuses to overwrite one), pull and rebuild:
 
 ```sh
-"$HAGIG" stop
+just stop
 mv clients/macos/.build/Hagig.app clients/macos/.build/Hagig.previous.app
 git pull
-bash clients/macos/bundle.sh build
-open clients/macos/.build/Hagig.app
+just build
+just open
 ```
 
 To uninstall, quit Hagig, then run:

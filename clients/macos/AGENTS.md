@@ -54,7 +54,10 @@ editor evidence, not microphone/socket or ordinary uninstrumented acceptance.
 
 Native commands remain `swift build` and `swift test` with Xcode16.4. The package
 pins AsyncHTTPClient exactly (1.28.0, the newest release Xcode 16.4's SwiftPM can
-load without the tracing packages) with a committed `Package.resolved`; SwiftNIO
+load without the tracing packages) with a committed `Package.resolved` that both
+Xcode 16.4 and 27.2 must leave unchanged (swift-collections 1.6.x and
+swift-async-algorithms 1.1.5; newer async-algorithms pins make Swift 6.2+
+rewrite the file); SwiftNIO
 and BoringSSL compile from source, so CI jobs allow longer than ten minutes. Tests
 exercise controlled admission/late-result cancellation, converter/cap bounds and
 an explicit test-only HTTP/1.1 peer on a real Unix socket that serves
@@ -278,8 +281,9 @@ release bundled is the one that uv version selects (the smoke prints it). No Hom
 
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode_16.4.app/Contents/Developer
-bash clients/macos/bundle.sh build   # or `run` to also open the new bundle
-open clients/macos/.build/Hagig.app  # launch an already built bundle
+just build   # bash clients/macos/bundle.sh build; `bundle.sh run` also opens it
+just open    # launch an already built bundle
+just stop    # stop that bundle's shared service
 ```
 
 Layout (paths relative to the bundle):

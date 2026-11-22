@@ -14,6 +14,9 @@ let package = Package(
         .package(url: "https://github.com/swift-server/async-http-client.git", exact: "1.28.0"),
         // Already required by AsyncHTTPClient; named so the client can use ByteBuffer,
         // HTTPHeaders and the POSIX event loop group directly. Package.resolved pins it.
+        // The pins must satisfy Xcode 16.4 and 27.2 alike: swift-collections stays
+        // at 1.6.x (1.7 needs tools 6.2), so swift-async-algorithms stays at 1.1.5,
+        // whose 6.2 manifest still accepts it; Xcode 27.2 rewrites a newer pin.
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.81.0"),
     ],
     targets: [
