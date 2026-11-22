@@ -177,6 +177,10 @@ network_isolation = "required" # Default. "disabled" is an explicit opt-out; req
 
 [vocabulary]
 terms = ["Hagig", "Ghostty", "Qwen", "Amp"]
+
+[shortcuts]
+record = "ctrl+option+space"  # Default. Global shortcut; see §8.
+cancel = "ctrl+option+escape" # Default.
 ```
 
 The Python server parses configuration with stdlib `tomllib` and validates it
@@ -196,8 +200,16 @@ selected mode in content-free status so explicit opt-out cannot be mistaken for
 sandbox enforcement.
 
 The settled editor choices are Standard by default and explicit Vim opt-in.
-Reject unknown values; no global shortcut field or key-hook permission is needed
-in this milestone. Native key routing and the bounded command table are in §8.
+Reject unknown values. Native key routing and the bounded command table are in §8.
+
+`[shortcuts]` (added 2026-11-22) is read only by the macOS app, through
+`hagig settings show`; the server ignores it. A shortcut is lowercase tokens
+joined by `+`: one or more distinct modifiers from `cmd`, `ctrl`, `option`,
+`shift`, in any order, and exactly one key from `a`–`z`, `0`–`9`, `f1`–`f12`,
+`space`, `return`, `tab`, `escape`, `minus`, `equal`, `comma`, `period`, `slash`,
+`semicolon`. Keys are physical positions on a US layout (macOS virtual key codes).
+Anything else, or `record` equal to `cancel` as a modifier set and key, is
+`invalid_value` naming the field.
 
 | Purpose | Proposed location/policy |
 | --- | --- |
@@ -244,7 +256,8 @@ At runtime the app and CLI exec the bundled interpreter directly with
 `UV_OFFLINE=1` and `UV_PYTHON_DOWNLOADS=never`; launch never resolves, syncs or
 downloads anything. Resolve helper paths relative to the installed bundle, not
 ambient PATH or the developer checkout. Model files remain separate to keep
-downloads explicit. No login service or automatic updates for the alpha.
+downloads explicit. No automatic updates for the alpha. Open at login is an
+opt-in `SMAppService.mainApp` login item the user turns on in Settings.
 
 The packaging spike must test relocation (uv environments are not relocatable by
 default), architecture compatibility, native loader paths, required local signing,
@@ -425,7 +438,32 @@ audio. An interruption cancels capture rather than delivering an unexplained
 partial prompt. The five-minute cap intentionally produces a partial recording;
 it is a separate, documented completion path. Warn at 4:45; Stop and 5:00 cap
 firing must converge on one completion. Cancel discards rather than transcribes.
-Record/Stop are menu-bar controls; there is no global shortcut or key injection.
+Record/Stop are menu-bar controls and global shortcuts; there is no key injection.
+
+Global shortcuts (owner-approved 2026-11-22). The app registers `[shortcuts]`
+record and cancel with Carbon `RegisterEventHotKey`, which needs no Accessibility
+or Input Monitoring permission and delivers press and release of those chords
+only. It reads them at launch with `settings show` (defaults when the file is
+missing, does not load or a value is invalid) and re-registers after each read,
+including a save; a chord another app holds is reported in Settings. Record while
+idle (Ready, Cancelled, No speech) starts the Record button's path. Released at
+least 0.35 s after that press it stops (hold to talk); a shorter tap keeps
+recording until the next press and release. Releasing a hold before admission
+cancels. Record is ignored while transcribing, in review and on an issue. Cancel
+cancels preparing, recording or transcribing; otherwise it is ignored.
+
+A shortcut-started request shows in a nonactivating, floating panel near the top
+of the screen with the pointer, on a system material, hosting the same single
+surface as the popover (moved between them, never two at once). While preparing,
+recording and transcribing it is ordered front without becoming key, so the
+frontmost application keeps typing. Review and issues make it key without
+activating Hagig; the editor is first responder and Return, Escape, Cmd-Shift-C
+and Cmd-Shift-D keep their meanings. A successful Copy all closes the panel and
+discards the review; Dismiss closes it; a failed Copy keeps it. Cancelled and
+No speech show for about 1.5 s. Clicking the menu-bar item moves the surface to
+the popover. After a panel that took the keyboard closes, if the application the
+shortcut was pressed in lost the keys (it is not frontmost, or Hagig became
+active), the app activates that application and no other. No native evidence yet.
 
 Every live nonempty result enters editable review. Standard native editing is the
 default. Optional Vim mode is selected by the TOML schema in §3. This table is the
@@ -465,7 +503,8 @@ control local clipboard managers or destination retention/transmission. Require
 the second-device check with an ordinary-copy positive control in PRD AC5.
 
 No Accessibility destination inspection, app/window/input identity snapshot,
-focus restoration, simulated paste, or automatic submission is in this milestone.
+simulated paste, or automatic submission is in this milestone; the only focus
+restoration is the shortcut panel's return of keys described above.
 The constitution's stricter rules still govern any future automatic delivery;
 AC1/AC2 destination work is deferred, not a blocking feasibility spike for Copy.
 Review can take editor focus intentionally. Routine feedback must not activate a
@@ -621,9 +660,10 @@ Create external tracker issues only when requested.
 ## 13. Decisions to review, and evidence still missing
 
 Settled owner choices: Standard default, optional bounded Vim, menu-bar Record/
-Stop without a global shortcut, 5:00 cap/4:45 warning, local bundle before separate
-distribution, required-default/explicit-disabled isolation, functionality-first
-numeric measurements, and (2026-11-10) a Python backend managed with uv and
+Stop plus (2026-11-22) configurable global shortcuts and a nonactivating panel,
+5:00 cap/4:45 warning, local bundle before separate distribution,
+required-default/explicit-disabled isolation, functionality-first numeric
+measurements, and (2026-11-10) a Python backend managed with uv and
 generated from the owner's template, REST over the private Unix socket with no
 TCP, Swift AsyncHTTPClient, no Linux required-mode implementation initially,
 and two engines behind one worker Protocol (Qwen3-ASR through transformers,
@@ -653,6 +693,9 @@ No review can substitute for these still-unverified facts:
   permissions; hosted relocation evidence exists.
 - The AsyncHTTPClient and Python dependency privacy reviews.
 - Native capture/editor/clipboard routing and cancellation boundary behavior.
+- Global shortcut registration and conflicts, the shortcut panel's key and focus
+  behavior (including whether keys return without the activation fallback) and
+  the login item on a real Mac.
 - Validated local app build/terminal launch recipe, hosted exact-head evidence,
   and owner final physical-Mac/human/second-device tests and consented fixtures.
 

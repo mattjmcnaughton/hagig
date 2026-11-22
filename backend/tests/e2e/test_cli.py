@@ -433,6 +433,8 @@ def test_settings_set_writes_a_first_settings_file_the_server_accepts(home):
         "editor_mode": "vim",
         "network_isolation": "required",
         "vocabulary": terms,
+        "record_shortcut": "ctrl+option+space",
+        "cancel_shortcut": "ctrl+option+escape",
     }
     # A partial change keeps the rest; the same values again change nothing.
     isolation = settings_set(home, {"network_isolation": "disabled"})
@@ -460,6 +462,49 @@ def test_settings_set_refuses_without_writing(home):
         refused = settings_set(home, wrong)
         assert (refused.returncode, refused.stderr) == (2, b"settings_input_invalid\n")
     assert not home.config_path.exists()
+
+
+def test_settings_set_round_trips_shortcuts_and_refuses_bad_ones(home):
+    tracked_installation(home, "qwen3-asr-1.7b")
+    result = settings_set(
+        home,
+        {
+            "model_id": "qwen3-asr-1.7b",
+            "record_shortcut": "cmd+shift+space",
+            "cancel_shortcut": "cmd+shift+escape",
+        },
+    )
+    assert (result.returncode, result.stdout, result.stderr) == (0, b"updated\n", b"")
+    with open(home.config_path, "rb") as handle:
+        written = tomllib.load(handle)
+    assert written == {
+        "model": {"id": "qwen3-asr-1.7b"},
+        "shortcuts": {"record": "cmd+shift+space", "cancel": "cmd+shift+escape"},
+    }
+    settings = shown(home)["settings"]
+    assert (settings["record_shortcut"], settings["cancel_shortcut"]) == (
+        "cmd+shift+space",
+        "cmd+shift+escape",
+    )
+    # A change to one shortcut keeps the other and every other setting.
+    assert settings_set(home, {"cancel_shortcut": "f12+ctrl"}).stdout == b"updated\n"
+    settings = shown(home)["settings"]
+    assert settings["record_shortcut"] == "cmd+shift+space"
+    assert settings["cancel_shortcut"] == "f12+ctrl"
+    before = home.config_path.read_bytes()
+    secret = "ctrl+private-secret"
+    bad = settings_set(home, {"record_shortcut": secret})
+    assert (bad.returncode, bad.stderr) == (
+        2,
+        b"config_invalid: shortcuts.record invalid_value\n",
+    )
+    same = settings_set(home, {"record_shortcut": "ctrl+f12"})
+    assert (same.returncode, same.stderr) == (
+        2,
+        b"config_invalid: shortcuts.cancel invalid_value\n",
+    )
+    assert settings_set(home, {"record_shortcut": 5}).returncode == 2
+    assert home.config_path.read_bytes() == before
 
 
 def test_an_unloadable_settings_file_is_replaced_only_when_asked(home):

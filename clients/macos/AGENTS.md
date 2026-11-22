@@ -139,6 +139,65 @@ buttons in their inactive-window style.
   restarts an idle server; Swift parses no TOML and keeps no model list. Quit
   interrupts a download in progress.
 
+## Global shortcuts, shortcut panel and login item
+
+Owner-approved 2026-11-22 (PRD and TDD §8). Evidence so far is the hosted run
+recorded at the end of this section; physical-Mac acceptance is still open.
+
+- **Registrar.** `HagigShell/GlobalShortcuts.swift` registers `[shortcuts]`
+  record and cancel with Carbon `RegisterEventHotKey` on the application event
+  target, with press and release handlers. No Accessibility or Input Monitoring
+  permission and no key monitor beyond these chords. Normal mode only. At launch
+  the shell registers the defaults, then reads `settings show` (offline) and
+  re-registers on every settings read, including after Save; an invalid or
+  missing value, or a file that does not load, keeps that default. A chord that
+  fails to register is shown in Settings ("⌃⌥Space is in use by another app").
+- **Grammar and gesture.** `HagigPresentation/Shortcut.swift`: `Shortcut`
+  mirrors the backend's grammar (`config.parse_shortcut`) into a virtual key
+  code, Carbon modifier mask and a display string; `ShortcutGesture` is the pure
+  hold (≥0.35 s) / tap decision. Change the grammar in both places together.
+- **Panel.** `ShortcutPanel` is a borderless `.nonactivatingPanel` that can become
+  key, floating, on all Spaces and beside full-screen apps, not hiding on
+  deactivation, with an `NSVisualEffectView` `.popover` material behind the view
+  (HagigView still paints none). There is one `NSHostingController`: the shell
+  detaches it from the popover (`contentViewController = nil`) before adding its
+  view to the panel, and gives it back before the popover shows, so only one
+  `ReviewEditor` and one `attachEditor` binding ever exist. Active stages order
+  the panel front without key; review and issues make it key without activating
+  Hagig. A successful Copy all (observed through `Presentation.copied`) closes the
+  panel and resets; Ready (Dismiss, Back to ready) closes it; Cancelled and No
+  speech hide after 1.5 s. A menu-bar click moves the surface to the popover.
+  After a key panel closes, the shell activates the application that was
+  frontmost when the shortcut started, only if it is no longer frontmost or
+  Hagig became active; never any other application. In the hosted run below keys
+  returned to Ghostty without it. The microphone-prompt reopen never applies to
+  a shortcut-started request. In the panel the Listening line names the
+  registered shortcuts instead of Return/Escape, which go to the user's app.
+- **Open at login.** `LoginItem` (in `SettingsView.swift`) is an explicit input to
+  `HagigView`/`SettingsView`: status, set and open-Login-Items closures. The
+  shell supplies `SMAppService.mainApp`; the harness and demo supply
+  `LoginItem.inert`. The toggle applies immediately, outside the Save draft, and
+  re-reads the real status each time the page shows.
+
+Hosted run, 2026-11-22, on a macOS 27.2 arm64 VM (Amp Mac satellite, not a
+physical Mac or CI) with Xcode 27.2: `swift build` and `swift test` (63 run, 3
+skipped, 0 failures); `bundle.sh build`, the bundle moved outside the checkout,
+`qwen3-asr-0.6b` installed and speech from `say` routed through BlackHole as the
+default input. Keys were synthetic CGEvents from a separate driver app (not a
+physical keyboard). Observed with Ghostty frontmost throughout (checked with
+`NSWorkspace.frontmostApplication` at each step): hold ⌃⌥Space → Listening in
+the panel → release → Transcribing → Review, typing went into the panel's editor,
+⌘⇧C closed it and the next ⌘V pasted the edited transcript at Ghostty's prompt;
+tap-to-start then tap-to-stop; ⌘⇧D; ⌃⌥Esc → Cancelled, then the panel hid; the
+microphone prompt on first use and the microphone-off issue shown in the panel;
+a menu-bar click during review moved the edited text into the popover intact;
+Settings saved `ctrl+option+r`, after which ⌃⌥R recorded and ⌃⌥Space did not;
+Open at login registered (`sfltool dumpbtm`: enabled, allowed). Not checked:
+physical keyboard repeat, Secure Input, full-screen Spaces, multiple displays,
+a chord already held by another app, Chrome, TCC across rebuilds on a physical
+Mac, and login at an actual reboot. ⌘A does not select all in Settings fields
+(the accessory app has no Edit menu; this predates the shortcut fields).
+
 ## Boundaries
 
 - `HagigPresentation/Presentation.swift`: in-memory presentation/actions, request
@@ -146,8 +205,8 @@ buttons in their inactive-window style.
   authoritative server state, a Swift inference backend, or an IPC implementation.
 - `HagigPresentation/HagigView.swift`: reusable real SwiftUI surface. The shell and
   capture executable must use this same view; never duplicate screenshot UI.
-- `HagigShell`: AppKit status item/popover, real Record/Stop/Cancel and explicit
-  current-host-only Copy/Cut. Intentional capture requests Microphone permission
+- `HagigShell`: AppKit status item/popover, the shortcut registrar and panel, the
+  login item, real Record/Stop/Cancel and explicit current-host-only Copy/Cut. Intentional capture requests Microphone permission
   after backend admission. No automatic paste or key injection; a model downloads
   only after the user confirms it on the consent page.
   Demo controls require `--synthetic-demo`.
@@ -194,7 +253,8 @@ swift run HagigScreenshots states captures
 Use `swift run HagigShell --synthetic-demo` for the editor demo. Click the
 menu-bar microphone; use Simulate recording → Simulate
 release → Simulate result → explicit Copy or Dismiss. Escape cancels active work.
-Preview error and Quit live below the shared surface. No global shortcut exists.
+Preview error and Quit live below the shared surface. The demo registers no
+global shortcut and never shows the shortcut panel.
 Normal `swift run HagigShell` has no paired Contents/Helpers/hagig and must fail
 safely, not substitute demo success. Use the bundle for real integration.
 

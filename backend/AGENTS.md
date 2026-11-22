@@ -65,7 +65,9 @@ The app bundle (#48), which syncs both engine extras, is described in
   overrides. `model.id` is required and has no default (owner decision,
   2026-11-10): a missing file, `[model]` table or `id` fails with
   `model.id missing`. Every other field defaults: `editor.mode = "standard"`,
-  `inference.network_isolation = "required"`, `vocabulary.terms = []`.
+  `inference.network_isolation = "required"`, `vocabulary.terms = []`,
+  `shortcuts.record = "ctrl+option+space"`, `shortcuts.cancel =
+  "ctrl+option+escape"`.
 - #45's CLI must turn `model.id missing` into an actionable stderr line that
   says to set `[model] id` in the config file. It may name the config path but
   never prints file content.
@@ -83,6 +85,10 @@ The app bundle (#48), which syncs both engine extras, is described in
 
   [vocabulary]
   terms = ["Hagig", "Ghostty", "Qwen", "Amp"]  # optional
+
+  [shortcuts]
+  record = "ctrl+option+space"   # optional; the macOS app's global shortcuts
+  cancel = "ctrl+option+escape"  # optional
   ```
 - Model aliases: `qwen3-asr-0.6b`, `qwen3-asr-1.7b`, `whisper-large-v3-turbo`
   (the #47 manifest IDs). Whisper is rejected unless the platform is Darwin on
@@ -100,6 +106,16 @@ The app bundle (#48), which syncs both engine extras, is described in
   into model prompts). At most 200 terms (`too_many`), 100 characters each
   (`too_long`) and 16 KiB of UTF-8 in total (`too_large`). Errors name
   `vocabulary.terms` or `vocabulary.terms[<index>]`.
+- Shortcuts (`parse_shortcut`): lowercase tokens joined by `+`, one or more
+  distinct modifiers from `SHORTCUT_MODIFIERS` (`cmd`, `ctrl`, `option`,
+  `shift`) in any order and exactly one key from `SHORTCUT_KEYS` (`a`–`z`,
+  `0`–`9`, `f1`–`f12`, `space`, `return`, `tab`, `escape`, `minus`, `equal`,
+  `comma`, `period`, `slash`, `semicolon`), named by US-layout physical position
+  (macOS virtual key codes). Anything else is `invalid_value` on
+  `shortcuts.record` or `shortcuts.cancel`; `cancel` equal to `record` (same
+  modifier set and key, including a changed `record` against the default
+  `cancel`) is `invalid_value` on `shortcuts.cancel`. The server ignores them;
+  the Swift `Shortcut` type mirrors this grammar, so change both together.
 - Open engine limit: Whisper's prompt window (about 224 tokens) is smaller than
   these caps allow. #49 owns how the engine handles it; validation here does not.
 
@@ -333,9 +349,13 @@ install|list`, `settings show|set`):
   `received` callback), then `{"event":"done","result":...}`. Failures stay
   stable codes on stderr with the same exits.
 - `settings show`: one JSON object, `path`, `exists`, `issue` (when the file
-  exists and does not load) and `settings` (every field, defaults filled).
+  exists and does not load) and `settings` (every field, defaults filled:
+  `model_id`, `editor_mode`, `network_isolation`, `vocabulary`,
+  `record_shortcut`, `cancel_shortcut`). `set` writes the shortcuts as a
+  `[shortcuts]` table.
 - `settings set [--replace]`: a JSON object of any of `model_id`,
-  `editor_mode`, `network_isolation`, `vocabulary` on stdin (strings only, else
+  `editor_mode`, `network_isolation`, `vocabulary`, `record_shortcut`,
+  `cancel_shortcut` on stdin (strings only, else
   `settings_input_invalid`, exit 2), merged over the current file, validated by
   the same `Config` the server loads (`config_invalid: <field> <code>`, exit 2),
   the model checked as installed (`model_missing`, `model_invalid`; nothing is

@@ -57,7 +57,10 @@ def test_other_fields_default_when_only_model_id_is_set(tmp_path):
     assert config.editor.mode == "standard"
     assert config.inference.network_isolation == "required"
     assert config.vocabulary.terms == []
-    assert load(tmp_path, "[editor]\n[inference]\n[vocabulary]\n" + MODEL) == config
+    assert config.shortcuts.record == "ctrl+option+space"
+    assert config.shortcuts.cancel == "ctrl+option+escape"
+    empty_tables = "[editor]\n[inference]\n[vocabulary]\n[shortcuts]\n"
+    assert load(tmp_path, empty_tables + MODEL) == config
 
 
 def test_full_valid_file(tmp_path):
@@ -162,6 +165,75 @@ def test_several_issues_are_reported_together(tmp_path):
     assert issues(tmp_path, text) == [
         ("editor.mode", "invalid_value"),
         ("model.id", "invalid_value"),
+    ]
+
+
+# Shortcuts
+
+
+@pytest.mark.parametrize(
+    "shortcut",
+    [
+        "ctrl+option+space",
+        "space+option+ctrl",
+        "cmd+shift+d",
+        "shift+f12",
+        "ctrl+option+cmd+shift+0",
+        "option+escape",
+        "ctrl+slash",
+    ],
+)
+def test_valid_shortcuts(tmp_path, shortcut):
+    text = f'[shortcuts]\nrecord = "{shortcut}"\ncancel = "ctrl+option+tab"\n'
+    assert load(tmp_path, text).shortcuts.record == shortcut
+
+
+@pytest.mark.parametrize(
+    "shortcut",
+    [
+        "",
+        "space",  # no modifier
+        "ctrl",  # no key
+        "ctrl+option",
+        "ctrl+a+b",  # two keys
+        "ctrl+ctrl+a",  # duplicate modifier
+        "Ctrl+a",  # uppercase
+        "ctrl+A",
+        "ctrl + a",  # spaces
+        "ctrl+",
+        "+a",
+        "ctrl++a",
+        "control+a",  # not a modifier name
+        "alt+a",
+        "command+a",
+        "fn+a",
+        "ctrl+f13",
+        "ctrl+enter",
+        "ctrl+é",
+        "ctrl+[",
+    ],
+)
+def test_invalid_shortcuts_name_the_field(tmp_path, shortcut):
+    text = f'[shortcuts]\nrecord = "{shortcut}"\n'
+    assert issues(tmp_path, text) == [("shortcuts.record", "invalid_value")]
+    text = f'[shortcuts]\ncancel = "{shortcut}"\n'
+    assert issues(tmp_path, text) == [("shortcuts.cancel", "invalid_value")]
+
+
+def test_record_and_cancel_must_differ_in_any_order(tmp_path):
+    text = '[shortcuts]\nrecord = "ctrl+shift+r"\ncancel = "shift+ctrl+r"\n'
+    assert issues(tmp_path, text) == [("shortcuts.cancel", "invalid_value")]
+    # Changing only record to the default cancel collides too.
+    text = '[shortcuts]\nrecord = "ctrl+option+escape"\n'
+    assert issues(tmp_path, text) == [("shortcuts.cancel", "invalid_value")]
+
+
+def test_shortcut_types_and_unknown_keys(tmp_path):
+    assert issues(tmp_path, "[shortcuts]\nrecord = 1\n") == [
+        ("shortcuts.record", "invalid_type")
+    ]
+    assert issues(tmp_path, '[shortcuts]\ntoggle = "ctrl+t"\n') == [
+        ("shortcuts", "unknown_key")
     ]
 
 
@@ -275,6 +347,8 @@ def test_unreadable_file_has_a_fixed_code(tmp_path):
         f'[vocabulary]\nterms = {{ "{SENTINEL}" = 1 }}\n',
         f'{SENTINEL} = "{SENTINEL}"\n',
         f"[editor\n{SENTINEL}\n",
+        f'[shortcuts]\nrecord = "ctrl+{SENTINEL}"\n',
+        f'[shortcuts]\n{SENTINEL} = "ctrl+a"\n',
     ],
 )
 def test_errors_are_content_free(tmp_path, text):
