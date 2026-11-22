@@ -144,7 +144,9 @@ final class PreferencesTests: XCTestCase {
                                         networkIsolation: "required", vocabulary: ["Hagig", "日本語"]))
         await settle { preferences.saved }
         let object = try? JSONSerialization.jsonObject(with: Data(helper.inputs[0].utf8)) as? [String: Any]
-        XCTAssertEqual(object.map { Set($0.keys) }, ["model_id", "editor_mode", "network_isolation", "vocabulary"])
+        XCTAssertEqual(object.map { Set($0.keys) }, ["model_id", "editor_mode", "network_isolation", "vocabulary",
+                                                     "record_shortcut", "cancel_shortcut"])
+        XCTAssertEqual(object?["record_shortcut"] as? String, "ctrl+option+space")
         XCTAssertEqual(object?["editor_mode"] as? String, "vim")
         XCTAssertEqual(object?["vocabulary"] as? [String], ["Hagig", "日本語"])
         XCTAssertFalse(helper.calls.contains { $0.contains("Hagig") }, "vocabulary never in arguments")
@@ -154,6 +156,24 @@ final class PreferencesTests: XCTestCase {
         XCTAssertFalse(preferences.saved)
         preferences.save(StoredSettings(modelId: "qwen3-asr-0.6b"), replace: true)
         await settle { helper.calls.contains(["settings", "set", "--replace"]) }
+    }
+
+    func testSettingsShowDecodesShortcutsAndDefaultsThemWhenAbsent() async {
+        let helper = ScriptedHelper()
+        helper.shown = #"{"path":"/x/config.toml","exists":true,"issue":null,"settings":{"model_id":"qwen3-asr-0.6b","editor_mode":"standard","network_isolation":"required","vocabulary":[],"record_shortcut":"cmd+shift+space","cancel_shortcut":"cmd+shift+escape"}}"#
+        let preferences = Preferences(run: helper.run)
+        preferences.loadSettings()
+        await settle { preferences.settings != nil }
+        XCTAssertEqual(preferences.settings?.recordShortcut, "cmd+shift+space")
+        XCTAssertEqual(preferences.settings?.cancelShortcut, "cmd+shift+escape")
+        // Only the offline settings read ran.
+        XCTAssertEqual(helper.commands, ["settings show"])
+        helper.shown = #"{"path":"/x/config.toml","exists":true,"issue":null,"settings":{"model_id":"qwen3-asr-0.6b","editor_mode":"standard","network_isolation":"required","vocabulary":[]}}"#
+        let revision = preferences.settingsRevision
+        preferences.loadSettings()
+        await settle { preferences.settingsRevision > revision }
+        XCTAssertEqual(preferences.settings?.recordShortcut, Shortcut.defaultRecord)
+        XCTAssertEqual(preferences.settings?.cancelShortcut, Shortcut.defaultCancel)
     }
 
     func testWithoutAHelperNothingRuns() {

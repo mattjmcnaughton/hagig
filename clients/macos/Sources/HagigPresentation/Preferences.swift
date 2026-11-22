@@ -41,11 +41,31 @@ public struct StoredSettings: Equatable, Sendable, Codable {
     public var editorMode: String
     public var networkIsolation: String
     public var vocabulary: [String]
+    /// Global shortcuts in the config syntax (see `Shortcut`).
+    public var recordShortcut: String
+    public var cancelShortcut: String
 
     public init(modelId: String, editorMode: String = "standard", networkIsolation: String = "required",
-                vocabulary: [String] = []) {
+                vocabulary: [String] = [], recordShortcut: String = Shortcut.defaultRecord,
+                cancelShortcut: String = Shortcut.defaultCancel) {
         self.modelId = modelId; self.editorMode = editorMode
         self.networkIsolation = networkIsolation; self.vocabulary = vocabulary
+        self.recordShortcut = recordShortcut; self.cancelShortcut = cancelShortcut
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case modelId, editorMode, networkIsolation, vocabulary, recordShortcut, cancelShortcut
+    }
+
+    /// Shortcuts default when absent, as from a helper built before them.
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        modelId = try values.decode(String.self, forKey: .modelId)
+        editorMode = try values.decode(String.self, forKey: .editorMode)
+        networkIsolation = try values.decode(String.self, forKey: .networkIsolation)
+        vocabulary = try values.decode([String].self, forKey: .vocabulary)
+        recordShortcut = try values.decodeIfPresent(String.self, forKey: .recordShortcut) ?? Shortcut.defaultRecord
+        cancelShortcut = try values.decodeIfPresent(String.self, forKey: .cancelShortcut) ?? Shortcut.defaultCancel
     }
 }
 
@@ -105,6 +125,8 @@ public final class Preferences: ObservableObject {
     /// The last save's stable failure code, or nil.
     @Published public private(set) var saveFailure: String?
     @Published public private(set) var saved = false
+    /// Set by the shell when a global shortcut could not be registered.
+    @Published public private(set) var shortcutIssue: String?
     private let run: HelperRun?
     private var installTask: Task<Void, Never>?
 
@@ -125,6 +147,16 @@ public final class Preferences: ObservableObject {
     public func close() {
         page = nil
         pending = nil
+    }
+
+    /// Read only the settings file (offline), for example at launch.
+    public func loadSettings() {
+        Task { await readSettings() }
+    }
+
+    /// A short line for Settings when registering a shortcut failed, or nil.
+    public func report(shortcutIssue: String?) {
+        self.shortcutIssue = shortcutIssue
     }
 
     /// Read the registry and the settings file again.

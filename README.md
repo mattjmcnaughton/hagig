@@ -131,6 +131,20 @@ recorded SHA-256 hashes and stored in `~/.local/share/hagig/models/`.
 3. Edit the transcript if needed, then **Copy all** (⌘⇧C) or **Dismiss** (⌘⇧D).
 4. Switch to your terminal or browser, paste and submit yourself.
 
+### From the keyboard, in any app
+
+1. In your terminal or browser, hold **⌃⌥Space** and speak; release to
+   transcribe. Or tap it to start and tap it again to stop. **⌃⌥Esc** cancels.
+   A small panel near the top of the screen shows progress; your app stays in
+   front and keeps your typing while you record.
+2. The transcript opens in that panel, ready to edit. **⌘⇧C** copies it and
+   closes the panel; **⌘⇧D** discards it.
+3. Paste (⌘V) where you were and submit yourself.
+
+Hagig never pastes, presses Return or looks at the app you are in, and the
+shortcuts need no Accessibility or Input Monitoring permission. Clicking the
+menu-bar icon while the panel shows moves it into the popover.
+
 Copy uses the macOS current-device-only option, so the text is not shared to your
 other devices through Universal Clipboard. The menu-bar icon shows whether Hagig is
 recording or transcribing. Right-click it to quit.
@@ -140,8 +154,11 @@ recording or transcribing. Right-click it to quit.
 Open **Settings** (the gear in the popover) to choose the model in use, the
 review editor (Standard or Vim), vocabulary terms that bias transcription toward
 names and jargon, and whether the transcription worker's network is blocked by
-macOS (on by default). **Save** validates them, writes them, and applies them to
-the next recording. Switching models is the **Use** button in **Speech models**.
+macOS (on by default), and the record and cancel shortcuts. **Save** validates
+them, writes them, and applies them to the next recording; shortcuts change at
+once. If another app already uses a shortcut, Settings says so. Switching models
+is the **Use** button in **Speech models**. **Open at login** (also in Settings)
+applies immediately; macOS may ask you to allow it in System Settings › Login Items.
 
 They live in `~/.config/hagig/config.toml` (or `$XDG_CONFIG_HOME/hagig/config.toml`),
 which you can also edit by hand. Saving from the app rewrites the file without its
@@ -159,7 +176,17 @@ terms = ["Hagig", "Ghostty", "Qwen", "Amp"]   # names and jargon to bias toward
 
 [inference]
 network_isolation = "required"   # default; "disabled" explicitly opts out
+
+[shortcuts]
+record = "ctrl+option+space"     # default
+cancel = "ctrl+option+escape"    # default
 ```
+
+A shortcut is one or more of `cmd`, `ctrl`, `option` and `shift` plus one key:
+`a`–`z`, `0`–`9`, `f1`–`f12`, `space`, `return`, `tab`, `escape`, `minus`,
+`equal`, `comma`, `period`, `slash` or `semicolon`, joined by `+` in lowercase.
+Keys are positions on a US keyboard, whatever your layout. Record and cancel
+must differ.
 
 Hagig runs a small per-user transcription service that stays warm after the app
 quits. It reads settings when it starts. Saving in the app restarts it when it is
@@ -248,7 +275,9 @@ prove absolute privacy.
 
 What exists on `main`:
 
-- **macOS app** (#21, #22): menu-bar Record/Stop/Cancel, live level, editable
+- **macOS app** (#21, #22): menu-bar Record/Stop/Cancel, global record/cancel
+  shortcuts with a panel that keeps your app in front (no native evidence yet),
+  open at login, live level, editable
   review (standard or Vim), current-device-only Copy, and setup help for a missing
   settings file, missing model, denied microphone and other failures.
 - **Python backend** (#43–#45, #47, #49): per-user server on a private Unix

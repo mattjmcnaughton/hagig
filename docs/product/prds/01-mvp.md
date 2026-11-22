@@ -2,6 +2,10 @@
 
 Status: agreed copy-only milestone scope (#20); not an implemented or accepted alpha.
 
+Amended 2026-11-22 (owner-approved): configurable global record/cancel shortcuts,
+a nonactivating shortcut panel and an opt-in open-at-login item are in scope.
+Automatic paste/submission, auto-copy and destination inspection stay excluded.
+
 This document records the private-alpha requirements and the owner's functionality-
 first decision: retain numeric measurements without making their proposed targets
 first-working-app blockers. Safety/privacy gates are unchanged.
@@ -36,7 +40,11 @@ the target, pastes and submits; Hagig never inspects, focuses or injects keys th
 
 ### Included
 
-- Native macOS menu-bar application with Record/Stop controls, no global shortcut.
+- Native macOS menu-bar application with Record/Stop controls.
+- Configurable global record and cancel shortcuts (hold to talk, or tap to start
+  and stop) that need no Accessibility or Input Monitoring permission, shown in a
+  nonactivating panel that never changes the frontmost application.
+- Optional open at login.
 - Microphone capture, Stop-to-transcribe, and Escape/Cancel cancellation.
 - English transcription using one configured local inference engine at a time;
   Qwen3-ASR and Whisper (Apple Silicon only) are both supported.
@@ -60,7 +68,8 @@ the target, pastes and submits; Hagig never inspects, focuses or injects keys th
   automatic updates, and broad OS/hardware support commitments.
 - Linux desktop app, multilingual transcription, literal source-code dictation,
   coding-agent plugins, MCP, and an inference-engine plugin framework.
-- Automatic paste/submission, destination-identity/focus work and global shortcuts.
+- Automatic paste/submission, auto-copy on result, and destination inspection or
+  identity work.
 - Streaming transcripts, transcript history/search, recorded-audio history,
   clipboard backup/restoration or cleanup, and a settings GUI.
 - Microphone recording from the CLI, queued requests, and preempting another client.
@@ -80,8 +89,19 @@ without a validated launch recipe.
 4. Explicitly Copy the current edited text; Copy does not paste or submit.
 5. Manually switch to Ghostty or Chrome/Amp, paste, review and submit yourself.
 
+Keyboard variant, without leaving the current application:
+
+1. In Ghostty or Chrome, hold the record shortcut and speak, then release; or tap
+   it to start and again to stop. The cancel shortcut discards. The shortcut panel
+   shows progress while the application stays frontmost and keeps typing.
+2. Review/edit in the panel, which takes the keyboard without activating Hagig.
+3. Cmd-Shift-C copies and closes the panel; Cmd-Shift-D discards. Keys return to
+   that application, and the user pastes and submits there.
+
 No automatic clipboard write on result, editing or opening review. Never
-automatically paste, press Enter, submit, inspect a destination or restore focus.
+automatically paste, press Enter, submit or inspect a destination. The only focus
+change is giving the keys back to the application the shortcut was pressed in,
+after the user's explicit Copy or Dismiss.
 
 ### P2. Edit or discard a result
 
@@ -153,7 +173,8 @@ Carry forward these decisions:
 
 Prototype-only selectors, simulated actions, and demo badges are not production
 controls. Review is explicitly interactive; recording/transcription feedback must
-not spuriously activate another application. Menu controls require no global hook.
+not spuriously activate another application. Shortcuts use registered hot keys,
+not a global key hook.
 
 ## 5. Acceptance criteria
 

@@ -51,7 +51,9 @@ struct Screenshots {
                 preferences.preview(page: .settings, models: registry(installed: ["qwen3-asr-0.6b", "whisper-large-v3-turbo"]),
                                     configured: "whisper-large-v3-turbo",
                                     settings: StoredSettings(modelId: "whisper-large-v3-turbo", editorMode: "vim",
-                                                             vocabulary: ["Hagig", "Ghostty", "Qwen"]),
+                                                             vocabulary: ["Hagig", "Ghostty", "Qwen"],
+                                                             recordShortcut: "ctrl+option+space",
+                                                             cancelShortcut: "ctrl+option+escape"),
                                     settingsPath: "/Users/you/.config/hagig/config.toml")
             default: break
             }
@@ -95,7 +97,7 @@ struct Screenshots {
                 // backdrop stands in for that material so the images are legible;
                 // it is not what a popover looks like on any macOS.
                 let view = HagigView(presentation: presentation, animateActivity: false, clock: clock,
-                                     setup: setup, preferences: preferences,
+                                     setup: setup, preferences: preferences, loginItem: .inert,
                                      copy: { _ in false })
                     .background(Color(nsColor: .windowBackgroundColor))
                     .environment(\.colorScheme, dark ? .dark : .light)

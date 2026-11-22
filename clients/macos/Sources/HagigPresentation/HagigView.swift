@@ -19,6 +19,14 @@ public struct SetupGuide: Equatable {
     }
 }
 
+/// The registered shortcuts' display strings (`Shortcut.display`), for the
+/// shortcut panel's recording hint.
+public struct PanelShortcuts: Equatable {
+    public let record: String
+    public let cancel: String
+    public init(record: String, cancel: String) { self.record = record; self.cancel = cancel }
+}
+
 /// Display names for the tracked manifest aliases (`backend/src/hagig/manifests`),
 /// which own the IDs. An alias this build does not know is shown as it is.
 func modelDisplayName(_ id: String) -> String {
@@ -48,6 +56,10 @@ public struct HagigView: View {
     private let stop: () -> Void
     private let cancel: () -> Void
     private let preferences: Preferences?
+    private let loginItem: LoginItem?
+    /// Set while the surface is in the shortcut panel, which is not key, so
+    /// Return and Escape reach the user's app; the hint names these instead.
+    private var panelShortcuts: PanelShortcuts?
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @Environment(\.openURL) private var openURL
     private var reduceMotion: Bool { systemReduceMotion || !animateActivity }
@@ -55,9 +67,10 @@ public struct HagigView: View {
     static let panel = Color.primary.opacity(0.06)
 
     /// `clock` fixes the time for deterministic renders; nil follows the system
-    /// clock. `setup` names the paired helper in setup instructions.
+    /// clock. `setup` names the paired helper in setup instructions. `loginItem`
+    /// shows Open at login in Settings; nil hides it.
     public init(presentation: Presentation, animateActivity: Bool = true, clock: Date? = nil,
-                setup: SetupGuide = SetupGuide(), preferences: Preferences? = nil,
+                setup: SetupGuide = SetupGuide(), preferences: Preferences? = nil, loginItem: LoginItem? = nil,
                 record: @escaping () -> Void = {}, stop: @escaping () -> Void = {},
                 cancel: (() -> Void)? = nil, copy: @escaping (String) -> Bool) {
         self.presentation = presentation
@@ -65,10 +78,19 @@ public struct HagigView: View {
         self.clock = clock
         self.setup = setup
         self.preferences = preferences
+        self.loginItem = loginItem
         self.record = record
         self.stop = stop
         self.cancel = cancel ?? { presentation.cancel() }
         self.copy = copy
+    }
+
+    /// The same view, with the recording hint for the shortcut panel (non-nil)
+    /// or the popover (nil).
+    public func inPanel(_ shortcuts: PanelShortcuts?) -> HagigView {
+        var view = self
+        view.panelShortcuts = shortcuts
+        return view
     }
 
     public var body: some View {
@@ -111,7 +133,7 @@ public struct HagigView: View {
                 if let preferences, let page, idle {
                     switch page {
                     case .models: ModelLibraryView(library: preferences)
-                    case .settings: SettingsView(preferences: preferences)
+                    case .settings: SettingsView(preferences: preferences, loginItem: loginItem)
                     }
                 } else {
                     dictation
@@ -188,7 +210,11 @@ public struct HagigView: View {
                     Text("Stops at 5:00").font(.system(size: 11, weight: .medium)).foregroundStyle(.orange)
                 }
             }
-            description("Return stops and transcribes. Escape discards the recording.")
+            if let panelShortcuts {
+                description("Press \(panelShortcuts.record) to stop (or release it if you’re holding it). \(panelShortcuts.cancel) discards the recording.")
+            } else {
+                description("Return stops and transcribes. Escape discards the recording.")
+            }
             HStack(spacing: 8) {
                 action("Cancel", width: 92, action: cancel).keyboardShortcut(.cancelAction)
                 action("Stop", systemImage: "stop.fill", prominent: true, action: stop)

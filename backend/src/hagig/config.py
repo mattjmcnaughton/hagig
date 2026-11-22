@@ -17,6 +17,7 @@ from pydantic import (
     AfterValidator,
     BaseModel,
     ConfigDict,
+    Field,
     ValidationError,
     ValidationInfo,
     field_validator,
@@ -76,6 +77,43 @@ def _terms(terms: list[str]) -> list[str]:
     return terms
 
 
+# Global shortcuts (the macOS app registers them; the server ignores them).
+# Lowercase tokens joined by "+": one or more distinct modifiers, in any order,
+# and exactly one key. Keys name physical positions on a US layout (macOS
+# virtual key codes), so "a" is the key labelled A there whatever the layout.
+SHORTCUT_MODIFIERS = frozenset({"cmd", "ctrl", "option", "shift"})
+SHORTCUT_KEYS = frozenset(
+    [chr(c) for c in range(ord("a"), ord("z") + 1)]
+    + [str(d) for d in range(10)]
+    + [f"f{n}" for n in range(1, 13)]
+    + ["space", "return", "tab", "escape"]
+    + ["minus", "equal", "comma", "period", "slash", "semicolon"]
+)
+DEFAULT_RECORD_SHORTCUT = "ctrl+option+space"
+DEFAULT_CANCEL_SHORTCUT = "ctrl+option+escape"
+
+
+def parse_shortcut(value: str) -> tuple[frozenset[str], str] | None:
+    """The modifiers and key of a shortcut, or None when it is not valid."""
+    tokens = value.split("+")
+    modifiers = [token for token in tokens if token in SHORTCUT_MODIFIERS]
+    keys = [token for token in tokens if token not in SHORTCUT_MODIFIERS]
+    if (
+        not modifiers
+        or len(set(modifiers)) != len(modifiers)
+        or len(keys) != 1
+        or keys[0] not in SHORTCUT_KEYS
+    ):
+        return None
+    return frozenset(modifiers), keys[0]
+
+
+def _shortcut(value: str) -> str:
+    if parse_shortcut(value) is None:
+        raise _fail("invalid_value")
+    return value
+
+
 _TABLE = ConfigDict(extra="forbid", strict=True, frozen=True)
 
 
@@ -111,12 +149,33 @@ class VocabularyConfig(BaseModel):
     ] = []
 
 
+Shortcut = Annotated[str, AfterValidator(_shortcut)]
+
+
+class ShortcutsConfig(BaseModel):
+    model_config = _TABLE
+    record: Shortcut = DEFAULT_RECORD_SHORTCUT
+    # Validated even as the default, so a `record` equal to it is refused.
+    cancel: Shortcut = Field(DEFAULT_CANCEL_SHORTCUT, validate_default=True)
+
+    @field_validator("cancel")
+    @classmethod
+    def _distinct(cls, value: str, info: ValidationInfo) -> str:
+        # The same chord cannot both start and cancel. An invalid `record` is
+        # absent here and already reported.
+        record = info.data.get("record")
+        if record is not None and parse_shortcut(record) == parse_shortcut(value):
+            raise _fail("invalid_value")
+        return value
+
+
 class Config(BaseModel):
     model_config = _TABLE
     editor: EditorConfig = EditorConfig()
     model: ModelConfig
     inference: InferenceConfig = InferenceConfig()
     vocabulary: VocabularyConfig = VocabularyConfig()
+    shortcuts: ShortcutsConfig = ShortcutsConfig()
 
     @model_validator(mode="before")
     @classmethod

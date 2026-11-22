@@ -558,7 +558,14 @@ settings_app = typer.Typer(no_args_is_help=True)
 app.add_typer(settings_app, name="settings", help="Read and change settings.")
 
 # Every setting, as `settings show --json` reports it and `settings set` takes it.
-_SETTING_KEYS = ("model_id", "editor_mode", "network_isolation", "vocabulary")
+_SETTING_KEYS = (
+    "model_id",
+    "editor_mode",
+    "network_isolation",
+    "vocabulary",
+    "record_shortcut",
+    "cancel_shortcut",
+)
 
 
 def _settings_of(config: Config) -> dict[str, Any]:
@@ -567,6 +574,8 @@ def _settings_of(config: Config) -> dict[str, Any]:
         "editor_mode": config.editor.mode,
         "network_isolation": config.inference.network_isolation,
         "vocabulary": list(config.vocabulary.terms),
+        "record_shortcut": config.shortcuts.record,
+        "cancel_shortcut": config.shortcuts.cancel,
     }
 
 
@@ -584,8 +593,9 @@ def settings_show() -> None:
     """Print the settings file as one JSON object (offline, read-only).
 
     `path`, `exists`, `issue` (a stable code when the file does not load, else
-    null) and `settings` (`model_id`, `editor_mode`, `network_isolation` and
-    `vocabulary`, with defaults filled in; null when the file does not load).
+    null) and `settings` (`model_id`, `editor_mode`, `network_isolation`,
+    `vocabulary`, `record_shortcut` and `cancel_shortcut`, with defaults filled
+    in; null when the file does not load).
     """
     path = _settings_path(os.environ)
     config = None
@@ -615,8 +625,9 @@ def settings_set(
 ) -> None:
     """Change settings from a JSON object on stdin, then rewrite the file.
 
-    The object holds any of `model_id`, `editor_mode`, `network_isolation` and
-    `vocabulary` (a list of strings); missing keys keep their current values.
+    The object holds any of `model_id`, `editor_mode`, `network_isolation`,
+    `vocabulary` (a list of strings), `record_shortcut` and `cancel_shortcut`;
+    missing keys keep their current values.
     Input travels on stdin so vocabulary never appears in a process list. The
     merged settings are validated exactly as the server will load them, then
     written atomically (0600). A file that does not load is refused
@@ -714,6 +725,13 @@ def _toml(settings: dict[str, Any]) -> bytes:
         )
     if "vocabulary" in settings:
         lines.append(f"[vocabulary]\nterms = {value(settings['vocabulary'])}")
+    shortcuts = [
+        f"{name} = {value(settings[f'{name}_shortcut'])}"
+        for name in ("record", "cancel")
+        if f"{name}_shortcut" in settings
+    ]
+    if shortcuts:
+        lines.append("\n".join(["[shortcuts]", *shortcuts]))
     return ("\n\n".join(lines) + "\n").encode()
 
 
